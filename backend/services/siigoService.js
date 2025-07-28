@@ -1,0 +1,759 @@
+
+const axios = require('axios');
+const { query } = require('../config/database');
+const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
+
+
+// Función para sanitizar texto y evitar errores de Unicode
+function sanitizeText(text) {
+  if (!text || typeof text !== 'string') return text;
+  
+  try {
+    // Remover caracteres de control y high surrogates problemáticos
+    return text
+      .replace(/[\u0000-\u001F\u007F-\u009F]/g, '') // Remover caracteres de control
+      .replace(/[\uD800-\uDFFF]/g, '') // Remover surrogates sin pareja
+      .replace(/[^\u0000-\uFFFF]/g, '') // Remover caracteres fuera del BMP
+      .trim();
+  } catch (error) {
+    console.warn('Error sanitizando texto:', error.message);
+    return String(text || '').replace(/[^\x20-\x7E\u00A0-\u00FF]/g, ''); // Solo ASCII extendido como fallback
+  }
+}
+
+// Función para sanitizar objetos completos recursivamente
+function sanitizeObject(obj) {
+  if (obj === null || obj === undefined) return obj;
+  
+  if (typeof obj === 'string') {
+    return sanitizeText(obj);
+  }
+  
+  if (typeof obj !== 'object') return obj;
+  
+  if (Array.isArray(obj)) {
+    return obj.map(item => sanitizeObject(item));
+  }
+  
+  const sanitized = {};
+  for (const [key, value] of Object.entries(obj)) {
+    sanitized[sanitizeText(key)] = sanitizeObject(value);
+  }
+  
+  return sanitized;
+}
+
+// Función JSON.stringify segura
+function safeJSONStringify(obj, replacer = null, space = null) {
+  try {
+    const sanitized = sanitizeObject(obj);
+    return safeJSONStringify(sanitized, replacer, space);
+  } catch (error) {
+    console.warn('Error en JSON.stringify, usando fallback:', error.message);
+    // Fallback: convertir a string simple
+    return String(obj);
+  }
+}
+
+class SiigoService {
+  constructor() {
+    this.baseURL = process.env.SIIGO_API_BASE_URL || 'https://api.siigo.com';
+    this.username = process.env.SIIGO_API_USERNAME;
+    this.accessKey = process.env.SIIGO_API_ACCESS_KEY;
+    this.token = null;
+    this.tokenExpiry = null;
+    this.requestCount = 0;
+    this.lastRequestTime = 0;
+    this.rateLimitDelay = 1000; // 1 segundo entre requests
+    this.maxRetries = 3;
+    this.customersCache = new Map();
+    this.cacheExpiry = 5 * 60 * 1000; // 5 minutos
+  }
+
+  // Rate limiting helper
+  async waitForRateLimit() {
+    const now = Date.now();
+    const timeSinceLastRequest = now - this.lastRequestTime;
+    
+    if (timeSinceLastRequest < this.rateLimitDelay) {
+      const delay = this.rateLimitDelay - timeSinceLastRequest;
+      console.log(`⏱️ Rate limiting: esperando ${delay}ms...`);
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+    
+    this.lastRequestTime = Date.now();
+    this.requestCount++;
+  }
+
+  // Retry con backoff exponencial
+  async makeRequestWithRetry(requestFn, maxRetries = this.maxRetries) {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        await this.waitForRateLimit();
+        return await requestFn();
+      } catch (error) {
+        console.log(`❌ Intento ${attempt}/${maxRetries} falló:`, error.message);
+        
+        // Si es error 429, esperar más tiempo
+        if (error.response?.status === 429) {
+          const delay = Math.pow(2, attempt) * 2000; // Backoff exponencial
+          console.log(`🚦 Rate limit detectado, esperando ${delay}ms...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          continue;
+        }
+        
+        // Si es error de auth, renovar token
+        if (error.response?.status === 401) {
+          console.log('🔐 Token expirado, renovando...');
+          this.token = null;
+          this.tokenExpiry = null;
+          await this.authenticate();
+          continue;
+        }
+        
+        // Si es el último intento, lanzar error
+        if (attempt === maxRetries) {
+          throw error;
+        }
+        
+        // Esperar antes del siguiente intento
+        const delay = Math.pow(2, attempt) * 1000;
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+  }
+
+  async authenticate() {
+    try {
+      if (this.token && this.tokenExpiry && Date.now() < this.tokenExpiry) {
+        return this.token;
+      }
+
+      console.log('🔐 Autenticando con SIIGO API...');
+      
+      if (!this.username || !this.accessKey) {
+        throw new Error('Credenciales SIIGO no configuradas');
+      }
+
+      console.log(`🔗 URL: ${this.baseURL}/auth`);
+      console.log(`👤 Usuario: ${this.username}`);
+
+      const response = await axios.post(`${this.baseURL}/auth`, {
+        username: this.username,
+        access_key: this.accessKey
+      }, {
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        timeout: 30000
+      });
+
+      this.token = response.data.access_token;
+      this.tokenExpiry = Date.now() + (response.data.expires_in * 1000);
+      
+      console.log('✅ Autenticación exitosa');
+      return this.token;
+      
+    } catch (error) {
+      console.error('❌ Error en autenticación SIIGO:', error.message);
+      if (error.response) {
+        console.error('Respuesta:', error.response.data);
+      }
+      throw new Error('No se pudo autenticar con SIIGO API');
+    }
+  }
+
+  async getHeaders() {
+    const token = await this.authenticate();
+    return {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      'Partner-Id': 'siigo'
+    };
+  }
+
+  async getInvoices(params = {}) {
+    try {
+      const headers = await this.getHeaders();
+      
+      const defaultParams = {
+        page_size: params.page_size || 20,
+        page: params.page || 1
+      };
+
+      if (params.start_date) {
+        defaultParams.start_date = params.start_date;
+      }
+
+      return await this.makeRequestWithRetry(async () => {
+        console.log(`📋 Obteniendo facturas (página ${defaultParams.page})...`);
+        
+        const response = await axios.get(`${this.baseURL}/v1/invoices`, {
+          headers,
+          params: defaultParams,
+          timeout: 45000 // Timeout aumentado
+        });
+
+        console.log(`✅ ${response.data.results?.length || 0} facturas obtenidas`);
+        return response.data;
+      });
+
+    } catch (error) {
+      console.error('❌ Error obteniendo facturas:', error.message);
+      throw error;
+    }
+  }
+
+  async getInvoiceDetails(invoiceId) {
+    try {
+      const headers = await this.getHeaders();
+      
+      return await this.makeRequestWithRetry(async () => {
+        console.log(`📄 Obteniendo detalles de factura: ${invoiceId}`);
+        
+        const response = await axios.get(`${this.baseURL}/v1/invoices/${invoiceId}`, {
+          headers,
+          timeout: 30000
+        });
+
+        console.log(`✅ Detalles obtenidos para factura ${invoiceId}`);
+        return response.data;
+      });
+
+    } catch (error) {
+      console.error(`❌ Error obteniendo detalles de factura ${invoiceId}:`, error.message);
+      throw error;
+    }
+  }
+
+  async getCustomer(customerId) {
+    try {
+      // Verificar caché primero
+      const cacheKey = customerId;
+      const cached = this.customersCache.get(cacheKey);
+      
+      if (cached && (Date.now() - cached.timestamp < this.cacheExpiry)) {
+        console.log(`✅ Cliente obtenido desde caché: ${customerId}`);
+        return cached.data;
+      }
+
+      const headers = await this.getHeaders();
+      
+      const customerData = await this.makeRequestWithRetry(async () => {
+        console.log(`👤 Obteniendo cliente SIIGO: ${customerId}`);
+        
+        const response = await axios.get(`${this.baseURL}/v1/customers/${customerId}`, {
+          headers,
+          timeout: 20000
+        });
+
+        console.log(`✅ Cliente obtenido: ${customerId}`);
+        return response.data;
+      });
+
+      // Guardar en caché
+      this.customersCache.set(cacheKey, {
+        data: customerData,
+        timestamp: Date.now()
+      });
+      
+      console.log(`✅ Cliente cacheado: ${customerId}`);
+      return customerData;
+
+    } catch (error) {
+      console.error(`❌ Error obteniendo cliente ${customerId}:`, error.message);
+      throw error;
+    }
+  }
+
+  async processInvoiceToOrder(invoice, paymentMethod = 'transferencia', deliveryMethod = 'domicilio') {
+    try {
+      console.log(`🔄 Procesando factura ${invoice.name || invoice.id} a pedido...`);
+      
+      // Obtener detalles completos de la factura
+      const fullInvoice = await this.getInvoiceDetails(invoice.id);
+      console.log(`📋 Detalles completos obtenidos:`, safeJSONStringify(fullInvoice, null, 2));
+      
+      // Obtener información del cliente
+      let customerInfo = {};
+      const customerId = fullInvoice.customer?.id || invoice.customer?.id;
+      
+      if (customerId) {
+        try {
+          customerInfo = await this.getCustomer(customerId);
+          console.log(`👤 Info del cliente obtenida:`, safeJSONStringify(customerInfo, null, 2));
+        } catch (error) {
+          console.warn(`⚠️ No se pudo obtener info del cliente ${customerId}:`, error.message);
+        }
+      }
+      
+      // Extraer nombre del cliente con múltiples fallbacks
+      const extractCustomerName = (customer, customerInfo) => {
+        // Prioridad 1: Nombre comercial del customerInfo detallado (IGNORAR "No aplica")
+        if (customerInfo.commercial_name && customerInfo.commercial_name !== 'No aplica') {
+          return customerInfo.commercial_name;
+        }
+        
+        // Prioridad 2: Persona física - construir nombre completo
+        if (customerInfo.name && Array.isArray(customerInfo.name) && customerInfo.name.length >= 2) {
+          return customerInfo.name.join(' ').trim();
+        }
+        
+        // Prioridad 3: first_name + last_name si existe person
+        if (customerInfo.person?.first_name) {
+          return `${customerInfo.person.first_name} ${customerInfo.person.last_name || ''}`.trim();
+        }
+        
+        // Prioridad 4: Empresa - company name
+        if (customerInfo.company?.name) return customerInfo.company.name;
+        
+        // Prioridad 5: Nombre del customer básico (IGNORAR "No aplica")
+        if (customer?.commercial_name && customer.commercial_name !== 'No aplica') {
+          return customer.commercial_name;
+        }
+        if (customer?.name) return customer.name;
+        
+        // Prioridad 6: Identification name
+        if (customerInfo.identification?.name) return customerInfo.identification.name;
+        if (customer?.identification?.name) return customer.identification.name;
+        
+        // Fallback final
+        return 'Cliente SIIGO';
+      };
+      
+      // Extraer teléfono del cliente
+      const extractCustomerPhone = (customer, customerInfo) => {
+        return customerInfo.phones?.[0]?.number || 
+               customer?.phones?.[0]?.number ||
+               customerInfo.person?.phones?.[0]?.number ||
+               customerInfo.company?.phones?.[0]?.number ||
+               'Sin teléfono';
+      };
+      
+      // Extraer dirección del cliente
+      const extractCustomerAddress = (customer, customerInfo) => {
+        return customerInfo.address?.address ||
+               customer?.address?.address ||
+               customerInfo.person?.address?.address ||
+               customerInfo.company?.address?.address ||
+               'Sin dirección';
+      };
+      
+      // Calcular total desde la factura
+      const calculateTotal = (invoice, fullInvoice) => {
+        // Prioridad 1: Total de la factura completa
+        if (fullInvoice.total && !isNaN(parseFloat(fullInvoice.total))) {
+          return parseFloat(fullInvoice.total);
+        }
+        
+        // Prioridad 2: Total amount de la factura completa
+        if (fullInvoice.total_amount && !isNaN(parseFloat(fullInvoice.total_amount))) {
+          return parseFloat(fullInvoice.total_amount);
+        }
+        
+        // Prioridad 3: Total de la factura básica
+        if (invoice.total && !isNaN(parseFloat(invoice.total))) {
+          return parseFloat(invoice.total);
+        }
+        
+        // Prioridad 4: Total amount de la factura básica
+        if (invoice.total_amount && !isNaN(parseFloat(invoice.total_amount))) {
+          return parseFloat(invoice.total_amount);
+        }
+        
+        // Prioridad 5: Calcular desde items si existen
+        if (fullInvoice.items && Array.isArray(fullInvoice.items)) {
+          const calculatedTotal = fullInvoice.items.reduce((sum, item) => {
+            const quantity = parseFloat(item.quantity || 1);
+            const price = parseFloat(item.unit_price || item.price || 0);
+            return sum + (quantity * price);
+          }, 0);
+          
+          if (calculatedTotal > 0) return calculatedTotal;
+        }
+        
+        return 0;
+      };
+      
+      // Extraer TODOS los datos adicionales del cliente - CORREGIDO
+      const extractCustomerIdentification = (customer, customerInfo) => {
+        console.log('🔍 extractCustomerIdentification - customerInfo.identification:', customerInfo.identification);
+        console.log('🔍 extractCustomerIdentification - customer?.identification:', customer?.identification);
+        
+        // Buscar en customerInfo primero (detallado) - ES UN STRING
+        if (customerInfo.identification && typeof customerInfo.identification === 'string') {
+          console.log('✅ Returning customerInfo.identification:', customerInfo.identification);
+          return customerInfo.identification;
+        }
+        
+        // Buscar en customer básico (de la factura)
+        if (customer?.identification && typeof customer.identification === 'string') {
+          console.log('✅ Returning customer.identification:', customer.identification);
+          return customer.identification;
+        }
+        
+        console.log('❌ No identification found, returning null');
+        return null;
+      };
+      
+      const extractCustomerIdType = (customer, customerInfo) => {
+        console.log('🔍 extractCustomerIdType - customerInfo.id_type:', customerInfo.id_type);
+        
+        // Buscar tipo de ID en customerInfo
+        if (customerInfo.id_type?.name) {
+          console.log('✅ Returning id_type.name:', customerInfo.id_type.name);
+          return customerInfo.id_type.name;
+        }
+        if (customerInfo.id_type?.code) {
+          console.log('✅ Returning id_type.code:', customerInfo.id_type.code);
+          return customerInfo.id_type.code;
+        }
+        
+        console.log('❌ No id_type found, returning null');
+        return null;
+      };
+      
+      const extractCustomerEmail = (customer, customerInfo) => {
+        console.log('🔍 extractCustomerEmail - customerInfo.contacts:', customerInfo.contacts);
+        console.log('🔍 extractCustomerEmail - customerInfo.email:', customerInfo.email);
+        
+        // Buscar en contacts (primera prioridad)
+        if (customerInfo.contacts && Array.isArray(customerInfo.contacts) && customerInfo.contacts.length > 0) {
+          const primaryContact = customerInfo.contacts[0];
+          console.log('🔍 primaryContact:', primaryContact);
+          if (primaryContact && primaryContact.email) {
+            console.log('✅ Returning contact email:', primaryContact.email);
+            return primaryContact.email;
+          }
+        }
+        
+        // Buscar en nivel superior
+        if (customerInfo.email) {
+          console.log('✅ Returning customerInfo.email:', customerInfo.email);
+          return customerInfo.email;
+        }
+        
+        console.log('❌ No email found, returning null');
+        return null;
+      };
+      
+      const extractCustomerDepartment = (customer, customerInfo) => {
+        console.log('🔍 extractCustomerDepartment - customerInfo.address?.city:', customerInfo.address?.city);
+        
+        // Extraer departamento de address.city.state_name
+        if (customerInfo.address?.city?.state_name) {
+          console.log('✅ Returning state_name:', customerInfo.address.city.state_name);
+          return customerInfo.address.city.state_name;
+        }
+        
+        console.log('❌ No state_name found, returning null');
+        return null;
+      };
+      
+      const extractCustomerCity = (customer, customerInfo) => {
+        console.log('🔍 extractCustomerCity - customerInfo.address?.city:', customerInfo.address?.city);
+        console.log('🔍 extractCustomerCity - customerInfo.address?.city?.city_name:', customerInfo.address?.city?.city_name);
+        
+        // CORREGIDO: Extraer solo el string de la ciudad
+        if (customerInfo.address?.city?.city_name) {
+          console.log('✅ Returning city_name string:', customerInfo.address.city.city_name);
+          return customerInfo.address.city.city_name;
+        }
+        
+        // Fallback a string simple
+        if (typeof customerInfo.address?.city === 'string') {
+          console.log('✅ Returning city string:', customerInfo.address.city);
+          return customerInfo.address.city;
+        }
+        
+        console.log('❌ No valid city found, returning null');
+        return null;
+      };
+      
+      const extractCustomerCountry = (customer, customerInfo) => {
+        console.log('🔍 extractCustomerCountry - customerInfo.address?.city?.country_name:', customerInfo.address?.city?.country_name);
+        
+        // Extraer país de address.city.country_name
+        if (customerInfo.address?.city?.country_name) {
+          console.log('✅ Returning country_name:', customerInfo.address.city.country_name);
+          return customerInfo.address.city.country_name;
+        }
+        
+        console.log('✅ Returning default: Colombia');
+        return 'Colombia';
+      };
+      
+      const extractCustomerPersonType = (customer, customerInfo) => {
+        // Usar person_type directamente
+        return customerInfo.person_type || null;
+      };
+      
+      // Preparar datos del pedido con extracción COMPLETA
+      const customerName = extractCustomerName(fullInvoice.customer || invoice.customer, customerInfo);
+      const customerPhone = extractCustomerPhone(fullInvoice.customer || invoice.customer, customerInfo);
+      const customerAddress = extractCustomerAddress(fullInvoice.customer || invoice.customer, customerInfo);
+      const totalAmount = calculateTotal(invoice, fullInvoice);
+      
+      // EXTRAER TODOS LOS CAMPOS ADICIONALES
+      const customerIdentification = extractCustomerIdentification(fullInvoice.customer || invoice.customer, customerInfo);
+      const customerIdType = extractCustomerIdType(fullInvoice.customer || invoice.customer, customerInfo);
+      const customerEmail = extractCustomerEmail(fullInvoice.customer || invoice.customer, customerInfo);
+      const customerDepartment = extractCustomerDepartment(fullInvoice.customer || invoice.customer, customerInfo);
+      const customerCity = extractCustomerCity(fullInvoice.customer || invoice.customer, customerInfo);
+      const customerCountry = extractCustomerCountry(fullInvoice.customer || invoice.customer, customerInfo);
+      const customerPersonType = extractCustomerPersonType(fullInvoice.customer || invoice.customer, customerInfo);
+      const siigoCustomerId = customerInfo.id || (fullInvoice.customer || invoice.customer)?.id || null;
+      
+      // EXTRAER URL PÚBLICA DE SIIGO (CAMPO CRÍTICO PARA BOTÓN DE DESCARGA)
+      const siigoPublicUrl = fullInvoice.public_url || invoice.public_url || null;
+      console.log(`🔗 URL pública extraída de SIIGO: ${siigoPublicUrl}`);
+      
+      // EXTRAER OBSERVACIONES/NOTAS DE SIIGO
+      const extractSiigoObservations = (invoice, fullInvoice) => {
+        console.log('🔍 Extrayendo observaciones de SIIGO...');
+        console.log('🔍 fullInvoice.observations:', fullInvoice.observations);
+        console.log('🔍 fullInvoice.notes:', fullInvoice.notes);
+        console.log('🔍 fullInvoice.comments:', fullInvoice.comments);
+        console.log('🔍 invoice.observations:', invoice.observations);
+        console.log('🔍 invoice.notes:', invoice.notes);
+        
+        let observations = [];
+        
+        // Recopilar todas las observaciones/notas disponibles
+        if (fullInvoice.observations) {
+          observations.push(`OBSERVACIONES: ${fullInvoice.observations}`);
+        }
+        if (fullInvoice.notes) {
+          observations.push(`NOTAS: ${fullInvoice.notes}`);
+        }
+        if (fullInvoice.comments) {
+          observations.push(`COMENTARIOS: ${fullInvoice.comments}`);
+        }
+        
+        // Fallback a datos básicos de la factura
+        if (observations.length === 0 && invoice.observations) {
+          observations.push(`OBSERVACIONES: ${invoice.observations}`);
+        }
+        if (observations.length === 0 && invoice.notes) {
+          observations.push(`NOTAS: ${invoice.notes}`);
+        }
+        
+        const result = observations.join('\n\n');
+        console.log(`📝 Observaciones extraídas: ${result || 'Sin observaciones'}`);
+        return result || null;
+      };
+      
+      const siigoObservations = extractSiigoObservations(invoice, fullInvoice);
+      
+      // Sanitizar datos del cliente antes de procesarlos
+      const sanitizedCustomerName = sanitizeText(customerName);
+      const sanitizedCustomerPhone = sanitizeText(customerPhone);
+      const sanitizedCustomerAddress = sanitizeText(customerAddress);
+      const sanitizedCustomerIdentification = sanitizeText(customerIdentification);
+      const sanitizedCustomerIdType = sanitizeText(customerIdType);
+      const sanitizedCustomerEmail = sanitizeText(customerEmail);
+      const sanitizedCustomerDepartment = sanitizeText(customerDepartment);
+      const sanitizedCustomerCity = sanitizeText(typeof customerCity === 'object' ? JSON.stringify(customerCity) : customerCity);
+      const sanitizedCustomerCountry = sanitizeText(customerCountry);
+      const sanitizedSiigoObservations = sanitizeText(siigoObservations);
+      
+      console.log('🧹 Datos sanitizados - Cliente:', sanitizedCustomerName);
+      
+      const orderData = {
+        order_number: fullInvoice.name || invoice.name || `SIIGO-${invoice.id}`,
+        invoice_code: fullInvoice.name || invoice.name || `SIIGO-${invoice.id}`,
+        siigo_invoice_id: invoice.id,
+        customer_name: sanitizedCustomerName,
+        customer_phone: sanitizedCustomerPhone,
+        customer_address: sanitizedCustomerAddress,
+        customer_identification: sanitizedCustomerIdentification,
+        customer_id_type: sanitizedCustomerIdType,
+        siigo_customer_id: siigoCustomerId,
+        customer_person_type: customerPersonType,
+        customer_email: sanitizedCustomerEmail,
+        customer_department: sanitizedCustomerDepartment,
+        customer_country: sanitizedCustomerCountry,
+        customer_city: customerCity,
+        total_amount: totalAmount,
+        status: 'pendiente_por_facturacion',
+        delivery_method: deliveryMethod,
+        payment_method: paymentMethod,
+        created_by: 1,
+        created_at: new Date()
+      };
+      
+      console.log(`💾 Datos COMPLETOS del pedido preparados:`, orderData);
+      
+      console.log(`💾 Insertando pedido con TODOS los campos: ${orderData.order_number}`);
+      
+      // Insertar pedido con TODOS los campos disponibles incluyendo siigo_public_url y siigo_observations
+      const insertResult = await query(`
+        INSERT INTO orders (
+          order_number, invoice_code, siigo_invoice_id, customer_name, 
+          customer_phone, customer_address, customer_identification,
+          customer_id_type, siigo_customer_id, customer_person_type,
+          customer_email, customer_department, customer_country, customer_city,
+          total_amount, status, delivery_method, payment_method, 
+          siigo_public_url, siigo_observations, created_by, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `, [
+        orderData.order_number,
+        orderData.invoice_code,
+        orderData.siigo_invoice_id,
+        orderData.customer_name,
+        orderData.customer_phone,
+        orderData.customer_address,
+        orderData.customer_identification,
+        orderData.customer_id_type,
+        orderData.siigo_customer_id,
+        orderData.customer_person_type,
+        orderData.customer_email,
+        orderData.customer_department,
+        orderData.customer_country,
+        typeof orderData.customer_city === 'object' ? safeJSONStringify(orderData.customer_city) : orderData.customer_city,
+        orderData.total_amount,
+        orderData.status,
+        orderData.delivery_method,
+        orderData.payment_method,
+        siigoPublicUrl,
+        sanitizedSiigoObservations,
+        orderData.created_by,
+        orderData.created_at
+      ]);
+      
+      const orderId = insertResult.insertId;
+      console.log(`✅ Pedido creado con ID: ${orderId}`);
+      
+      // Procesar items de la factura
+      let itemsInserted = 0;
+      if (fullInvoice.items && fullInvoice.items.length > 0) {
+        console.log(`📦 Procesando ${fullInvoice.items.length} items...`);
+        
+        for (const item of fullInvoice.items) {
+          try {
+            await query(`
+              INSERT INTO order_items (
+                order_id, name, quantity, price, product_code
+              ) VALUES (?, ?, ?, ?, ?)
+            `, [
+              orderId,
+              item.description || item.name || 'Producto SIIGO',
+              parseFloat(item.quantity || 1),
+              parseFloat(item.price || item.unit_price || 0),
+              item.code || null
+            ]);
+            itemsInserted++;
+          } catch (itemError) {
+            console.error(`❌ Error insertando item:`, itemError.message);
+          }
+        }
+        
+        console.log(`✅ ${itemsInserted} items insertados`);
+      } else {
+        console.log(`⚠️ Factura sin items detallados`);
+      }
+      
+      // Log de sincronización
+      await query(`
+        INSERT INTO siigo_sync_log (
+          siigo_invoice_id, sync_status, order_id, processed_at
+        ) VALUES (?, ?, ?, NOW())
+      `, [invoice.id, 'success', orderId]);
+      
+      console.log(`🎉 Factura ${invoice.name} procesada exitosamente como pedido ${orderId}`);
+      
+      return {
+        success: true,
+        orderId: orderId,
+        itemsCount: itemsInserted,
+        message: `Pedido ${orderData.order_number} creado con ${itemsInserted} items`
+      };
+      
+    } catch (error) {
+      console.error(`❌ Error procesando factura ${invoice.name}:`, error.message);
+      
+      // Log de error
+      try {
+        await query(`
+          INSERT INTO siigo_sync_log (
+            siigo_invoice_id, sync_status, error_message, processed_at
+          ) VALUES (?, ?, ?, NOW())
+        `, [invoice.id, 'error', error.message]);
+      } catch (logError) {
+        console.error('Error logging sync error:', logError.message);
+      }
+      
+      throw error;
+    }
+  }
+
+  // Método para importar facturas específicas
+  async importInvoices(invoiceIds, paymentMethod = 'transferencia', deliveryMethod = 'domicilio') {
+    try {
+      console.log(`📥 Importando ${invoiceIds.length} facturas...`);
+      
+      const results = [];
+      
+      for (const invoiceId of invoiceIds) {
+        try {
+          // Obtener detalles de la factura
+          const invoice = await this.getInvoiceDetails(invoiceId);
+          
+          // Verificar si ya existe
+          const existing = await query(
+            'SELECT id FROM orders WHERE siigo_invoice_id = ?',
+            [invoiceId]
+          );
+          
+          if (existing.length > 0) {
+            console.log(`⚠️ Factura ${invoice.name} ya existe como pedido ${existing[0].id}`);
+            results.push({
+              invoiceId,
+              success: false,
+              message: 'Factura ya importada',
+              orderId: existing[0].id
+            });
+            continue;
+          }
+          
+          // Procesar factura
+          const result = await this.processInvoiceToOrder(invoice, paymentMethod, deliveryMethod);
+          results.push({
+            invoiceId,
+            ...result
+          });
+          
+          // Pequeña pausa entre facturas
+          await new Promise(resolve => setTimeout(resolve, 500));
+          
+        } catch (error) {
+          console.error(`❌ Error importando factura ${invoiceId}:`, error.message);
+          results.push({
+            invoiceId,
+            success: false,
+            message: error.message
+          });
+        }
+      }
+      
+      console.log(`📊 Importación completada: ${results.filter(r => r.success).length}/${results.length} exitosas`);
+      
+      return {
+        success: true,
+        results,
+        summary: {
+          total: results.length,
+          successful: results.filter(r => r.success).length,
+          failed: results.filter(r => !r.success).length
+        }
+      };
+      
+    } catch (error) {
+      console.error('❌ Error en importación masiva:', error.message);
+      throw error;
+    }
+  }
+}
+
+module.exports = new SiigoService();

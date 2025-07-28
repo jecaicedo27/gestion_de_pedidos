@@ -1,0 +1,29 @@
+{
+  "name": "gestion-pedidos-universal",
+  "version": "1.0.0",
+  "description": "Sistema completo de gestión de pedidos universal para cualquier empresa",
+  "main": "index.js",
+  "scripts": {
+    "dev": "concurrently \"npm run backend:dev\" \"npm run frontend:dev\"",
+    "backend:dev": "cd backend && npm run dev",
+    "frontend:dev": "cd frontend && npm start",
+    "migrate": "cd database && node migrate.js",
+    "build": "cd frontend && npm run build",
+    "install:all": "npm install && cd backend && npm install && cd ../frontend && npm install",
+    "setup": "node scripts/setup.js"
+  },
+  "keywords": [
+    "pedidos",
+    "gestion",
+    "universal",
+    "empresa"
+  ],
+  "author": "Sistema de Gestión",
+  "license": "MIT",
+  "devDependencies": {
+    "concurrently": "^7.6.0"
+  },
+  "dependencies": {
+    "mysql2": "^3.14.2"
+  }
+}
