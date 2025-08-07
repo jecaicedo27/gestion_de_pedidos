@@ -35,4 +35,7 @@ router.get('/templates', PackagingController.getPackagingTemplates);
 // Estadísticas de empaque
 router.get('/stats', PackagingController.getPackagingStats);
 
+// Obtener pedidos listos para entrega
+router.get('/ready-for-delivery', PackagingController.getPedidosListosParaEntrega);
+
 module.exports = router;

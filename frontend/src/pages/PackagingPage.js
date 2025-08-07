@@ -1,16 +1,30 @@
 import React, { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import * as Icons from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useAuth } from '../context/AuthContext';
 
 const PackagingPage = () => {
   const { user } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [activeTab, setActiveTab] = useState('pending');
   const [loading, setLoading] = useState(false);
   const [pendingOrders, setPendingOrders] = useState([]);
   const [currentOrder, setCurrentOrder] = useState(null);
   const [checklist, setChecklist] = useState([]);
   const [stats, setStats] = useState({});
+
+  // Verificar si hay un orderId en la URL para procesar directamente
+  useEffect(() => {
+    const orderId = searchParams.get('orderId');
+    if (orderId) {
+      console.log('🎯 ID de pedido detectado en URL:', orderId);
+      toast('🎯 Iniciando empaque del pedido específico...');
+      startPackaging(parseInt(orderId));
+      // Limpiar el parámetro de la URL después de procesar
+      setSearchParams({});
+    }
+  }, [searchParams]);
 
   useEffect(() => {
     loadData();
@@ -858,7 +872,7 @@ const FastPackagingValidation = ({ checklist, onVerifyItem, onVerifyAll }) => {
       toast.success(`✅ ${matchedItem.item_name} verificado por código de barras`);
       setBarcodeInput('');
     } else if (matchedItem && matchedItem.is_verified) {
-      toast.info(`⚠️ ${matchedItem.item_name} ya está verificado`);
+      toast(`⚠️ ${matchedItem.item_name} ya está verificado`);
       setBarcodeInput('');
     } else {
       toast.error(`❌ Código ${barcode} no encontrado en este pedido`);

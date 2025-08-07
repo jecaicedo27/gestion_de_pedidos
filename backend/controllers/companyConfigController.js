@@ -106,7 +106,7 @@ const updateCompanyConfig = async (req, res) => {
 // Obtener configuración pública (para usar en guías, documentos, etc.)
 const getPublicCompanyConfig = async (req, res) => {
   try {
-    const [config] = await query(
+    const config = await query(
       `SELECT company_name, nit, email, address, whatsapp, city, department, 
        postal_code, website, logo_url FROM company_config WHERE id = 1`
     );
@@ -146,7 +146,7 @@ const getPublicCompanyConfig = async (req, res) => {
 // Obtener configuración para usar en guías de envío
 const getShippingCompanyInfo = async (req, res) => {
   try {
-    const [config] = await query(
+    const config = await query(
       `SELECT company_name, nit, address, whatsapp, city, department, email
        FROM company_config WHERE id = 1`
     );
@@ -203,7 +203,7 @@ const resetCompanyConfig = async (req, res) => {
        defaultConfig.address, defaultConfig.whatsapp, defaultConfig.city, defaultConfig.department]
     );
 
-    const [resetConfig] = await query('SELECT * FROM company_config WHERE id = 1');
+    const resetConfig = await query('SELECT * FROM company_config WHERE id = 1');
 
     res.json({
       success: true,

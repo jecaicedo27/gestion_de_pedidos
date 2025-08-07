@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
 import LoadingSpinner from '../components/LoadingSpinner';
+import SiigoAutoImportControl from '../components/SiigoAutoImportControl';
 
 const SiigoConfigPage = () => {
   const { user } = useAuth();
@@ -249,6 +250,7 @@ const SiigoConfigPage = () => {
           <nav className="flex space-x-8">
             {[
               { id: 'status', label: 'Estado de Conexión' },
+              { id: 'auto-import', label: 'Importación Automática' },
               { id: 'logs', label: 'Logs de Sincronización' },
               { id: 'stats', label: 'Estadísticas' },
               { id: 'whatsapp', label: 'WhatsApp' },
@@ -413,6 +415,17 @@ const SiigoConfigPage = () => {
                   </div>
                 )}
               </div>
+            </div>
+          )}
+
+          {/* Importación Automática */}
+          {activeTab === 'auto-import' && (
+            <div className="p-6">
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="text-xl font-semibold text-gray-900">Control de Importación Automática</h2>
+              </div>
+
+              <SiigoAutoImportControl />
             </div>
           )}
 

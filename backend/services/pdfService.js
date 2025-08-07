@@ -154,7 +154,7 @@ class PDFService {
       customer_nit: this.cleanText(orderData.customer_nit) || '',
       payment_method: this.cleanText(orderData.payment_method) || 'Sin especificar',
       total_amount: orderData.total_amount || 0,
-      shipping_method: orderData.shipping_method || 'sin_especificar',
+      delivery_method: orderData.delivery_method || 'sin_especificar',
       tracking_number: this.cleanText(orderData.tracking_number) || '',
       notes: this.escapeHtml(orderData.notes) || '',
       status: this.cleanText(orderData.status) || 'Sin estado'
@@ -343,7 +343,7 @@ class PDFService {
 
             <!-- Método de Envío -->
             <div class="shipping-method">
-                ${shippingMethodLabels[cleanOrderData.shipping_method] || cleanOrderData.shipping_method}
+                ${shippingMethodLabels[cleanOrderData.delivery_method] || cleanOrderData.delivery_method}
             </div>
 
             <!-- Información del Remitente -->

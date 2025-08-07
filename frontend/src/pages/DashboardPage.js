@@ -143,7 +143,7 @@ const DashboardPage = () => {
       </div>
 
       {/* Tarjetas de estadísticas principales */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-7 gap-6 mb-8">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-8 gap-6 mb-8">
         <StatCard
           title="Total Pedidos"
           value={formatNumber(dashboardData?.totalOrders || 0)}
@@ -196,6 +196,17 @@ const DashboardPage = () => {
           color="purple"
           clickable={true}
           onClick={() => handleStatusCardClick('en_empaque')}
+          loading={loading}
+        />
+        
+        <StatCard
+          title="Sala de Entrega"
+          value={formatNumber(dashboardData?.readyForDelivery || 0)}
+          subtitle="Listos para entregar"
+          icon="Home"
+          color="cyan"
+          clickable={true}
+          onClick={() => handleStatusCardClick('listo_para_entrega')}
           loading={loading}
         />
         

@@ -1,19 +1,45 @@
 
 const siigoService = require('../services/siigoService');
-const { query } = require('../config/database');
+const { pool } = require('../config/database');
 
 const siigoController = {
   async getInvoices(req, res) {
     try {
       console.log('📋 Solicitud de facturas SIIGO recibida');
       
-      const { page = 1, page_size = 5, start_date } = req.query;
+      const { page = 1, page_size = 100, start_date } = req.query;
+      
+      // Obtener fecha de inicio del sistema
+      let systemStartDate = start_date;
+      
+      if (!systemStartDate) {
+        try {
+          console.log('📅 Obteniendo fecha de inicio del sistema...');
+          const [startDateConfig] = await pool.execute(`
+            SELECT config_value, data_type 
+            FROM system_config 
+            WHERE config_key = 'siigo_start_date' 
+              AND (SELECT config_value FROM system_config WHERE config_key = 'siigo_start_date_enabled') = 'true'
+          `);
+          
+          if (startDateConfig.length > 0) {
+            systemStartDate = startDateConfig[0].config_value;
+            console.log(`✅ Usando fecha de inicio del sistema: ${systemStartDate}`);
+          } else {
+            console.log('⚠️ Fecha de inicio del sistema no configurada, usando fecha por defecto');
+            systemStartDate = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+          }
+        } catch (error) {
+          console.warn('⚠️ Error obteniendo fecha de inicio del sistema, usando fecha por defecto:', error.message);
+          systemStartDate = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+        }
+      }
       
       // Obtener facturas desde SIIGO con rate limiting
       const siigoData = await siigoService.getInvoices({
         page: parseInt(page),
         page_size: parseInt(page_size),
-        start_date: start_date || new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+        start_date: systemStartDate
       });
       
       if (!siigoData.results) {
@@ -35,7 +61,7 @@ const siigoController = {
       
       // Filtrar facturas ya importadas
       console.log('🔍 Filtrando facturas ya importadas...');
-      const existingInvoices = await query(
+      const [existingInvoices] = await pool.execute(
         'SELECT siigo_invoice_id FROM orders WHERE siigo_invoice_id IS NOT NULL'
       );
       
@@ -46,16 +72,20 @@ const siigoController = {
       console.log(`📊 Facturas ya importadas en BD: ${existingIds.size}`);
       console.log(`📊 Facturas disponibles para importar: ${filteredInvoices.length}`);
       
-      // DEBUG: Si no hay facturas filtradas pero sí hay facturas originales, mostrar detalles
-      if (filteredInvoices.length === 0 && siigoData.results.length > 0) {
-        console.log('🔍 DEBUG: No hay facturas filtradas pero sí hay facturas originales');
-        console.log('🔍 IDs existentes en BD:', Array.from(existingIds).slice(0, 3));
-        console.log('🔍 IDs de facturas SIIGO:', siigoData.results.slice(0, 3).map(inv => inv.id));
-        
-        // TEMPORAL: Mostrar todas las facturas para que el usuario pueda importarlas
-        console.log('⚠️ MOSTRANDO TODAS LAS FACTURAS (filtro temporal desactivado)');
-        // Mantener el filtro pero añadir información de debug
-      }
+      // MOSTRAR TODAS LAS FACTURAS - Marcar las ya importadas pero no ocultarlas
+      console.log('📊 Facturas obtenidas de SIIGO:', siigoData.results.length);
+      console.log('📊 Facturas ya importadas en BD:', existingIds.size);
+      console.log('📊 Facturas disponibles para importar:', filteredInvoices.length);
+      
+      // USAR TODAS LAS FACTURAS EN LUGAR DE SOLO LAS FILTRADAS
+      const allInvoicesWithStatus = siigoData.results.map(invoice => ({
+        ...invoice,
+        // Marcar si ya está importada
+        is_imported: existingIds.has(invoice.id),
+        import_status: existingIds.has(invoice.id) ? 'imported' : 'available'
+      }));
+      
+      console.log('✅ Mostrando todas las facturas:', allInvoicesWithStatus.length);
       
       // Enriquecer con información completa de clientes usando la misma lógica que funciona en importación
       console.log('🔍 Enriqueciendo facturas con información completa de clientes...');
@@ -100,7 +130,7 @@ const siigoController = {
       };
       
       const enrichedInvoices = await Promise.all(
-        filteredInvoices.map(async (invoice) => {
+        allInvoicesWithStatus.map(async (invoice) => {
           try {
             if (invoice.customer?.id) {
               const customerInfo = await siigoService.getCustomer(invoice.customer.id);
@@ -151,7 +181,9 @@ const siigoController = {
             page: parseInt(page),
             page_size: parseInt(page_size),
             total: siigoData.pagination?.total_results || enrichedInvoices.length,
-            pages: Math.ceil((siigoData.pagination?.total_results || enrichedInvoices.length) / parseInt(page_size))
+            pages: Math.ceil((siigoData.pagination?.total_results || enrichedInvoices.length) / parseInt(page_size)),
+            showing_all: true,
+            imported_count: existingIds.size
           }
         }
       });
@@ -278,6 +310,32 @@ const siigoController = {
         success: false,
         connected: false,
         message: 'Error de conexión',
+        error: error.message
+      });
+    }
+  },
+
+  async getAutomationStatus(req, res) {
+    try {
+      const siigoUpdateService = require('../services/siigoUpdateService');
+      
+      res.json({
+        success: true,
+        data: {
+          isRunning: siigoUpdateService.isRunning,
+          interval: siigoUpdateService.updateInterval,
+          intervalMinutes: Math.round(siigoUpdateService.updateInterval / (1000 * 60)),
+          message: siigoUpdateService.isRunning 
+            ? `Servicio automático ejecutándose cada ${Math.round(siigoUpdateService.updateInterval / (1000 * 60))} minutos`
+            : 'Servicio automático detenido'
+        }
+      });
+      
+    } catch (error) {
+      console.error('❌ Error verificando estado del servicio automático:', error.message);
+      res.status(500).json({
+        success: false,
+        message: 'Error verificando estado del servicio',
         error: error.message
       });
     }

@@ -54,7 +54,7 @@ async function runLogisticsMigration() {
     // Verificar campos en orders
     const [orderColumns] = await connection.execute(`
       SHOW COLUMNS FROM orders WHERE Field IN (
-        'shipping_method', 'carrier_id', 'tracking_number', 
+        'delivery_method', 'carrier_id', 'tracking_number', 
         'shipping_guide_generated', 'shipping_guide_path'
       )
     `);

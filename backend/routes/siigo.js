@@ -31,6 +31,12 @@ router.get('/invoices/:id', siigoController.getInvoiceDetails);
  */
 router.post('/import', siigoController.importInvoices);
 
+/**
+ * GET /api/siigo/automation/status
+ * Verificar estado del servicio automático
+ */
+router.get('/automation/status', siigoController.getAutomationStatus);
+
 // ============================================================================
 // RUTAS DE PRUEBA Y DESARROLLO
 // ============================================================================

@@ -95,9 +95,104 @@ const SiigoImportModal = ({ isOpen, onClose, invoice, onImportSuccess }) => {
       || 'N/A';
   };
 
+  // Funciones para extraer datos geográficos de SIIGO
+  const getCustomerCity = () => {
+    // Función auxiliar para extraer string desde objeto o devolver el valor directamente
+    const extractValue = (value) => {
+      if (typeof value === 'string') return value;
+      if (typeof value === 'object' && value !== null) {
+        return value.city_name || value.name || value.value || value.text || '';
+      }
+      return '';
+    };
+
+    // Extraer ciudad desde múltiples rutas posibles en SIIGO
+    const cityValue = customer.address?.city
+      || customer.person?.address?.city
+      || customer.company?.address?.city
+      || customer.addresses?.[0]?.city
+      || customer.person?.addresses?.[0]?.city
+      || customer.company?.addresses?.[0]?.city
+      || customer.city
+      || null;
+
+    const result = extractValue(cityValue);
+    return result || 'No especificada';
+  };
+
+  const getCustomerDepartment = () => {
+    // Función auxiliar para extraer departamento desde objeto anidado de SIIGO
+    const extractDepartment = (cityObj) => {
+      if (typeof cityObj === 'string') return cityObj;
+      if (typeof cityObj === 'object' && cityObj !== null) {
+        // Para objetos de SIIGO que tienen la estructura: address.city.state_name
+        return cityObj.state_name || cityObj.state_code || cityObj.state || cityObj.name || '';
+      }
+      return '';
+    };
+
+    // Extraer departamento desde múltiples rutas posibles en SIIGO
+    // Primero intentar desde address.city (estructura SIIGO completa)
+    let departmentValue = null;
+    
+    if (customer.address?.city) {
+      departmentValue = extractDepartment(customer.address.city);
+      if (departmentValue) return departmentValue;
+    }
+    
+    // Luego intentar rutas alternativas
+    departmentValue = customer.address?.state_name
+      || customer.address?.state
+      || customer.person?.address?.state_name
+      || customer.person?.address?.state
+      || customer.company?.address?.state_name
+      || customer.company?.address?.state
+      || customer.addresses?.[0]?.state_name
+      || customer.addresses?.[0]?.state
+      || customer.person?.addresses?.[0]?.state_name
+      || customer.person?.addresses?.[0]?.state
+      || customer.company?.addresses?.[0]?.state_name
+      || customer.company?.addresses?.[0]?.state
+      || customer.state_name
+      || customer.state
+      || customer.department
+      || null;
+
+    if (typeof departmentValue === 'object' && departmentValue !== null) {
+      return extractDepartment(departmentValue);
+    }
+
+    return departmentValue || 'No especificado';
+  };
+
+  const getCustomerAddress = () => {
+    // Función auxiliar para extraer string desde objeto o devolver el valor directamente
+    const extractValue = (value) => {
+      if (typeof value === 'string') return value;
+      if (typeof value === 'object' && value !== null) {
+        return value.address || value.name || value.value || value.text || '';
+      }
+      return '';
+    };
+
+    // Extraer dirección completa
+    const addressValue = customer.address?.address
+      || customer.person?.address?.address
+      || customer.company?.address?.address
+      || customer.addresses?.[0]?.address
+      || customer.person?.addresses?.[0]?.address
+      || customer.company?.addresses?.[0]?.address
+      || customer.address_line
+      || customer.address
+      || null;
+
+    const result = extractValue(addressValue);
+    return result || 'No especificada';
+  };
+
   return (
     <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl mx-4">
+      <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl mx-4 max-h-[90vh] flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b">
           <div className="flex items-center">
@@ -120,7 +215,7 @@ const SiigoImportModal = ({ isOpen, onClose, invoice, onImportSuccess }) => {
           </button>
         </div>
 
-        <div className="p-6">
+        <div className="p-6 overflow-y-auto flex-1">
           {/* Error */}
           {errors.general && (
             <div className="bg-red-50 border border-red-200 rounded-md p-3 mb-4">
@@ -166,6 +261,51 @@ const SiigoImportModal = ({ isOpen, onClose, invoice, onImportSuccess }) => {
                   <span className="text-gray-500">Teléfono:</span>
                   <p className="font-medium">{getCustomerPhone()}</p>
                 </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Información Geográfica de SIIGO */}
+          <div className="mb-6">
+            <h3 className="text-sm font-medium text-gray-900 mb-3 flex items-center">
+              <Package className="h-4 w-4 mr-2 text-green-600" />
+              Ubicación (desde SIIGO)
+            </h3>
+            <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                <div>
+                  <span className="text-green-700 font-medium">Ciudad:</span>
+                  <p className="font-medium text-green-800 truncate">
+                    {loadingDetails ? (
+                      <span className="animate-pulse">Cargando...</span>
+                    ) : (
+                      getCustomerCity()
+                    )}
+                  </p>
+                </div>
+                <div>
+                  <span className="text-green-700 font-medium">Departamento:</span>
+                  <p className="font-medium text-green-800 truncate">
+                    {loadingDetails ? (
+                      <span className="animate-pulse">Cargando...</span>
+                    ) : (
+                      getCustomerDepartment()
+                    )}
+                  </p>
+                </div>
+              </div>
+              {!loadingDetails && (
+                <div className="mt-3 pt-3 border-t border-green-300">
+                  <span className="text-green-700 font-medium text-xs">Dirección:</span>
+                  <p className="text-green-800 text-xs mt-1">
+                    {getCustomerAddress()}
+                  </p>
+                </div>
+              )}
+              <div className="mt-3 pt-3 border-t border-green-300">
+                <p className="text-xs text-green-600">
+                  ℹ️ Esta información se extraerá automáticamente de SIIGO al importar
+                </p>
               </div>
             </div>
           </div>

@@ -76,7 +76,7 @@ const schemas = {
       'enviado', 
       'entregado'
     ).optional(),
-    delivery_method: Joi.string().valid('recoge_bodega', 'recogida_tienda', 'envio_nacional', 'domicilio_ciudad', 'domicilio_nacional', 'envio_internacional').optional().allow(''),
+    delivery_method: Joi.string().valid('recoge_bodega', 'recogida_tienda', 'envio_nacional', 'domicilio_ciudad', 'domicilio_nacional', 'envio_internacional', 'drone_delivery', 'fast', 'domicilio', 'nacional', 'mensajeria_urbana').optional().allow(''),
     payment_method: Joi.string().valid('efectivo', 'transferencia', 'cliente_credito', 'pago_electronico', 'contraentrega').optional(),
     // shipping_payment_method es opcional y solo se valida si no es recogida en tienda
     shipping_payment_method: Joi.string().valid('contado', 'contraentrega').optional().when('delivery_method', {

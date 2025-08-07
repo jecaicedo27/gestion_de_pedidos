@@ -202,7 +202,7 @@ class SiigoUpdateService {
       const siigoService = require('./siigoService');
       
       // Obtener datos completos de la factura
-      const invoiceData = await siigoService.getInvoice(invoice.id);
+      const invoiceData = await siigoService.getInvoiceDetails(invoice.id);
       
       // Enriquecer con datos del cliente si es posible
       if (invoiceData.customer && invoiceData.customer.id) {
@@ -242,7 +242,7 @@ class SiigoUpdateService {
   async checkAndUpdateInvoice(invoiceId, orderId) {
     try {
       // Obtener datos actuales de la factura desde SIIGO
-      const currentInvoiceData = await siigoService.getInvoice(invoiceId);
+      const currentInvoiceData = await siigoService.getInvoiceDetails(invoiceId);
       
       if (!currentInvoiceData) {
         console.log(`⚠️  Factura ${invoiceId} no encontrada en SIIGO`);
@@ -362,17 +362,21 @@ class SiigoUpdateService {
     // NO actualizar items tampoco para evitar problemas
     console.log('ℹ️  Actualización de items omitida para preservar datos existentes');
 
+    // CÓDIGO DE ACTUALIZACIÓN DE ITEMS TEMPORALMENTE DESHABILITADO
+    /*
     // Actualizar items del pedido
     // Primero eliminar items existentes
     await query('DELETE FROM order_items WHERE order_id = ?', [orderId]);
     
     // Insertar items actualizados
-    for (const item of items) {
+    const currentItems = siigoService.extractOrderItems(invoiceData);
+    for (const item of currentItems) {
       await query(`
         INSERT INTO order_items (order_id, name, quantity, price, description, product_code, created_at) 
         VALUES (?, ?, ?, ?, ?, ?, NOW())
       `, [orderId, item.name, item.quantity, item.price, item.description, item.product_code]);
     }
+    */
 
     console.log(`✅ Pedido ${orderId} actualizado exitosamente`);
   }

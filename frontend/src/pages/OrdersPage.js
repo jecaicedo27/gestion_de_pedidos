@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { orderService, userService, walletService } from '../services/api';
@@ -7,24 +7,82 @@ import OrderReviewModal from '../components/OrderReviewModal';
 import WalletValidationModal from '../components/WalletValidationModal';
 import LogisticsModal from '../components/LogisticsModal';
 import DeleteSiigoOrderModal from '../components/DeleteSiigoOrderModal';
+import IsolatedSearchInput from '../components/IsolatedSearchInput';
 import * as Icons from 'lucide-react';
 import toast from 'react-hot-toast';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { io } from 'socket.io-client';
 
+
+// CustomDropdown para reemplazar selector nativo de estado
+const CustomDropdown = ({ value, onChange, options, placeholder, className }) => {
+  const [isOpen, setIsOpen] = useState(false);
+
+  const handleSelect = (optionValue) => {
+    onChange(optionValue);
+    setIsOpen(false);
+  };
+
+  const selectedOption = options.find(opt => opt.value === value);
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setIsOpen(!isOpen)}
+        className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white text-left flex items-center justify-between ${className}`}
+        style={{ zIndex: 1 }}
+      >
+        <span className={value ? 'text-gray-900' : 'text-gray-500'}>
+          {selectedOption ? selectedOption.label : placeholder}
+        </span>
+        <Icons.ChevronDown className={`w-4 h-4 text-gray-400 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+      </button>
+      
+      {isOpen && (
+        <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-300 rounded-md shadow-lg z-50 max-h-60 overflow-auto">
+          {options.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              onClick={() => handleSelect(option.value)}
+              className="w-full px-3 py-2 text-left hover:bg-gray-100 transition-colors"
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      )}
+      
+      {isOpen && (
+        <div 
+          className="fixed inset-0 z-40" 
+          onClick={() => setIsOpen(false)}
+        />
+      )}
+    </div>
+  );
+};
+
 const OrdersPage = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const socketRef = useRef(null);
+  const searchInputRef = useRef(null);
   
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [pagination, setPagination] = useState({});
   const [messengers, setMessengers] = useState([]);
+  const [readyForDelivery, setReadyForDelivery] = useState({
+    groupedOrders: {},
+    stats: {},
+    loading: false
+  });
   
-  // Estados para filtros - inicializar con los parámetros de URL
+  // Estados para filtros - estado simplificado sin separación de búsqueda
   const [filters, setFilters] = useState(() => ({
     search: searchParams.get('search') || '',
     status: searchParams.get('status') || '',
@@ -67,20 +125,20 @@ const OrdersPage = () => {
   const [selectedOrders, setSelectedOrders] = useState([]);
   const [bulkAction, setBulkAction] = useState('');
 
-  // Cargar pedidos
-  const loadOrders = async () => {
+  // Cargar pedidos - memoizado para evitar re-creaciones innecesarias
+  const loadOrders = useCallback(async (filtersToUse = filters) => {
     try {
       setLoading(true);
       
       // Determinar si estamos en la vista de cartera o todos los pedidos
       const view = searchParams.get('view');
-      const isWalletView = view === 'cartera' || filters.status === 'revision_cartera';
+      const isWalletView = view === 'cartera' || filtersToUse.status === 'revision_cartera';
       const isAllOrdersView = view === 'todos';
       
       // Preparar filtros - si es vista "todos", eliminar filtro de estado
-      let finalFilters = { ...filters };
+      let finalFilters = { ...filtersToUse };
       if (isAllOrdersView) {
-        finalFilters = { ...filters, status: '' };
+        finalFilters = { ...filtersToUse, status: '' };
         console.log('📋 Vista "Todos los Pedidos" - mostrando pedidos sin filtrar por estado');
       }
       
@@ -96,13 +154,15 @@ const OrdersPage = () => {
       
       setOrders(response.data.orders);
       setPagination(response.data.pagination);
+      
+      // Auto-focus removido para evitar interferencias
     } catch (error) {
       console.error('Error cargando pedidos:', error);
       toast.error('Error cargando pedidos');
     } finally {
       setLoading(false);
     }
-  };
+  }, [searchParams]);
 
   // Cargar mensajeros (para asignación)
   const loadMessengers = async () => {
@@ -113,6 +173,166 @@ const OrdersPage = () => {
       } catch (error) {
         console.error('Error cargando mensajeros:', error);
       }
+    }
+  };
+
+  // Cargar pedidos listos para entrega
+  const loadReadyForDelivery = async () => {
+    if (!['admin', 'logistica'].includes(user?.role)) return;
+    
+    try {
+      setReadyForDelivery(prev => ({ ...prev, loading: true }));
+      
+      const response = await fetch('/api/logistics/ready-for-delivery', {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        }
+      });
+      
+      if (!response.ok) {
+        throw new Error('Error cargando pedidos listos');
+      }
+      
+      const data = await response.json();
+      
+      setReadyForDelivery({
+        groupedOrders: data.data.groupedOrders,
+        stats: data.data.stats,
+        loading: false
+      });
+      
+    } catch (error) {
+      console.error('Error cargando pedidos listos para entrega:', error);
+      setReadyForDelivery(prev => ({ ...prev, loading: false }));
+    }
+  };
+
+  // Asignar mensajero a pedido
+  const handleAssignMessengerToOrder = async (orderId, messengerId) => {
+    try {
+      const response = await fetch('/api/logistics/assign-messenger', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
+        body: JSON.stringify({ orderId, messengerId })
+      });
+
+      if (!response.ok) {
+        throw new Error('Error asignando mensajero');
+      }
+
+      const result = await response.json();
+      toast.success(result.message);
+      
+      // Recargar datos
+      loadReadyForDelivery();
+      loadOrders();
+      
+    } catch (error) {
+      console.error('Error asignando mensajero:', error);
+      toast.error('Error asignando mensajero');
+    }
+  };
+
+  // Marcar pedido como entregado a transportadora
+  const handleMarkAsDeliveredToCarrier = async (orderId, carrierName) => {
+    try {
+      const response = await fetch('/api/logistics/mark-delivered-carrier', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
+        body: JSON.stringify({ 
+          orderId, 
+          status: 'entregado_transportadora',
+          delivery_notes: `Entregado a ${carrierName} el ${new Date().toLocaleString()}`
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error('Error marcando como entregado');
+      }
+
+      const result = await response.json();
+      toast.success(`Pedido entregado a ${carrierName}`);
+      
+      // Recargar datos
+      loadReadyForDelivery();
+      loadOrders();
+      
+    } catch (error) {
+      console.error('Error marcando como entregado:', error);
+      toast.error('Error marcando como entregado');
+    }
+  };
+
+  // Marcar pedido listo para recoger
+  const handleMarkReadyForPickup = async (orderId) => {
+    try {
+      const response = await fetch('/api/logistics/mark-ready-pickup', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
+        body: JSON.stringify({ 
+          orderId, 
+          status: 'listo_para_recoger',
+          delivery_notes: `Listo para recoger en bodega - ${new Date().toLocaleString()}`
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error('Error marcando como listo');
+      }
+
+      const result = await response.json();
+      toast.success('Pedido marcado como listo para recoger');
+      
+      // Recargar datos
+      loadReadyForDelivery();
+      loadOrders();
+      
+    } catch (error) {
+      console.error('Error marcando como listo:', error);
+      toast.error('Error marcando como listo');
+    }
+  };
+
+  // Marcar pedido como en reparto
+  const handleMarkInDelivery = async (orderId, messengerId) => {
+    try {
+      const response = await fetch('/api/logistics/mark-in-delivery', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
+        body: JSON.stringify({ 
+          orderId, 
+          messengerId,
+          status: 'en_reparto',
+          delivery_notes: `En reparto con mensajero - ${new Date().toLocaleString()}`
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error('Error marcando en reparto');
+      }
+
+      const result = await response.json();
+      toast.success('Pedido enviado a reparto');
+      
+      // Recargar datos
+      loadReadyForDelivery();
+      loadOrders();
+      
+    } catch (error) {
+      console.error('Error marcando en reparto:', error);
+      toast.error('Error marcando en reparto');
     }
   };
 
@@ -154,10 +374,23 @@ const OrdersPage = () => {
     };
   }, []);
 
+  // Cargar datos cuando cambien los filtros
   useEffect(() => {
-    loadOrders();
+    loadOrders(filters);
+  }, [filters, loadOrders]);
+
+  // Cargar mensajeros solo una vez
+  useEffect(() => {
     loadMessengers();
-  }, [filters]);
+  }, []);
+
+  // Cargar pedidos listos para entrega cuando estamos en vista de logística
+  useEffect(() => {
+    const view = searchParams.get('view');
+    if (view === 'logistica' && ['admin', 'logistica'].includes(user?.role)) {
+      loadReadyForDelivery();
+    }
+  }, [searchParams.get('view'), user?.role]);
 
   // Solo sincronizar filtros desde URL al montar el componente o cambiar la vista
   useEffect(() => {
@@ -219,14 +452,23 @@ const OrdersPage = () => {
     }
   }, [filters.search, filters.status, filters.dateFrom, filters.dateTo, filters.page]);
 
-  // Manejar cambios en filtros
-  const handleFilterChange = (key, value) => {
+  // Manejar cambios en filtros - memoizado para evitar re-creaciones
+  const handleFilterChange = useCallback((key, value) => {
     setFilters(prev => ({
       ...prev,
       [key]: value,
       page: key !== 'page' ? 1 : value // Reset page when other filters change
     }));
-  };
+  }, []);
+
+  // Manejar búsqueda independiente
+  const handleSearch = useCallback((searchValue) => {
+    setFilters(prev => ({
+      ...prev,
+      search: searchValue,
+      page: 1 // Reset page when search changes
+    }));
+  }, []);
 
   // Manejar cambio de estado de pedido
   const handleStatusChange = async (orderId, newStatus) => {
@@ -571,16 +813,12 @@ const OrdersPage = () => {
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Buscar
               </label>
-              <div className="relative">
-                <Icons.Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
-                <input
-                  type="text"
-                  placeholder="Cliente, teléfono, código..."
-                  value={filters.search}
-                  onChange={(e) => handleFilterChange('search', e.target.value)}
-                  className="pl-10 w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
+              <IsolatedSearchInput
+                ref={searchInputRef}
+                onSearch={handleSearch}
+                initialValue={filters.search}
+                placeholder="Cliente, teléfono, código..."
+              />
             </div>
 
             {/* Estado */}
@@ -588,22 +826,24 @@ const OrdersPage = () => {
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Estado
               </label>
-              <select
+              <CustomDropdown
                 value={filters.status}
-                onChange={(e) => handleFilterChange('status', e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="">Todos los estados</option>
-                <option value="pendiente_por_facturacion">Pendiente por Facturación</option>
-                <option value="revision_cartera">Revisión por Cartera</option>
-                <option value="en_logistica">En Logística</option>
-                <option value="en_empaque">En Empaque</option>
-                <option value="empacado">Empacado</option>
-                <option value="en_reparto">En Reparto</option>
-                <option value="entregado_transportadora">Entregado a Transportadora</option>
-                <option value="entregado_cliente">Entregado a Cliente</option>
-                <option value="cancelado">Cancelado</option>
-              </select>
+                onChange={(value) => handleFilterChange('status', value)}
+                options={[
+  { value: '', label: 'Todos los estados' },
+  { value: 'pendiente_por_facturacion', label: 'Pendiente por Facturación' },
+  { value: 'revision_cartera', label: 'Revisión por Cartera' },
+  { value: 'en_logistica', label: 'En Logística' },
+  { value: 'en_empaque', label: 'En Empaque' },
+  { value: 'en_preparacion', label: 'En Preparación' },
+  { value: 'empacado', label: 'Empacado' },
+  { value: 'en_reparto', label: 'En Reparto' },
+  { value: 'entregado_transportadora', label: 'Entregado a Transportadora' },
+  { value: 'entregado_cliente', label: 'Entregado a Cliente' },
+  { value: 'cancelado', label: 'Cancelado' }
+]}
+                placeholder="Todos los estados"
+              />
             </div>
 
             {/* Fecha desde */}
@@ -933,6 +1173,431 @@ const OrdersPage = () => {
           </div>
         )}
       </div>
+
+      {/* Sección de Pedidos Listos para Entrega - Solo en vista de logística */}
+      {searchParams.get('view') === 'logistica' && ['admin', 'logistica'].includes(user?.role) && (
+        <div className="mt-8">
+          <div className="mb-6 flex items-center justify-between">
+            <div>
+              <h2 className="text-2xl font-bold text-gray-900 flex items-center">
+                <div className="w-1 h-8 bg-red-500 rounded mr-3"></div>
+                🚚 Pedidos Listos para Entrega
+              </h2>
+              <p className="text-gray-600 mt-1">
+                Organiza y asigna los pedidos empacados por tipo de entrega
+              </p>
+            </div>
+            
+            {!readyForDelivery.loading && readyForDelivery.stats.total > 0 && (
+              <div className="flex items-center space-x-4">
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-blue-600">{readyForDelivery.stats.total}</div>
+                  <div className="text-sm text-gray-500">Total Listos</div>
+                </div>
+                <button
+                  onClick={loadReadyForDelivery}
+                  className="btn btn-secondary btn-sm"
+                  title="Actualizar"
+                >
+                  <Icons.RefreshCw className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+          </div>
+
+          {readyForDelivery.loading ? (
+            <div className="card">
+              <div className="card-content">
+                <div className="animate-pulse">
+                  <div className="h-32 bg-gray-200 rounded"></div>
+                </div>
+              </div>
+            </div>
+          ) : readyForDelivery.stats.total === 0 ? (
+            <div className="card">
+              <div className="card-content">
+                <div className="text-center py-12">
+                  <Icons.CheckCircle className="w-16 h-16 text-green-400 mx-auto mb-4" />
+                  <p className="text-gray-500 text-lg">¡Excelente! No hay pedidos pendientes para entrega</p>
+                  <p className="text-gray-400">Todos los pedidos han sido procesados</p>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
+              
+              {/* Recoge en Bodega */}
+              {readyForDelivery.stats.recoge_bodega > 0 && (
+                <div className="card">
+                  <div className="card-header">
+                    <h3 className="text-lg font-semibold text-gray-900 flex items-center">
+                      <Icons.Home className="w-5 h-5 mr-2 text-green-600" />
+                      Recoge en Bodega
+                      <span className="ml-2 px-2 py-1 text-xs font-medium bg-green-100 text-green-800 rounded-full">
+                        {readyForDelivery.stats.recoge_bodega}
+                      </span>
+                    </h3>
+                  </div>
+                  <div className="card-content">
+                    <div className="space-y-2 max-h-64 overflow-y-auto">
+                      {readyForDelivery.groupedOrders.recoge_bodega?.map((order) => (
+                        <div key={order.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                          <div className="flex-1">
+                            <div className="font-medium text-sm">{order.order_number}</div>
+                            <div className="text-xs text-gray-600">{order.customer_name}</div>
+                            <div className="text-xs text-green-600">${order.total?.toLocaleString('es-CO')}</div>
+                          </div>
+                          <div className="flex items-center space-x-2">
+                            <button
+                              onClick={() => handleMarkReadyForPickup(order.id)}
+                              className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white text-xs rounded"
+                              title="Marcar como listo para recoger"
+                            >
+                              ✅ Listo
+                            </button>
+                            <button
+                              onClick={() => navigate(`/orders/${order.id}`)}
+                              className="text-blue-600 hover:text-blue-800"
+                              title="Ver detalles"
+                            >
+                              <Icons.Eye className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Interrapidísimo */}
+              {readyForDelivery.stats.interrapidisimo > 0 && (
+                <div className="card">
+                  <div className="card-header">
+                    <h3 className="text-lg font-semibold text-gray-900 flex items-center">
+                      <Icons.Truck className="w-5 h-5 mr-2 text-orange-600" />
+                      Interrapidísimo
+                      <span className="ml-2 px-2 py-1 text-xs font-medium bg-orange-100 text-orange-800 rounded-full">
+                        {readyForDelivery.stats.interrapidisimo}
+                      </span>
+                    </h3>
+                  </div>
+                  <div className="card-content">
+                    <div className="space-y-2 max-h-64 overflow-y-auto">
+                      {readyForDelivery.groupedOrders.interrapidisimo?.map((order) => (
+                        <div key={order.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                          <div className="flex-1">
+                            <div className="font-medium text-sm">{order.order_number}</div>
+                            <div className="text-xs text-gray-600">{order.customer_name}</div>
+                            <div className="text-xs text-orange-600">${order.total_amount?.toLocaleString('es-CO')}</div>
+                          </div>
+                          <div className="flex items-center space-x-2">
+                            <button
+                              onClick={() => handleMarkAsDeliveredToCarrier(order.id, 'Interrapidísimo')}
+                              className="px-2 py-1 bg-orange-600 hover:bg-orange-700 text-white text-xs rounded"
+                              title="Entregar a Interrapidísimo"
+                            >
+                              🚛 Entregar
+                            </button>
+                            <button
+                              onClick={() => navigate(`/orders/${order.id}`)}
+                              className="text-blue-600 hover:text-blue-800"
+                              title="Ver detalles"
+                            >
+                              <Icons.Eye className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Transprensa */}
+              {readyForDelivery.stats.transprensa > 0 && (
+                <div className="card">
+                  <div className="card-header">
+                    <h3 className="text-lg font-semibold text-gray-900 flex items-center">
+                      <Icons.Package className="w-5 h-5 mr-2 text-purple-600" />
+                      Transprensa
+                      <span className="ml-2 px-2 py-1 text-xs font-medium bg-purple-100 text-purple-800 rounded-full">
+                        {readyForDelivery.stats.transprensa}
+                      </span>
+                    </h3>
+                  </div>
+                  <div className="card-content">
+                    <div className="space-y-2 max-h-64 overflow-y-auto">
+                      {readyForDelivery.groupedOrders.transprensa?.map((order) => (
+                        <div key={order.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                          <div className="flex-1">
+                            <div className="font-medium text-sm">{order.order_number}</div>
+                            <div className="text-xs text-gray-600">{order.customer_name}</div>
+                            <div className="text-xs text-purple-600">${order.total_amount?.toLocaleString('es-CO')}</div>
+                          </div>
+                          <div className="flex items-center space-x-2">
+                            <button
+                              onClick={() => handleMarkAsDeliveredToCarrier(order.id, 'Transprensa')}
+                              className="px-2 py-1 bg-purple-600 hover:bg-purple-700 text-white text-xs rounded"
+                              title="Entregar a Transprensa"
+                            >
+                              🚛 Entregar
+                            </button>
+                            <button
+                              onClick={() => navigate(`/orders/${order.id}`)}
+                              className="text-blue-600 hover:text-blue-800"
+                              title="Ver detalles"
+                            >
+                              <Icons.Eye className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Envía */}
+              {readyForDelivery.stats.envia > 0 && (
+                <div className="card">
+                  <div className="card-header">
+                    <h3 className="text-lg font-semibold text-gray-900 flex items-center">
+                      <Icons.Send className="w-5 h-5 mr-2 text-blue-600" />
+                      Envía
+                      <span className="ml-2 px-2 py-1 text-xs font-medium bg-blue-100 text-blue-800 rounded-full">
+                        {readyForDelivery.stats.envia}
+                      </span>
+                    </h3>
+                  </div>
+                  <div className="card-content">
+                    <div className="space-y-2 max-h-64 overflow-y-auto">
+                      {readyForDelivery.groupedOrders.envia?.map((order) => (
+                        <div key={order.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                          <div className="flex-1">
+                            <div className="font-medium text-sm">{order.order_number}</div>
+                            <div className="text-xs text-gray-600">{order.customer_name}</div>
+                            <div className="text-xs text-blue-600">${order.total_amount?.toLocaleString('es-CO')}</div>
+                          </div>
+                          <button
+                            onClick={() => navigate(`/orders/${order.id}`)}
+                            className="text-blue-600 hover:text-blue-800"
+                            title="Ver detalles"
+                          >
+                            <Icons.Eye className="w-4 h-4" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Camión Externo */}
+              {readyForDelivery.stats.camion_externo > 0 && (
+                <div className="card">
+                  <div className="card-header">
+                    <h3 className="text-lg font-semibold text-gray-900 flex items-center">
+                      <Icons.Truck className="w-5 h-5 mr-2 text-indigo-600" />
+                      Camión Externo
+                      <span className="ml-2 px-2 py-1 text-xs font-medium bg-indigo-100 text-indigo-800 rounded-full">
+                        {readyForDelivery.stats.camion_externo}
+                      </span>
+                    </h3>
+                  </div>
+                  <div className="card-content">
+                    <div className="space-y-2 max-h-64 overflow-y-auto">
+                      {readyForDelivery.groupedOrders.camion_externo?.map((order) => (
+                        <div key={order.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                          <div className="flex-1">
+                            <div className="font-medium text-sm">{order.order_number}</div>
+                            <div className="text-xs text-gray-600">{order.customer_name}</div>
+                            <div className="text-xs text-indigo-600">${order.total_amount?.toLocaleString('es-CO')}</div>
+                          </div>
+                          <button
+                            onClick={() => navigate(`/orders/${order.id}`)}
+                            className="text-blue-600 hover:text-blue-800"
+                            title="Ver detalles"
+                          >
+                            <Icons.Eye className="w-4 h-4" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Mensajero Julián */}
+              {readyForDelivery.stats.mensajero_julian > 0 && (
+                <div className="card">
+                  <div className="card-header">
+                    <h3 className="text-lg font-semibold text-gray-900 flex items-center">
+                      <Icons.User className="w-5 h-5 mr-2 text-emerald-600" />
+                      Mensajero Julián
+                      <span className="ml-2 px-2 py-1 text-xs font-medium bg-emerald-100 text-emerald-800 rounded-full">
+                        {readyForDelivery.stats.mensajero_julian}
+                      </span>
+                    </h3>
+                  </div>
+                  <div className="card-content">
+                    <div className="space-y-2 max-h-64 overflow-y-auto">
+                      {readyForDelivery.groupedOrders.mensajero_julian?.map((order) => (
+                        <div key={order.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                          <div className="flex-1">
+                            <div className="font-medium text-sm">{order.order_number}</div>
+                            <div className="text-xs text-gray-600">{order.customer_name}</div>
+                            <div className="text-xs text-emerald-600">${order.total_amount?.toLocaleString('es-CO')}</div>
+                          </div>
+                          <div className="flex items-center space-x-2">
+                            {messengers.length > 0 && (
+                              <select
+                                onChange={(e) => {
+                                  if (e.target.value) {
+                                    handleAssignMessengerToOrder(order.id, parseInt(e.target.value));
+                                  }
+                                }}
+                                className="text-xs px-2 py-1 border border-gray-300 rounded"
+                                defaultValue=""
+                              >
+                                <option value="">Reasignar</option>
+                                {messengers.map((messenger) => (
+                                  <option key={messenger.id} value={messenger.id}>
+                                    {messenger.name}
+                                  </option>
+                                ))}
+                              </select>
+                            )}
+                            <button
+                              onClick={() => navigate(`/orders/${order.id}`)}
+                              className="text-blue-600 hover:text-blue-800"
+                              title="Ver detalles"
+                            >
+                              <Icons.Eye className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Mensajero Juan */}
+              {readyForDelivery.stats.mensajero_juan > 0 && (
+                <div className="card">
+                  <div className="card-header">
+                    <h3 className="text-lg font-semibold text-gray-900 flex items-center">
+                      <Icons.UserCheck className="w-5 h-5 mr-2 text-teal-600" />
+                      Mensajero Juan
+                      <span className="ml-2 px-2 py-1 text-xs font-medium bg-teal-100 text-teal-800 rounded-full">
+                        {readyForDelivery.stats.mensajero_juan}
+                      </span>
+                    </h3>
+                  </div>
+                  <div className="card-content">
+                    <div className="space-y-2 max-h-64 overflow-y-auto">
+                      {readyForDelivery.groupedOrders.mensajero_juan?.map((order) => (
+                        <div key={order.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                          <div className="flex-1">
+                            <div className="font-medium text-sm">{order.order_number}</div>
+                            <div className="text-xs text-gray-600">{order.customer_name}</div>
+                            <div className="text-xs text-teal-600">${order.total_amount?.toLocaleString('es-CO')}</div>
+                          </div>
+                          <div className="flex items-center space-x-2">
+                            {messengers.length > 0 && (
+                              <select
+                                onChange={(e) => {
+                                  if (e.target.value) {
+                                    handleAssignMessengerToOrder(order.id, parseInt(e.target.value));
+                                  }
+                                }}
+                                className="text-xs px-2 py-1 border border-gray-300 rounded"
+                                defaultValue=""
+                              >
+                                <option value="">Reasignar</option>
+                                {messengers.map((messenger) => (
+                                  <option key={messenger.id} value={messenger.id}>
+                                    {messenger.name}
+                                  </option>
+                                ))}
+                              </select>
+                            )}
+                            <button
+                              onClick={() => navigate(`/orders/${order.id}`)}
+                              className="text-blue-600 hover:text-blue-800"
+                              title="Ver detalles"
+                            >
+                              <Icons.Eye className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Otros (Sin Asignar) */}
+              {readyForDelivery.stats.otros > 0 && (
+                <div className="card border-2 border-yellow-200">
+                  <div className="card-header bg-yellow-50">
+                    <h3 className="text-lg font-semibold text-gray-900 flex items-center">
+                      <Icons.AlertTriangle className="w-5 h-5 mr-2 text-yellow-600" />
+                      Sin Asignar
+                      <span className="ml-2 px-2 py-1 text-xs font-medium bg-yellow-100 text-yellow-800 rounded-full">
+                        {readyForDelivery.stats.otros}
+                      </span>
+                    </h3>
+                    <p className="text-xs text-yellow-700 mt-1">Requieren atención</p>
+                  </div>
+                  <div className="card-content">
+                    <div className="space-y-2 max-h-64 overflow-y-auto">
+                      {readyForDelivery.groupedOrders.otros?.map((order) => (
+                        <div key={order.id} className="flex items-center justify-between p-3 bg-yellow-50 rounded-lg border border-yellow-200">
+                          <div className="flex-1">
+                            <div className="font-medium text-sm">{order.order_number}</div>
+                            <div className="text-xs text-gray-600">{order.customer_name}</div>
+                            <div className="text-xs text-yellow-600">${order.total_amount?.toLocaleString('es-CO')}</div>
+                          </div>
+                          <div className="flex items-center space-x-2">
+                            {messengers.length > 0 && (
+                              <select
+                                onChange={(e) => {
+                                  if (e.target.value) {
+                                    handleAssignMessengerToOrder(order.id, parseInt(e.target.value));
+                                  }
+                                }}
+                                className="text-xs px-2 py-1 border border-yellow-300 rounded bg-white"
+                                defaultValue=""
+                              >
+                                <option value="">Asignar mensajero</option>
+                                {messengers.map((messenger) => (
+                                  <option key={messenger.id} value={messenger.id}>
+                                    {messenger.name}
+                                  </option>
+                                ))}
+                              </select>
+                            )}
+                            <button
+                              onClick={() => navigate(`/orders/${order.id}`)}
+                              className="text-blue-600 hover:text-blue-800"
+                              title="Ver detalles"
+                            >
+                              <Icons.Eye className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Modal de registro de entrega */}
       <DeliveryRegistrationModal

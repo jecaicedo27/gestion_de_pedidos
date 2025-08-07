@@ -32,6 +32,7 @@ const companyConfigRoutes = require('./routes/companyConfig');
 
 // Importar servicios
 const siigoUpdateService = require('./services/siigoUpdateService');
+const { initializeAutoImport } = require('./initAutoImport');
 
 const app = express();
 const server = http.createServer(app);
@@ -100,18 +101,45 @@ const corsOptions = {
 };
 app.use(cors(corsOptions));
 
-// Rate limiting
-const limiter = rateLimit({
+// Rate limiting - Configuración más flexible
+const generalLimiter = rateLimit({
   windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000, // 15 minutos
-  max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 100, // límite de requests por ventana
+  max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 500, // Aumentado el límite general
   message: {
     success: false,
     message: 'Demasiadas solicitudes desde esta IP, intenta de nuevo más tarde.'
   },
   standardHeaders: true,
+  legacyHeaders: false,
+  // Excluir rutas críticas del frontend
+  skip: (req) => {
+    const criticalRoutes = [
+      '/api/auth/verify',
+      '/api/auth/profile', 
+      '/api/config/public',
+      '/api/company-config/public',
+      '/api/health',
+      '/api/info'
+    ];
+    return criticalRoutes.some(route => req.path === route);
+  }
+});
+
+// Rate limiter específico para SIIGO (más restrictivo)
+const siigoLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000, // 5 minutos
+  max: 50, // Límite más bajo para SIIGO
+  message: {
+    success: false,
+    message: 'Demasiadas solicitudes a SIIGO, intenta de nuevo más tarde.'
+  },
+  standardHeaders: true,
   legacyHeaders: false
 });
-app.use('/api/', limiter);
+
+// Aplicar rate limiters
+app.use('/api/', generalLimiter);
+app.use('/api/siigo/', siigoLimiter);
 
 // Middleware de logging
 if (process.env.NODE_ENV === 'development') {
@@ -154,7 +182,10 @@ app.use('/api/packaging', packagingRoutes);
 app.use('/api/delivery-methods', deliveryMethodsRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/company-config', companyConfigRoutes);
+app.use('/api/system-config', require('./routes/systemConfig'));
+app.use('/api/siigo-credentials', require('./routes/siigoCredentials'));
 app.use('/api/api-config', require('./routes/apiConfig'));
+app.use('/api/siigo-auto-import', require('./routes/siigoAutoImport'));
 
 // Ruta de health check
 app.get('/api/health', (req, res) => {
@@ -266,6 +297,9 @@ const startServer = async () => {
         console.log('🔄 Iniciando servicio de actualización automática de facturas SIIGO...');
         siigoUpdateService.start();
       }
+      
+      // Inicializar sistema de importación automática
+      initializeAutoImport();
     });
 
   } catch (error) {

@@ -14,7 +14,9 @@ import UsersPage from './pages/UsersPage';
 import CompanyConfigPage from './pages/CompanyConfigPage';
 import ProfilePage from './pages/ProfilePage';
 import APIConfigPage from './pages/APIConfigPage';
+import SiigoCredentialsPage from './pages/SiigoCredentialsPage';
 import SiigoInvoicesPage from './pages/SiigoInvoicesPage';
+import SiigoStartDateConfigPage from './pages/SiigoStartDateConfigPage';
 import BillingPage from './pages/BillingPage';
 import ShippingGuidesPage from './pages/ShippingGuidesPage';
 import CustomerCreditPage from './pages/CustomerCreditPage';
@@ -149,6 +151,25 @@ const AppRoutes = () => {
           }
         />
 
+        {/* Credenciales SIIGO - solo admin */}
+        <Route
+          path="siigo-credentials"
+          element={
+            <ProtectedRoute requiredRole="admin">
+              <SiigoCredentialsPage />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Configuración de Fecha de Inicio SIIGO - solo admin */}
+        <Route
+          path="siigo-start-date-config"
+          element={
+            <ProtectedRoute requiredRole="admin">
+              <SiigoStartDateConfigPage />
+            </ProtectedRoute>
+          }
+        />
 
         {/* Guías de Envío - admin y logística */}
         <Route
@@ -174,7 +195,7 @@ const AppRoutes = () => {
         <Route
           path="packaging"
           element={
-            <ProtectedRoute requiredRole={['admin', 'empaque']}>
+            <ProtectedRoute requiredRole={['admin', 'logistica', 'empaque']}>
               <PackagingPage />
             </ProtectedRoute>
           }

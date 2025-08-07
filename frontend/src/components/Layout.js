@@ -14,7 +14,8 @@ import {
   FileText,
   CreditCard,
   Database,
-  Building
+  Building,
+  Calendar
 } from 'lucide-react';
 import NotificationSystem from './NotificationSystem';
 import RoleNavigation from './RoleNavigation';
@@ -63,6 +64,13 @@ const Layout = () => {
       href: '/api-config',
       icon: Settings,
       current: location.pathname === '/api-config',
+      requiresPermission: 'admin',
+    },
+    {
+      name: 'Fecha Inicio SIIGO',
+      href: '/siigo-start-date-config',
+      icon: Calendar,
+      current: location.pathname === '/siigo-start-date-config',
       requiresPermission: 'admin',
     },
     {

@@ -42,7 +42,7 @@ const getCustomerCredit = async (req, res) => {
     // 1. Buscar información local del cliente
     const creditInfo = await query(
       `SELECT * FROM customer_credit 
-       WHERE customer_name = ? AND status = 'active'
+       WHERE customer_name = ? AND status != 'inactive'
        ORDER BY created_at DESC 
        LIMIT 1`,
       [customerName]

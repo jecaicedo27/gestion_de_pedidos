@@ -2,6 +2,57 @@ import React, { useState } from 'react';
 import * as Icons from 'lucide-react';
 import toast from 'react-hot-toast';
 
+
+// Componente CustomDropdown para reemplazar select nativo
+const CustomDropdown = ({ value, onChange, options, placeholder, required }) => {
+  const [isOpen, setIsOpen] = useState(false);
+
+  const handleSelect = (optionValue) => {
+    onChange(optionValue);
+    setIsOpen(false);
+  };
+
+  const selectedOption = options.find(opt => opt.value === value);
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setIsOpen(!isOpen)}
+        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white text-left flex items-center justify-between"
+        style={{ zIndex: 1 }}
+      >
+        <span className={value ? 'text-gray-900' : 'text-gray-500'}>
+          {selectedOption ? selectedOption.label : placeholder}
+        </span>
+        <Icons.ChevronDown className={`w-4 h-4 text-gray-400 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+      </button>
+      
+      {isOpen && (
+        <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-300 rounded-md shadow-lg z-50 max-h-60 overflow-auto">
+          {options.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              onClick={() => handleSelect(option.value)}
+              className="w-full px-3 py-2 text-left hover:bg-gray-100 transition-colors"
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      )}
+      
+      {isOpen && (
+        <div 
+          className="fixed inset-0 z-40" 
+          onClick={() => setIsOpen(false)}
+        />
+      )}
+    </div>
+  );
+};
+
 const LogisticsModal = ({ isOpen, onClose, order, onProcess }) => {
   const [formData, setFormData] = useState({
     shippingMethod: '',
@@ -12,6 +63,7 @@ const LogisticsModal = ({ isOpen, onClose, order, onProcess }) => {
   });
   const [loading, setLoading] = useState(false);
   const [extractedData, setExtractedData] = useState(null);
+  const [companyData, setCompanyData] = useState(null);
 
   // Función para extraer datos del destinatario desde las observaciones y notas de SIIGO
   const extractRecipientData = (observations, notes) => {
@@ -21,62 +73,89 @@ const LogisticsModal = ({ isOpen, onClose, order, onProcess }) => {
     const processText = (text) => {
       if (!text) return;
       
-      const lines = text.split('\n');
+      // Normalizar texto para mejor procesamiento
+      const normalizedText = text
+        .replace(/\r\n/g, '\n')
+        .replace(/\r/g, '\n')
+        .replace(/\s+/g, ' ');
+      
+      const lines = normalizedText.split('\n');
+      
       for (const line of lines) {
         const trimmedLine = line.trim();
+        if (!trimmedLine) continue;
         
-        // Patrones mejorados para capturar datos del destinatario
-        if (trimmedLine.match(/NOMBRE.*:/i)) {
-          const nameMatch = trimmedLine.split(':')[1]?.trim();
-          if (nameMatch && !data.name) data.name = nameMatch;
-        } else if (trimmedLine.match(/TELÉFONO.*:/i) || trimmedLine.match(/TELEFONO.*:/i)) {
-          const phoneMatch = trimmedLine.split(':')[1]?.trim();
-          if (phoneMatch && !data.phone) data.phone = phoneMatch;
-        } else if (trimmedLine.match(/DIRECCIÓN.*:/i) || trimmedLine.match(/DIRECCION.*:/i)) {
-          const addressMatch = trimmedLine.split(':')[1]?.trim();
-          if (addressMatch && !data.address) data.address = addressMatch;
-        } else if (trimmedLine.match(/CIUDAD.*:/i)) {
-          const cityMatch = trimmedLine.split(':')[1]?.trim();
-          if (cityMatch && !data.city) data.city = cityMatch;
-        } else if (trimmedLine.match(/DEPARTAMENTO.*:/i)) {
-          const departmentMatch = trimmedLine.split(':')[1]?.trim();
-          if (departmentMatch && !data.department) data.department = departmentMatch;
-        } else if (trimmedLine.match(/NIT.*:/i)) {
-          const nitMatch = trimmedLine.split(':')[1]?.trim();
-          if (nitMatch && !data.nit) data.nit = nitMatch;
-        } else if (trimmedLine.match(/FORMA DE PAGO.*:/i) || trimmedLine.match(/MÉTODO DE PAGO.*:/i) || trimmedLine.match(/METODO DE PAGO.*:/i)) {
-          const paymentMatch = trimmedLine.split(':')[1]?.trim();
-          if (paymentMatch && !data.paymentMethod) data.paymentMethod = paymentMatch;
+        // Buscar NOMBRE con mayor precisión
+        if (trimmedLine.match(/^NOMBRE\s*:/i)) {
+          const nameMatch = trimmedLine.replace(/^NOMBRE\s*:\s*/i, '').trim();
+          if (nameMatch && nameMatch !== 'ESTADO DE PAGO' && !data.name) {
+            data.name = nameMatch;
+          }
         }
-        
-        // Patrones adicionales para capturar información más flexible
-        if (trimmedLine.match(/Nombre.*:/i) && !data.name) {
-          const nameMatch = trimmedLine.split(':')[1]?.trim();
-          if (nameMatch) data.name = nameMatch;
+        // Buscar TELÉFONO
+        else if (trimmedLine.match(/^TEL[ÉE]FONO\s*:/i)) {
+          const phoneMatch = trimmedLine.replace(/^TEL[ÉE]FONO\s*:\s*/i, '').trim();
+          if (phoneMatch && !data.phone) {
+            data.phone = phoneMatch;
+          }
         }
-        if (trimmedLine.match(/Tel.*:/i) && !data.phone) {
-          const phoneMatch = trimmedLine.split(':')[1]?.trim();
-          if (phoneMatch) data.phone = phoneMatch;
+        // Buscar DIRECCIÓN  
+        else if (trimmedLine.match(/^DIRECCI[ÓO]N\s*:/i)) {
+          const addressMatch = trimmedLine.replace(/^DIRECCI[ÓO]N\s*:\s*/i, '').trim();
+          if (addressMatch && !data.address) {
+            data.address = addressMatch;
+          }
+        }
+        // Buscar CIUDAD
+        else if (trimmedLine.match(/^CIUDAD\s*:/i)) {
+          const cityMatch = trimmedLine.replace(/^CIUDAD\s*:\s*/i, '').trim();
+          if (cityMatch && !data.city) {
+            data.city = cityMatch;
+          }
+        }
+        // Buscar DEPARTAMENTO
+        else if (trimmedLine.match(/^DEPARTAMENTO\s*:/i)) {
+          const departmentMatch = trimmedLine.replace(/^DEPARTAMENTO\s*:\s*/i, '').trim();
+          if (departmentMatch && !data.department) {
+            data.department = departmentMatch;
+          }
+        }
+        // Buscar NIT
+        else if (trimmedLine.match(/^NIT\s*:/i)) {
+          const nitMatch = trimmedLine.replace(/^NIT\s*:\s*/i, '').trim();
+          if (nitMatch && !data.nit) {
+            data.nit = nitMatch;
+          }
+        }
+        // Buscar FORMA DE PAGO o MÉTODO DE PAGO
+        else if (trimmedLine.match(/^(FORMA|M[ÉE]TODO)\s+(DE\s+)?PAGO\s*:/i)) {
+          const paymentMatch = trimmedLine.replace(/^(FORMA|M[ÉE]TODO)\s+(DE\s+)?PAGO\s*:\s*/i, '').trim();
+          if (paymentMatch && !data.paymentMethod) {
+            data.paymentMethod = paymentMatch;
+          }
+        }
+        // Buscar MEDIO DE PAGO
+        else if (trimmedLine.match(/^MEDIO\s+DE\s+PAGO\s*:/i)) {
+          const paymentMatch = trimmedLine.replace(/^MEDIO\s+DE\s+PAGO\s*:\s*/i, '').trim();
+          if (paymentMatch && !data.paymentMethod) {
+            data.paymentMethod = paymentMatch;
+          }
         }
       }
     };
 
-    // Priorizar observaciones de SIIGO sobre notas tradicionales
+    // PRIORIDAD 1: Extraer de observaciones de SIIGO
     if (observations) {
       processText(observations);
     }
     
-    // Si no hay datos suficientes en observaciones, buscar en notas tradicionales
-    if (notes && (!data.name || !data.phone || !data.address)) {
+    // PRIORIDAD 2: Si no hay nombre en observaciones, buscar en notas tradicionales
+    if (notes && !data.name) {
       processText(notes);
     }
 
-    // Solo retornar si tenemos datos mínimos del destinatario
-    if (data.name || data.phone || data.address) {
-      return data;
-    }
-
-    return null;
+    // Retornar los datos extraídos (puede estar vacío si no se encuentra información)
+    return Object.keys(data).length > 0 ? data : null;
   };
 
   // Extraer datos cuando cambie el pedido - priorizar observaciones de SIIGO
@@ -103,13 +182,119 @@ const LogisticsModal = ({ isOpen, onClose, order, onProcess }) => {
     }
   }, [order]);
 
-  // Opciones de método de envío - Sincronizadas con OrderReviewModal
-  const shippingMethods = [
-    { value: 'recoge_bodega', label: 'Recoge en Bodega' },
-    { value: 'domicilio', label: 'Domicilio' },
-    { value: 'nacional', label: 'Nacional' },
-    { value: 'mensajeria_urbana', label: 'Mensajería Urbana' }
-  ];
+  // Estados para métodos de envío dinámicos
+  const [shippingMethods, setShippingMethods] = useState([]);
+  const [loadingMethods, setLoadingMethods] = useState(true);
+
+  // Efecto para asegurar que el método de envío se establezca correctamente después de cargar los métodos
+  React.useEffect(() => {
+    if (order && shippingMethods.length > 0 && !loadingMethods) {
+      // Solo actualizar si el método existe en las opciones disponibles
+      if (order.delivery_method && shippingMethods.find(m => m.value === order.delivery_method)) {
+        setFormData(prev => ({
+          ...prev,
+          shippingMethod: order.delivery_method
+        }));
+      }
+    }
+  }, [order, shippingMethods, loadingMethods]);
+
+  // Cargar métodos de envío y datos de la empresa dinámicamente desde la API
+  React.useEffect(() => {
+    const fetchData = async () => {
+      try {
+        setLoadingMethods(true);
+        
+        // Cargar métodos de envío
+        const methodsResponse = await fetch('/api/delivery-methods/active');
+        
+        if (methodsResponse.ok) {
+          const methodsData = await methodsResponse.json();
+          
+          if (methodsData.success && methodsData.data) {
+            // Formatear los datos para el dropdown
+            const formattedMethods = methodsData.data.map(method => ({
+              value: method.code,
+              label: method.name
+            }));
+            
+            setShippingMethods(formattedMethods);
+          }
+        } else {
+          console.error('Error cargando métodos de envío');
+          // Fallback: usar algunos métodos básicos
+          setShippingMethods([
+            { value: 'recogida_tienda', label: 'Recoge en Bodega' },
+            { value: 'domicilio', label: 'Domicilio' },
+            { value: 'envio_nacional', label: 'Envío Nacional' }
+          ]);
+        }
+
+        // Cargar datos de la empresa
+        const companyResponse = await fetch('/api/company-config/public');
+        
+        if (companyResponse.ok) {
+          const companyData = await companyResponse.json();
+          
+          if (companyData.success && companyData.data) {
+            setCompanyData(companyData.data);
+          } else {
+        // Fallback: datos por defecto
+        setCompanyData({
+          company_name: 'PERLAS EXPLOSIVAS COLOMBIA',
+          nit: '901749888',
+          address: 'CALLE 50 # 31-46',
+          whatsapp: '3105244298',
+          email: 'COMERCIAL@PERLAS-EXPLOSIVAS.COM',
+          city: 'medellin',
+          department: 'Antioquia'
+        });
+          }
+        } else {
+          console.error('Error cargando datos de la empresa');
+          // Fallback: datos por defecto
+          setCompanyData({
+            company_name: 'PERLAS EXPLOSIVAS COLOMBIA',
+            nit: '901749888',
+            address: 'CALLE 50 # 31-46',
+            whatsapp: '3105244298',
+            email: 'COMERCIAL@PERLAS-EXPLOSIVAS.COM',
+            city: 'medellin',
+            department: 'Antioquia'
+          });
+        }
+        
+      } catch (error) {
+        console.error('Error cargando datos:', error);
+        
+        // Fallback para métodos de envío
+        setShippingMethods([
+          { value: 'recogida_tienda', label: 'Recoge en Bodega' },
+          { value: 'domicilio', label: 'Domicilio' },
+          { value: 'envio_nacional', label: 'Envío Nacional' }
+        ]);
+        
+        // Fallback para datos de la empresa
+        setCompanyData({
+          company_name: 'PERLAS EXPLOSIVAS COLOMBIA',
+          nit: '901749888',
+          address: 'CALLE 50 # 31-46',
+          whatsapp: '3105244298',
+          email: 'COMERCIAL@PERLAS-EXPLOSIVAS.COM',
+          city: 'medellin',
+          department: 'Antioquia'
+        });
+        
+      } finally {
+        setLoadingMethods(false);
+      }
+    };
+
+    // Solo cargar cuando el modal esté abierto
+    if (isOpen) {
+      fetchData();
+    }
+  }, [isOpen]);
 
   // Transportadoras disponibles
   const transportCompanies = [
@@ -224,8 +409,8 @@ const LogisticsModal = ({ isOpen, onClose, order, onProcess }) => {
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" style={{ zIndex: 9999 }}>
+      <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto" style={{ zIndex: 10000 }}>
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-gray-200">
           <div>
@@ -265,7 +450,11 @@ const LogisticsModal = ({ isOpen, onClose, order, onProcess }) => {
                 </div>
                 <div>
                   <span className="text-gray-600">Ciudad:</span>
-                  <p className="font-medium">{order?.customer_city}, {order?.customer_department}</p>
+                  <p className="font-medium">{order?.customer_city || 'No especificada'}</p>
+                </div>
+                <div>
+                  <span className="text-gray-600">Departamento:</span>
+                  <p className="font-medium">{order?.customer_department || 'No especificado'}</p>
                 </div>
                 <div>
                   <span className="text-gray-600">Total:</span>
@@ -371,21 +560,57 @@ const LogisticsModal = ({ isOpen, onClose, order, onProcess }) => {
             {/* Observaciones de SIIGO */}
             {order?.siigo_observations && (
               <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
-                <h3 className="font-medium text-amber-900 mb-2 flex items-center">
+                <h3 className="font-medium text-amber-900 mb-3 flex items-center">
                   <Icons.FileText className="w-4 h-4 mr-2" />
                   Observaciones de SIIGO
                 </h3>
                 <p className="text-sm text-amber-800 mb-2">
                   <strong>Información extraída automáticamente de la factura:</strong>
                 </p>
-                <div className="bg-white border border-amber-200 rounded p-3">
+                <div className="bg-white border border-amber-200 rounded p-4">
                   <pre className="text-sm text-gray-700 whitespace-pre-wrap font-sans leading-relaxed">
-                    {order.siigo_observations}
+                    {(() => {
+                      // Algoritmo simple y directo para formatear observaciones de SIIGO
+                      let formattedText = order.siigo_observations;
+                      
+                      // Lista de campos específicos a identificar y separar
+                      const fieldsToSeparate = [
+                        'OBSERVACIONES:',
+                        'ESTADO DE PAGO:',
+                        'MEDIO DE PAGO:',
+                        'FORMA DE PAGO DE ENVIO:',
+                        'NOMBRE:',
+                        'NIT:',
+                        'TELÉFONO:',
+                        'DEPARTAMENTO:',
+                        'CIUDAD:',
+                        'DIRECCIÓN:',
+                        'NOTA:'
+                      ];
+                      
+                      // Separar cada campo específico con un salto de línea
+                      fieldsToSeparate.forEach(field => {
+                        // Crear un patrón que busque el campo precedido por cualquier caracter que no sea salto de línea
+                        const pattern = new RegExp(`([^\\n])${field.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'g');
+                        formattedText = formattedText.replace(pattern, `$1\n${field}`);
+                      });
+                      
+                      // Normalizar saltos de línea y espacios
+                      formattedText = formattedText
+                        .replace(/\r\n/g, '\n')          // Normalizar CRLF a LF
+                        .replace(/\r/g, '\n')            // Normalizar CR a LF
+                        .replace(/\n+/g, '\n')           // Eliminar saltos múltiples
+                        .split('\n')
+                        .map(line => line.replace(/\s+/g, ' ').trim())  // Limpiar espacios en cada línea
+                        .filter(line => line.length > 0)               // Eliminar líneas vacías
+                        .join('\n');
+                      
+                      return formattedText;
+                    })()}
                   </pre>
                 </div>
                 <p className="text-xs text-amber-700 mt-2">
-                  🏷️ Estas observaciones contienen información adicional importante sobre el pedido, 
-                  requisitos especiales de entrega, y notas del cliente.
+                  Estas observaciones fueron extraídas automáticamente de la factura de SIIGO
                 </p>
               </div>
             )}
@@ -466,19 +691,13 @@ const LogisticsModal = ({ isOpen, onClose, order, onProcess }) => {
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Método de Envío *
               </label>
-              <select
+              <CustomDropdown
                 value={formData.shippingMethod}
-                onChange={(e) => handleInputChange('shippingMethod', e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                onChange={(value) => handleInputChange('shippingMethod', value)}
+                options={shippingMethods}
+                placeholder="Seleccionar método de envío"
                 required
-              >
-                <option value="">Seleccionar método de envío</option>
-                {shippingMethods.map(method => (
-                  <option key={method.value} value={method.value}>
-                    {method.label}
-                  </option>
-                ))}
-              </select>
+              />
             </div>
 
             {/* Transportadora */}
@@ -487,18 +706,12 @@ const LogisticsModal = ({ isOpen, onClose, order, onProcess }) => {
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Transportadora
                 </label>
-                <select
+                <CustomDropdown
                   value={formData.transportCompany}
-                  onChange={(e) => handleInputChange('transportCompany', e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="">Seleccionar transportadora</option>
-                  {transportCompanies.map(company => (
-                    <option key={company} value={company}>
-                      {company}
-                    </option>
-                  ))}
-                </select>
+                  onChange={(value) => handleInputChange('transportCompany', value)}
+                  options={transportCompanies.map(company => ({ value: company, label: company }))}
+                  placeholder="Seleccionar transportadora"
+                />
               </div>
             )}
 
@@ -554,10 +767,6 @@ const LogisticsModal = ({ isOpen, onClose, order, onProcess }) => {
                         <td className="px-4 py-2 border-b">{order?.order_number}</td>
                       </tr>
                       <tr>
-                        <td className="px-4 py-2 font-medium text-gray-700 border-b border-r">Total del Pedido:</td>
-                        <td className="px-4 py-2 border-b">${order?.total_amount?.toLocaleString('es-CO')}</td>
-                      </tr>
-                      <tr>
                         <td className="px-4 py-2 font-medium text-gray-700 border-b border-r">Método de Envío:</td>
                         <td className="px-4 py-2 border-b">
                           {shippingMethods.find(m => m.value === formData.shippingMethod)?.label}
@@ -584,15 +793,23 @@ const LogisticsModal = ({ isOpen, onClose, order, onProcess }) => {
                       </tr>
                       <tr>
                         <td className="px-4 py-2 font-medium text-gray-700 border-b border-r">Empresa:</td>
-                        <td className="px-4 py-2 border-b">Perlas Explosivas</td>
+                        <td className="px-4 py-2 border-b">{companyData?.company_name || 'PERLAS EXPLOSIVAS COLOMBIA'}</td>
+                      </tr>
+                      <tr>
+                        <td className="px-4 py-2 font-medium text-gray-700 border-b border-r">NIT:</td>
+                        <td className="px-4 py-2 border-b">{companyData?.nit || '901749888'}</td>
                       </tr>
                       <tr>
                         <td className="px-4 py-2 font-medium text-gray-700 border-b border-r">Dirección:</td>
-                        <td className="px-4 py-2 border-b">Calle 50 # 31-46, Medellín, Colombia</td>
+                        <td className="px-4 py-2 border-b">{companyData?.address || 'CALLE 50 # 31-46'}, {companyData?.city || 'medellin'}, {companyData?.department || 'Antioquia'}</td>
                       </tr>
                       <tr>
-                        <td className="px-4 py-2 font-medium text-gray-700 border-b border-r">Teléfono:</td>
-                        <td className="px-4 py-2 border-b">+57 310 524 4298</td>
+                        <td className="px-4 py-2 font-medium text-gray-700 border-b border-r">WhatsApp:</td>
+                        <td className="px-4 py-2 border-b">+57 {companyData?.whatsapp || '3105244298'}</td>
+                      </tr>
+                      <tr>
+                        <td className="px-4 py-2 font-medium text-gray-700 border-b border-r">Correo:</td>
+                        <td className="px-4 py-2 border-b">{companyData?.email || 'COMERCIAL@PERLAS-EXPLOSIVAS.COM'}</td>
                       </tr>
 
                       {/* Información del Destinatario */}

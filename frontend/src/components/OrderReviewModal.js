@@ -3,6 +3,56 @@ import * as Icons from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useAuth } from '../context/AuthContext';
 
+// Componente CustomDropdown para reemplazar select nativo
+const CustomDropdown = ({ value, onChange, options, placeholder, required }) => {
+  const [isOpen, setIsOpen] = useState(false);
+
+  const handleSelect = (optionValue) => {
+    onChange(optionValue);
+    setIsOpen(false);
+  };
+
+  const selectedOption = options.find(opt => opt.value === value);
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setIsOpen(!isOpen)}
+        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white text-left flex items-center justify-between"
+        style={{ zIndex: 1 }}
+      >
+        <span className={value ? 'text-gray-900' : 'text-gray-500'}>
+          {selectedOption ? selectedOption.label : placeholder}
+        </span>
+        <Icons.ChevronDown className={`w-4 h-4 text-gray-400 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+      </button>
+      
+      {isOpen && (
+        <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-300 rounded-md shadow-lg z-50 max-h-60 overflow-auto">
+          {options.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              onClick={() => handleSelect(option.value)}
+              className="w-full px-3 py-2 text-left hover:bg-gray-100 transition-colors"
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      )}
+      
+      {isOpen && (
+        <div 
+          className="fixed inset-0 z-40" 
+          onClick={() => setIsOpen(false)}
+        />
+      )}
+    </div>
+  );
+};
+
 const OrderReviewModal = ({ isOpen, onClose, order, onConfirm }) => {
   const { user } = useAuth();
   const [formData, setFormData] = useState({
@@ -34,13 +84,56 @@ const OrderReviewModal = ({ isOpen, onClose, order, onConfirm }) => {
     }
   }, [order, isOpen]);
 
-  const deliveryMethods = [
-    { value: 'domicilio_ciudad', label: 'Domicilio en Ciudad' },
-    { value: 'domicilio_nacional', label: 'Domicilio Nacional' },
-    { value: 'recogida_tienda', label: 'Recogida en Tienda' },
-    { value: 'envio_nacional', label: 'Envío Nacional' },
-    { value: 'envio_internacional', label: 'Envío Internacional' }
-  ];
+  const [deliveryMethods, setDeliveryMethods] = useState([]);
+
+  // Cargar métodos de envío dinámicamente desde la API
+  React.useEffect(() => {
+    const fetchDeliveryMethods = async () => {
+      try {
+        const response = await fetch('/api/delivery-methods/active', {
+          headers: {
+            'Authorization': `Bearer ${localStorage.getItem('token')}`
+          }
+        });
+        if (response.ok) {
+          const apiResponse = await response.json();
+          console.log('API Response:', apiResponse); // Debug logging
+          
+          // Manejar diferentes estructuras de respuesta de la API
+          const methodsData = apiResponse.data || apiResponse;
+          
+          if (Array.isArray(methodsData)) {
+            const dynamicMethods = methodsData.map(method => ({
+              value: method.code,
+              label: method.name
+            }));
+            console.log('Dynamic methods loaded:', dynamicMethods); // Debug logging
+            setDeliveryMethods(dynamicMethods);
+          } else {
+            console.error('API response is not an array:', methodsData);
+            throw new Error('Invalid API response format');
+          }
+        } else {
+          console.error('Error cargando métodos de envío:', response.statusText);
+          throw new Error('API request failed');
+        }
+      } catch (error) {
+        console.error('Error cargando métodos de envío:', error);
+        // Fallback actualizado con datos reales de la BD
+        setDeliveryMethods([
+          { value: 'recogida_tienda', label: 'Recoge en Bodega' },
+          { value: 'domicilio', label: 'Domicilio' },
+          { value: 'envio_nacional', label: 'Nacional' },
+          { value: 'mensajeria_urbana', label: 'Mensajeria urbana' },
+          { value: 'envio_especial', label: 'envio especia' }
+        ]);
+      }
+    };
+
+    if (isOpen) {
+      fetchDeliveryMethods();
+    }
+  }, [isOpen]);
 
   const paymentMethods = [
     { value: 'efectivo', label: 'Efectivo' },
@@ -195,6 +288,7 @@ const OrderReviewModal = ({ isOpen, onClose, order, onConfirm }) => {
       const dataToSend = {
         orderId: order.id,
         payment_method: formData.payment_method,
+        delivery_method: formData.delivery_method, // 🎯 AGREGAR CAMPO FALTANTE
         electronic_payment_type: formData.electronic_payment_type,
         electronic_payment_notes: formData.electronic_payment_notes,
         shipping_date: formData.shipping_date, // Mantener snake_case para consistencia
@@ -288,8 +382,8 @@ const OrderReviewModal = ({ isOpen, onClose, order, onConfirm }) => {
   if (!isOpen || !order) return null;
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" style={{ zIndex: 9999 }}>
+      <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto" style={{ zIndex: 10000 }}>
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-gray-200">
           <div>
@@ -325,6 +419,14 @@ const OrderReviewModal = ({ isOpen, onClose, order, onConfirm }) => {
               <div className="col-span-2">
                 <span className="text-gray-600">Dirección:</span>
                 <span className="ml-1 font-medium">{order.customer_address}</span>
+              </div>
+              <div>
+                <span className="text-gray-600">Ciudad:</span>
+                <span className="ml-1 font-medium">{order.customer_city || 'No especificada'}</span>
+              </div>
+              <div>
+                <span className="text-gray-600">Departamento:</span>
+                <span className="ml-1 font-medium">{order.customer_department || 'No especificado'}</span>
               </div>
               <div>
                 <span className="text-gray-600">Total:</span>
@@ -473,46 +575,38 @@ const OrderReviewModal = ({ isOpen, onClose, order, onConfirm }) => {
 
           {/* Formulario de configuración */}
           <div className="space-y-6">
-            {/* Método de pago */}
-            <div>
+            {/* Método de pago - Dropdown Personalizado */}
+            <div className="relative">
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Método de Pago *
               </label>
-              <select
+              <CustomDropdown
                 value={formData.payment_method}
-                onChange={(e) => handleInputChange('payment_method', e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                onChange={(value) => handleInputChange('payment_method', value)}
+                options={paymentMethods}
+                placeholder="Seleccionar método de pago"
                 required
-              >
-                <option value="">Seleccionar método de pago</option>
-                {paymentMethods.map(method => (
-                  <option key={method.value} value={method.value}>
-                    {method.label}
-                  </option>
-                ))}
-              </select>
+              />
             </div>
 
-            {/* Método de Envío */}
-            <div>
+            {/* Método de Envío - Dropdown Personalizado */}
+            <div className="relative">
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 <Icons.Truck className="w-4 h-4 inline mr-1" />
                 Método de Envío *
               </label>
-              <select
+              <CustomDropdown
                 value={formData.delivery_method}
-                onChange={(e) => handleInputChange('delivery_method', e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                onChange={(value) => handleInputChange('delivery_method', value)}
+                options={deliveryMethods}
+                placeholder="Seleccionar método de envío"
                 required
-              >
-                <option value="">Seleccionar método de envío</option>
-                <option value="recoge_bodega">Recoge en Bodega</option>
-                <option value="domicilio">Domicilio</option>
-                <option value="nacional">Nacional</option>
-                <option value="mensajeria_urbana">Mensajería Urbana</option>
-              </select>
+              />
               <p className="text-xs text-gray-500 mt-1">
-                Seleccione el método de envío que se usará para este pedido
+                {deliveryMethods.length > 0 
+                  ? 'Seleccione el método de envío que se usará para este pedido'
+                  : 'Cargando métodos de envío...'
+                }
               </p>
             </div>
 

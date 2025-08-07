@@ -4,7 +4,7 @@ const { query } = require('../config/database');
 const generateGuideHTML = (guideData) => {
   const {
     order_number,
-    shipping_method,
+    delivery_method,
     transport_company,
     customer_name,
     phone,
@@ -144,7 +144,7 @@ const generateGuideHTML = (guideData) => {
                     </div>
                     <div class="info-item">
                         <div class="info-label">Método de Envío:</div>
-                        <div class="info-value">${shippingMethodLabels[shipping_method] || shipping_method}</div>
+                        <div class="info-value">${shippingMethodLabels[delivery_method] || delivery_method}</div>
                     </div>
                     <div class="info-item">
                         <div class="info-label">Transportadora:</div>
@@ -328,7 +328,7 @@ const generateSimpleGuide = async (req, res) => {
     // Datos para la guía
     const guideData = {
       order_number: order.order_number,
-      shipping_method: shippingMethod,
+      delivery_method: shippingMethod,
       transport_company: transportCompany || 'Recogida en Bodega',
       total_amount: order.total_amount,
       notes: notes || '',

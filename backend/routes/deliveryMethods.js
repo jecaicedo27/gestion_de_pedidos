@@ -3,7 +3,10 @@ const router = express.Router();
 const deliveryMethodsController = require('../controllers/deliveryMethodsController');
 const { verifyToken } = require('../middleware/auth');
 
-// Middleware de autenticación para todas las rutas
+// Obtener métodos de envío activos (PÚBLICO - no requiere autenticación)
+router.get('/active', deliveryMethodsController.getActiveMethods);
+
+// Middleware de autenticación para las rutas que SÍ requieren autenticación
 router.use(verifyToken);
 
 // Obtener todos los métodos de envío (solo admin)
@@ -18,9 +21,6 @@ router.get('/', async (req, res) => {
   
   await deliveryMethodsController.getAllMethods(req, res);
 });
-
-// Obtener métodos de envío activos (todos los roles autenticados)
-router.get('/active', deliveryMethodsController.getActiveMethods);
 
 // Crear nuevo método de envío (solo admin)
 router.post('/', async (req, res) => {

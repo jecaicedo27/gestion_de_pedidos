@@ -6,7 +6,7 @@ const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:3001/api
 
 const api = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 30000, // Aumentado a 30 segundos para consultas SIIGO
+  timeout: 120000, // Aumentado a 30 segundos para consultas SIIGO
   headers: {
     'Content-Type': 'application/json',
   },

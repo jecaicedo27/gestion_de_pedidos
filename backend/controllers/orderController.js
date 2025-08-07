@@ -18,8 +18,8 @@ const getOrders = async (req, res) => {
     const userRole = req.user.role;
     const userId = req.user.id;
 
-    // Construir query base con filtros según el rol
-    let whereClause = 'WHERE 1=1';
+    // Construir query base con filtros según el rol - INCLUIR SOFT DELETE
+    let whereClause = 'WHERE o.deleted_at IS NULL';
     const params = [];
 
     // Filtros por rol - Admin solo puede ver para informes, no gestionar
@@ -77,7 +77,8 @@ const getOrders = async (req, res) => {
     const orders = await query(
       `SELECT 
         o.id, o.order_number, o.customer_name, o.customer_phone, o.customer_address, 
-        o.customer_email, o.status, o.total_amount, o.notes, o.shipping_date,
+        o.customer_email, o.customer_city, o.customer_department, o.customer_country,
+        o.status, o.total_amount, o.notes, o.delivery_date, o.shipping_date,
         o.payment_method, o.delivery_method, o.created_at, o.updated_at,
         o.siigo_invoice_id, o.siigo_invoice_number, o.siigo_public_url, o.siigo_customer_id,
         o.siigo_observations, o.siigo_payment_info, o.siigo_seller_id, o.siigo_balance,
@@ -134,7 +135,7 @@ const getOrders = async (req, res) => {
 // Obtener pedido por ID
 const getOrderById = async (req, res) => {
   try {
-    const { id } = req.validatedParams;
+    const { id } = req.params;
 
     // Obtener pedido
     const orders = await query(
@@ -320,62 +321,8 @@ const createOrder = async (req, res) => {
 // Actualizar pedido
 const updateOrder = async (req, res) => {
   try {
-    // 🔍 LOGGING DETALLADO PARA SHIPPING_DATE - INICIO
-    console.log('\n' + '='.repeat(80));
-    console.log('🔍 ORDER UPDATE REQUEST - SHIPPING_DATE LOGGING');
-    console.log('='.repeat(80));
-    console.log('⏰ Timestamp:', new Date().toISOString());
-    console.log('👤 User:', req.user?.username || 'unknown');
-    console.log('🆔 User Role:', req.user?.role || 'unknown');
-    console.log('');
-    
-    // Log de parámetros de la request
-    console.log('📝 REQUEST PARAMETERS:');
-    console.log('   Order ID:', req.validatedParams?.id || req.params?.id || 'MISSING');
-    console.log('');
-    
-    // Log detallado del body de la request
-    console.log('📦 REQUEST BODY (RAW):');
-    console.log('   Body keys:', Object.keys(req.body || {}));
-    console.log('   Body content:', JSON.stringify(req.body, null, 2));
-    console.log('');
-    
-    // Log específico para campos críticos
-    console.log('🔍 CRITICAL FIELDS ANALYSIS:');
-    console.log('   ✅ payment_method:', req.body?.payment_method || 'MISSING');
-    console.log('   🚨 shipping_date:', req.body?.shipping_date || 'MISSING');
-    console.log('   📝 notes:', req.body?.notes || 'MISSING');
-    console.log('   🎯 action:', req.body?.action || 'MISSING');
-    console.log('   🆔 orderId:', req.body?.orderId || 'MISSING');
-    console.log('');
-    
-    // Verificar si shipping_date está presente
-    if (req.body?.shipping_date) {
-      console.log('✅ SHIPPING_DATE FOUND IN REQUEST:');
-      console.log('   Value:', req.body.shipping_date);
-      console.log('   Type:', typeof req.body.shipping_date);
-      console.log('   Length:', req.body.shipping_date.length);
-      console.log('   Is valid date?', !isNaN(Date.parse(req.body.shipping_date)));
-    } else {
-      console.log('🚨 WARNING: SHIPPING_DATE NOT FOUND IN REQUEST BODY');
-      console.log('   This may be the source of the problem!');
-    }
-    console.log('');
-    
-    // Log de validatedData si existe
-    if (req.validatedData) {
-      console.log('✅ VALIDATED DATA:');
-      console.log('   Keys:', Object.keys(req.validatedData));
-      console.log('   shipping_date in validated:', req.validatedData.shipping_date || 'MISSING');
-      console.log('   Content:', JSON.stringify(req.validatedData, null, 2));
-    } else {
-      console.log('⚠️  No validated data found');
-    }
-    console.log('');
-    // 🔍 LOGGING DETALLADO PARA SHIPPING_DATE - FIN
-    
-    const { id } = req.validatedParams;
-    const updateData = req.validatedData;
+    const { id } = req.params;
+    const updateData = req.validatedData || req.body;
     const userRole = req.user.role;
 
     // Verificar que el pedido existe
@@ -406,100 +353,68 @@ const updateOrder = async (req, res) => {
     }
 
     await transaction(async (connection) => {
+      // 🔒 PROTECCIÓN DE SHIPPING_DATE - Solo se puede actualizar en facturación
+      const isFromBilling = req.body.auto_processed !== true && userRole === 'facturador';
+      const isManualUpdate = !req.body.auto_processed;
+      
+      // Log de protección
+      console.log('🔒 SHIPPING_DATE PROTECTION:');
+      console.log('   User Role:', userRole);
+      console.log('   Auto Processed:', req.body.auto_processed);
+      console.log('   Is From Billing:', isFromBilling);
+      console.log('   Is Manual Update:', isManualUpdate);
+      console.log('   Original shipping_date:', order.shipping_date);
+      
+      // Si no es desde facturación Y ya existe una fecha, preservarla
+      if (!isFromBilling && order.shipping_date && updateData.shipping_date) {
+        console.log('🛡️ PRESERVING existing shipping_date - removing from update');
+        delete updateData.shipping_date;
+      }
+
       // Actualizar pedido
       const updateFields = [];
       const updateValues = [];
-
-      
-      // 🔍 FIELD MAPPING LOGGING - INICIO
-      console.log('🔧 FIELD MAPPING PROCESS:');
-      console.log('   Processing', Object.keys(updateData).length, 'fields');
-      console.log('');
       
       Object.keys(updateData).forEach(key => {
-        if (!['items'].includes(key)) {
+        if (!['items', 'auto_processed'].includes(key)) {
           const dbField = key === 'customerName' ? 'customer_name' :
                          key === 'customerPhone' ? 'customer_phone' :
                          key === 'customerAddress' ? 'customer_address' :
                          key === 'customerEmail' ? 'customer_email' :
+                         key === 'deliveryMethod' ? 'delivery_method' :
+                         key === 'delivery_method' ? 'delivery_method' :
+                         key === 'paymentMethod' ? 'payment_method' :
+                         key === 'payment_method' ? 'payment_method' :
                          key === 'deliveryDate' ? 'delivery_date' :
-                         key === 'shippingDate' ? 'shipping_date' : key;
+                         key === 'shippingDate' ? 'shipping_date' :
+                         key === 'shipping_date' ? 'shipping_date' : key;
           
-          console.log('   🔧 Mapping:', key, '->', dbField, '=', '"' + updateData[key] + '"');
-          
-          // Especial atención a shipping_date
+          // Logging especial para shipping_date
           if (key === 'shipping_date' || key === 'shippingDate') {
-            console.log('   🚨 SHIPPING_DATE FIELD DETECTED:');
-            console.log('      Original key:', key);
-            console.log('      Mapped to:', dbField);
-            console.log('      Value:', updateData[key]);
-            console.log('      Will be included in UPDATE:', true);
+            console.log('📅 SHIPPING_DATE UPDATE:');
+            console.log('   Allowed:', isFromBilling || !order.shipping_date);
+            console.log('   New value:', updateData[key]);
+            console.log('   Will update:', isFromBilling || !order.shipping_date);
           }
           
           updateFields.push(`${dbField} = ?`);
           updateValues.push(updateData[key]);
         }
       });
-      
-      console.log('');
-      console.log('📊 FINAL UPDATE ARRAYS:');
-      console.log('   Update fields:', updateFields);
-      console.log('   Update values:', updateValues);
-      console.log('');
-      
-      // Verificar si shipping_date está en los campos finales
-      const shippingFieldIndex = updateFields.findIndex(field => field.includes('shipping_date'));
-      if (shippingFieldIndex >= 0) {
-        console.log('✅ SHIPPING_DATE IN FINAL UPDATE:');
-        console.log('   Field:', updateFields[shippingFieldIndex]);
-        console.log('   Value:', updateValues[shippingFieldIndex]);
-        console.log('   Index:', shippingFieldIndex);
-      } else {
-        console.log('🚨 ERROR: SHIPPING_DATE NOT IN FINAL UPDATE ARRAYS');
-        console.log('   This explains why the date is not being saved!');
-      }
-      console.log('');
-      // 🔍 FIELD MAPPING LOGGING - FIN
-
-      
-      // 🔧 CORREGIDO: Mapeo único de campos (eliminada duplicación)
 
       if (updateFields.length > 0) {
         updateFields.push('updated_at = NOW()');
         updateValues.push(id);
-
-        
-      // 🔍 SQL EXECUTION LOGGING - INICIO
-      console.log('🔧 EXECUTING SQL UPDATE:');
-      console.log('   Query:', `UPDATE orders SET ${updateFields.join(', ')} WHERE id = ?`);
-      console.log('   Values:', updateValues);
-      console.log('   Order ID:', id);
-      console.log('');
-      
-      // Verificación final de shipping_date
-      const finalShippingIndex = updateFields.findIndex(f => f.includes('shipping_date'));
-      if (finalShippingIndex >= 0) {
-        console.log('✅ FINAL SHIPPING_DATE CHECK:');
-        console.log('   SQL field:', updateFields[finalShippingIndex]);
-        console.log('   SQL value:', updateValues[finalShippingIndex]);
-      } else {
-        console.log('🚨 FINAL WARNING: NO SHIPPING_DATE IN SQL');
-      }
-      console.log('');
-      // 🔍 SQL EXECUTION LOGGING - FIN
-      
         
         const updateResult = await connection.execute(
           `UPDATE orders SET ${updateFields.join(', ')} WHERE id = ?`,
           updateValues
         );
         
-        // 🔍 UPDATE RESULT LOGGING
-        console.log('📊 UPDATE RESULT:');
-        console.log('   Affected rows:', updateResult.affectedRows);
-        console.log('   Changed rows:', updateResult.changedRows);
-        console.log('   Warnings:', updateResult.warningCount);
-        console.log('');
+        console.log('📊 UPDATE RESULT:', {
+          affectedRows: updateResult.affectedRows,
+          changedRows: updateResult.changedRows
+        });
       }
 
       // NUEVO FLUJO OBLIGATORIO: Logística -> Empaque -> Reparto
@@ -595,7 +510,7 @@ const updateOrder = async (req, res) => {
     
     // 🔍 FINAL VERIFICATION LOGGING
     console.log('🔍 FINAL ORDER VERIFICATION:');
-    const [verificationResult] = await query(
+    const verificationResult = await query(
       'SELECT id, order_number, shipping_date, payment_method, status, updated_at FROM orders WHERE id = ?',
       [id]
     );
@@ -635,13 +550,17 @@ const updateOrder = async (req, res) => {
   }
 };
 
-// Eliminar pedido (solo admin)
+// Eliminar pedido (solo admin) - SOFT DELETE
 const deleteOrder = async (req, res) => {
   try {
-    const { id } = req.validatedParams;
+    const { id } = req.params;
+    const userId = req.user.id;
 
-    // Verificar que el pedido existe
-    const existingOrder = await query('SELECT id, status FROM orders WHERE id = ?', [id]);
+    // Verificar que el pedido existe y no está ya eliminado
+    const existingOrder = await query(
+      'SELECT id, order_number, status, customer_name, siigo_invoice_number, deleted_at FROM orders WHERE id = ?', 
+      [id]
+    );
     
     if (!existingOrder.length) {
       return res.status(404).json({
@@ -650,25 +569,45 @@ const deleteOrder = async (req, res) => {
       });
     }
 
-    // No permitir eliminar pedidos entregados
-    if (existingOrder[0].status === 'entregado') {
+    const order = existingOrder[0];
+
+    // Verificar si ya está eliminado
+    if (order.deleted_at) {
       return res.status(400).json({
         success: false,
-        message: 'No se pueden eliminar pedidos entregados'
+        message: 'El pedido ya ha sido eliminado'
+      });
+    }
+
+    // No permitir eliminar pedidos entregados
+    if (['entregado_cliente', 'entregado_transportadora'].includes(order.status)) {
+      return res.status(400).json({
+        success: false,
+        message: 'No se pueden eliminar pedidos ya entregados'
       });
     }
 
     await transaction(async (connection) => {
-      // Eliminar items del pedido
-      await connection.execute('DELETE FROM order_items WHERE order_id = ?', [id]);
+      // SOFT DELETE: Marcar como eliminado
+      await connection.execute(
+        'UPDATE orders SET deleted_at = NOW(), updated_at = NOW() WHERE id = ?', 
+        [id]
+      );
       
-      // Eliminar pedido
-      await connection.execute('DELETE FROM orders WHERE id = ?', [id]);
+      // Registrar en auditoría
+      await connection.execute(
+        `INSERT INTO orders_audit (
+          order_id, action, siigo_invoice_number, customer_name, user_id, created_at
+        ) VALUES (?, ?, ?, ?, ?, NOW())`,
+        [id, 'DELETE', order.siigo_invoice_number, order.customer_name, userId]
+      );
+
+      console.log(`🗑️ Pedido ${order.order_number} marcado como eliminado (soft delete) por usuario ${userId}`);
     });
 
     res.json({
       success: true,
-      message: 'Pedido eliminado exitosamente'
+      message: 'Pedido eliminado exitosamente (puede ser restaurado si es necesario)'
     });
 
   } catch (error) {
@@ -683,7 +622,7 @@ const deleteOrder = async (req, res) => {
 // Eliminar pedido de SIIGO (devuelve el pedido a SIIGO para reimportación)
 const deleteSiigoOrder = async (req, res) => {
   try {
-    const { id } = req.validatedParams;
+    const { id } = req.params;
 
     // Verificar que el pedido existe y tiene información de SIIGO
     const existingOrder = await query(
@@ -792,7 +731,7 @@ const deleteSiigoOrder = async (req, res) => {
 // Asignar pedido a mensajero
 const assignOrder = async (req, res) => {
   try {
-    const { id } = req.validatedParams;
+    const { id } = req.params;
     const { messengerId } = req.body;
 
     // Verificar que el pedido existe y está listo para envío
@@ -1118,6 +1057,11 @@ const getDashboardStats = async (req, res) => {
       params
     );
 
+    const readyForDelivery = await query(
+      `SELECT COUNT(*) as count FROM orders ${whereClause} AND status = 'listo_para_entrega'`,
+      params
+    );
+
     const delivered = await query(
       `SELECT COUNT(*) as count FROM orders ${whereClause} AND status = 'entregado_cliente'`,
       params
@@ -1132,6 +1076,7 @@ const getDashboardStats = async (req, res) => {
         pendingPayment: pendingPayment[0].count,
         pendingLogistics: pendingLogistics[0].count,
         pendingPackaging: pendingPackaging[0].count,
+        readyForDelivery: readyForDelivery[0].count,
         pendingDelivery: pendingDelivery[0].count,
         delivered: delivered[0].count,
         

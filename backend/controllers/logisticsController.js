@@ -24,10 +24,10 @@ const getCarriers = async (req, res) => {
 };
 
 // Actualizar método de envío y transportadora
-const updateShippingMethod = async (req, res) => {
+const updateDeliveryMethod = async (req, res) => {
   try {
     const { id } = req.params;
-    const { shipping_method, carrier_id, tracking_number } = req.body;
+    const { delivery_method, carrier_id, tracking_number } = req.body;
 
     // Verificar que el pedido existe y está en logística
     const order = await query(
@@ -67,9 +67,9 @@ const updateShippingMethod = async (req, res) => {
     // Actualizar pedido
     await query(
       `UPDATE orders 
-       SET shipping_method = ?, carrier_id = ?, tracking_number = ?, updated_at = NOW()
+       SET delivery_method = ?, carrier_id = ?, tracking_number = ?, updated_at = NOW()
        WHERE id = ?`,
-      [shipping_method, carrier_id || null, tracking_number || null, id]
+      [delivery_method, carrier_id || null, tracking_number || null, id]
     );
 
     res.json({
@@ -95,8 +95,8 @@ const generateShippingGuide = async (req, res) => {
     const orderData = await query(
       `SELECT 
         o.id, o.order_number, o.customer_name, o.phone, o.address, o.email,
-        o.city, o.department, o.shipping_method, o.tracking_number,
-        o.payment_method, o.total, o.notes, o.shipping_date, o.status,
+        o.city, o.department, o.delivery_method, o.tracking_number,
+        o.payment_method, o.total_amount, o.notes, o.shipping_date, o.status,
         c.name as carrier_name, c.code as carrier_code, 
         c.contact_phone as carrier_phone, c.contact_email as carrier_email
        FROM orders o
@@ -115,14 +115,14 @@ const generateShippingGuide = async (req, res) => {
     const order = orderData[0];
 
     // Verificar que el pedido tiene método de envío y transportadora
-    if (!order.shipping_method) {
+    if (!order.delivery_method) {
       return res.status(400).json({
         success: false,
         message: 'El pedido debe tener un método de envío asignado'
       });
     }
 
-    if (!order.carrier_name && order.shipping_method !== 'recoge_bodega') {
+    if (!order.carrier_name && order.delivery_method !== 'recoge_bodega') {
       return res.status(400).json({
         success: false,
         message: 'El pedido debe tener una transportadora asignada'
@@ -175,7 +175,7 @@ const getLogisticsOrders = async (req, res) => {
       page = 1, 
       limit = 10, 
       search,
-      shipping_method,
+      delivery_method,
       carrier_id,
       sortBy = 'created_at',
       sortOrder = 'DESC'
@@ -193,9 +193,9 @@ const getLogisticsOrders = async (req, res) => {
       params.push(searchTerm, searchTerm);
     }
 
-    if (shipping_method) {
-      whereClause += ' AND o.shipping_method = ?';
-      params.push(shipping_method);
+    if (delivery_method) {
+      whereClause += ' AND o.delivery_method = ?';
+      params.push(delivery_method);
     }
 
     if (carrier_id) {
@@ -204,7 +204,7 @@ const getLogisticsOrders = async (req, res) => {
     }
 
     // Validar campos de ordenamiento
-    const validSortFields = ['created_at', 'order_number', 'customer_name', 'shipping_method'];
+    const validSortFields = ['created_at', 'order_number', 'customer_name', 'delivery_method'];
     const validSortOrders = ['ASC', 'DESC'];
     
     const orderBy = validSortFields.includes(sortBy) ? sortBy : 'created_at';
@@ -214,8 +214,8 @@ const getLogisticsOrders = async (req, res) => {
     const orders = await query(
       `SELECT 
         o.id, o.order_number, o.customer_name, o.phone, o.address, o.email,
-        o.city, o.department, o.shipping_method, o.carrier_id, o.tracking_number,
-        o.payment_method, o.total, o.shipping_date, o.shipping_guide_generated,
+        o.city, o.department, o.delivery_method, o.carrier_id, o.tracking_number,
+        o.payment_method, o.total_amount, o.shipping_date, o.shipping_guide_generated,
         o.created_at, o.updated_at,
         c.name as carrier_name, c.code as carrier_code
        FROM orders o
@@ -262,7 +262,7 @@ const markOrderReady = async (req, res) => {
 
     // Verificar que el pedido existe y está en logística
     const order = await query(
-      'SELECT id, status, shipping_method, carrier_id FROM orders WHERE id = ?',
+      'SELECT id, status, delivery_method, carrier_id FROM orders WHERE id = ?',
       [id]
     );
 
@@ -281,7 +281,7 @@ const markOrderReady = async (req, res) => {
     }
 
     // Verificar que tiene método de envío
-    if (!order[0].shipping_method) {
+    if (!order[0].delivery_method) {
       return res.status(400).json({
         success: false,
         message: 'El pedido debe tener un método de envío asignado'
@@ -289,7 +289,7 @@ const markOrderReady = async (req, res) => {
     }
 
     // Verificar que tiene transportadora (excepto recogida en bodega)
-    if (order[0].shipping_method !== 'recoge_bodega' && !order[0].carrier_id) {
+    if (order[0].delivery_method !== 'recoge_bodega' && !order[0].carrier_id) {
       return res.status(400).json({
         success: false,
         message: 'El pedido debe tener una transportadora asignada'
@@ -322,11 +322,11 @@ const getLogisticsStats = async (req, res) => {
     // Pedidos por método de envío
     const shippingMethodStats = await query(
       `SELECT 
-        COALESCE(shipping_method, 'sin_asignar') as method,
+        COALESCE(delivery_method, 'sin_asignar') as method,
         COUNT(*) as count
        FROM orders 
        WHERE status = 'en_logistica'
-       GROUP BY shipping_method`,
+       GROUP BY delivery_method`,
       []
     );
 
@@ -347,7 +347,7 @@ const getLogisticsStats = async (req, res) => {
     const unassignedOrders = await query(
       `SELECT COUNT(*) as count 
        FROM orders 
-       WHERE status = 'en_logistica' AND (shipping_method IS NULL OR carrier_id IS NULL)`,
+       WHERE status = 'en_logistica' AND (delivery_method IS NULL OR carrier_id IS NULL)`,
       []
     );
 
@@ -436,7 +436,7 @@ const processOrder = async (req, res) => {
     await query(
       `UPDATE orders 
        SET 
-         shipping_method = ?, 
+         delivery_method = ?, 
          carrier_id = ?, 
          tracking_number = ?, 
          logistics_notes = ?,
@@ -515,7 +515,7 @@ const generateGuide = async (req, res) => {
 
     // Obtener información del pedido
     const orderInfo = await query(
-      'SELECT order_number, total, notes, customer_name, phone, address, city, department, email FROM orders WHERE id = ?',
+      'SELECT order_number, total_amount, notes, customer_name, phone, address, city, department, email FROM orders WHERE id = ?',
       [orderId]
     );
 
@@ -560,9 +560,9 @@ const generateGuide = async (req, res) => {
     // Generar PDF usando el servicio existente
     const guideData = {
       order_number: order.order_number,
-      shipping_method: shippingMethod,
+      delivery_method: shippingMethod,
       transport_company: transportCompany || 'Recogida en Bodega',
-      total_amount: order.total,
+      total_amount: order.total_amount,
       notes: notes || '',
       created_at: new Date(),
       // Agregar datos del destinatario extraídos
@@ -635,13 +635,334 @@ const generateGuide = async (req, res) => {
   }
 };
 
+// Obtener pedidos listos para entrega agrupados por tipo
+const getReadyForDeliveryOrders = async (req, res) => {
+  try {
+    console.log('🔍 Iniciando getReadyForDeliveryOrders...');
+    
+    // Primero hacer una query simple para debuggear
+    const simpleOrders = await query(
+      `SELECT id, order_number, customer_name, status, delivery_method 
+       FROM orders 
+       WHERE status IN ('listo_para_entrega', 'empacado', 'listo')
+       LIMIT 5`,
+      []
+    );
+    
+    console.log('📦 Pedidos simples encontrados:', simpleOrders.length);
+    
+    if (simpleOrders.length === 0) {
+      return res.json({
+        success: true,
+        data: {
+          groupedOrders: {
+            recoge_bodega: [],
+            interrapidisimo: [],
+            transprensa: [], 
+            envia: [],
+            camion_externo: [],
+            mensajero_julian: [],
+            mensajero_juan: [],
+            otros: []
+          },
+          stats: {
+            total: 0,
+            recoge_bodega: 0,
+            interrapidisimo: 0,
+            transprensa: 0,
+            envia: 0,
+            camion_externo: 0,
+            mensajero_julian: 0,
+            mensajero_juan: 0,
+            otros: 0
+          },
+          totalReady: 0
+        }
+      });
+    }
+
+    // Obtener pedidos listos para entrega con query más segura
+    const readyOrders = await query(
+      `SELECT 
+        o.id, o.order_number, o.customer_name, o.status, o.delivery_method,
+        o.total_amount, o.created_at, o.updated_at
+       FROM orders o
+       WHERE o.status IN ('listo_para_entrega', 'empacado', 'listo')
+       ORDER BY o.created_at ASC`,
+      []
+    );
+    
+    console.log('📦 Pedidos completos encontrados:', readyOrders.length);
+
+    // Agrupar por tipo de entrega
+    const groupedOrders = {
+      recoge_bodega: [],
+      interrapidisimo: [],
+      transprensa: [], 
+      envia: [],
+      camion_externo: [],
+      mensajero_julian: [],
+      mensajero_juan: [],
+      otros: []
+    };
+
+    readyOrders.forEach(order => {
+      const { delivery_method, carrier_name, assigned_messenger_id } = order;
+      
+      if (delivery_method === 'recoge_bodega' || delivery_method === 'recogida_tienda') {
+        groupedOrders.recoge_bodega.push(order);
+      } else if (carrier_name && carrier_name.toLowerCase().includes('interrapidisimo')) {
+        groupedOrders.interrapidisimo.push(order);
+      } else if (carrier_name && carrier_name.toLowerCase().includes('transprensa')) {
+        groupedOrders.transprensa.push(order);
+      } else if (carrier_name && carrier_name.toLowerCase().includes('envia')) {
+        groupedOrders.envia.push(order);
+      } else if (delivery_method === 'camion_externo') {
+        groupedOrders.camion_externo.push(order);
+      } else if (delivery_method === 'mensajero') {
+        // Verificar qué mensajero está asignado
+        if (assigned_messenger_id) {
+          const messengerName = order.messenger_name?.toLowerCase() || '';
+          if (messengerName.includes('julian')) {
+            groupedOrders.mensajero_julian.push(order);
+          } else if (messengerName.includes('juan')) {
+            groupedOrders.mensajero_juan.push(order);
+          } else {
+            groupedOrders.otros.push(order);
+          }
+        } else {
+          groupedOrders.otros.push(order);
+        }
+      } else {
+        groupedOrders.otros.push(order);
+      }
+    });
+
+    // Calcular estadísticas
+    const stats = {
+      total: readyOrders.length,
+      recoge_bodega: groupedOrders.recoge_bodega.length,
+      interrapidisimo: groupedOrders.interrapidisimo.length,
+      transprensa: groupedOrders.transprensa.length,
+      envia: groupedOrders.envia.length,
+      camion_externo: groupedOrders.camion_externo.length,
+      mensajero_julian: groupedOrders.mensajero_julian.length,
+      mensajero_juan: groupedOrders.mensajero_juan.length,
+      otros: groupedOrders.otros.length
+    };
+
+    res.json({
+      success: true,
+      data: {
+        groupedOrders,
+        stats,
+        totalReady: readyOrders.length
+      }
+    });
+
+  } catch (error) {
+    console.error('Error obteniendo pedidos listos para entrega:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error interno del servidor'
+    });
+  }
+};
+
+// Asignar mensajero a pedido
+const assignMessenger = async (req, res) => {
+  try {
+    const { orderId, messengerId } = req.body;
+
+    // Verificar que el pedido existe
+    const order = await query(
+      'SELECT id, status, order_number FROM orders WHERE id = ?',
+      [orderId]
+    );
+
+    if (!order.length) {
+      return res.status(404).json({
+        success: false,
+        message: 'Pedido no encontrado'
+      });
+    }
+
+    // Verificar que el mensajero existe
+    const messenger = await query(
+      'SELECT id, username FROM users WHERE id = ? AND role = "mensajero" AND active = TRUE',
+      [messengerId]
+    );
+
+    if (!messenger.length) {
+      return res.status(400).json({
+        success: false,
+        message: 'Mensajero no válido'
+      });
+    }
+
+    // Asignar mensajero y cambiar estado
+    await query(
+      `UPDATE orders 
+       SET assigned_messenger_id = ?, status = 'en_reparto', updated_at = NOW()
+       WHERE id = ?`,
+      [messengerId, orderId]
+    );
+
+    res.json({
+      success: true,
+      message: `Pedido asignado a ${messenger[0].username} exitosamente`
+    });
+
+  } catch (error) {
+    console.error('Error asignando mensajero:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error interno del servidor'
+    });
+  }
+};
+
+// Marcar pedido como entregado a transportadora
+const markDeliveredToCarrier = async (req, res) => {
+  try {
+    const { orderId, status, delivery_notes } = req.body;
+
+    // Verificar que el pedido existe
+    const order = await query(
+      'SELECT id, status, order_number FROM orders WHERE id = ?',
+      [orderId]
+    );
+
+    if (!order.length) {
+      return res.status(404).json({
+        success: false,
+        message: 'Pedido no encontrado'
+      });
+    }
+
+    // Actualizar estado del pedido
+    await query(
+      `UPDATE orders 
+       SET status = ?, delivery_notes = ?, updated_at = NOW()
+       WHERE id = ?`,
+      [status || 'entregado_transportadora', delivery_notes, orderId]
+    );
+
+    res.json({
+      success: true,
+      message: 'Pedido marcado como entregado a transportadora'
+    });
+
+  } catch (error) {
+    console.error('Error marcando como entregado a transportadora:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error interno del servidor'
+    });
+  }
+};
+
+// Marcar pedido como listo para recoger
+const markReadyForPickup = async (req, res) => {
+  try {
+    const { orderId, status, delivery_notes } = req.body;
+
+    // Verificar que el pedido existe
+    const order = await query(
+      'SELECT id, status, order_number FROM orders WHERE id = ?',
+      [orderId]
+    );
+
+    if (!order.length) {
+      return res.status(404).json({
+        success: false,
+        message: 'Pedido no encontrado'
+      });
+    }
+
+    // Actualizar estado del pedido
+    await query(
+      `UPDATE orders 
+       SET status = ?, delivery_notes = ?, updated_at = NOW()
+       WHERE id = ?`,
+      [status || 'listo_para_recoger', delivery_notes, orderId]
+    );
+
+    res.json({
+      success: true,
+      message: 'Pedido marcado como listo para recoger'
+    });
+
+  } catch (error) {
+    console.error('Error marcando como listo para recoger:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error interno del servidor'
+    });
+  }
+};
+
+// Marcar pedido como en reparto
+const markInDelivery = async (req, res) => {
+  try {
+    const { orderId, messengerId, status, delivery_notes } = req.body;
+
+    // Verificar que el pedido existe
+    const order = await query(
+      'SELECT id, status, order_number FROM orders WHERE id = ?',
+      [orderId]
+    );
+
+    if (!order.length) {
+      return res.status(404).json({
+        success: false,
+        message: 'Pedido no encontrado'
+      });
+    }
+
+    // Actualizar estado del pedido y asignar mensajero si se proporciona
+    if (messengerId) {
+      await query(
+        `UPDATE orders 
+         SET status = ?, assigned_messenger_id = ?, delivery_notes = ?, updated_at = NOW()
+         WHERE id = ?`,
+        [status || 'en_reparto', messengerId, delivery_notes, orderId]
+      );
+    } else {
+      await query(
+        `UPDATE orders 
+         SET status = ?, delivery_notes = ?, updated_at = NOW()
+         WHERE id = ?`,
+        [status || 'en_reparto', delivery_notes, orderId]
+      );
+    }
+
+    res.json({
+      success: true,
+      message: 'Pedido marcado como en reparto'
+    });
+
+  } catch (error) {
+    console.error('Error marcando como en reparto:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error interno del servidor'
+    });
+  }
+};
+
 module.exports = {
   getCarriers,
-  updateShippingMethod,
+  updateDeliveryMethod,
   generateShippingGuide,
   getLogisticsOrders,
   markOrderReady,
   getLogisticsStats,
   processOrder,
-  generateGuide
+  generateGuide,
+  getReadyForDeliveryOrders,
+  assignMessenger,
+  markDeliveredToCarrier,
+  markReadyForPickup,
+  markInDelivery
 };

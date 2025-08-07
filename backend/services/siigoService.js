@@ -178,16 +178,23 @@ class SiigoService {
       const headers = await this.getHeaders();
       
       const defaultParams = {
-        page_size: params.page_size || 20,
+        page_size: params.page_size || 100, // Aumentado el límite
         page: params.page || 1
       };
 
+      // Usar date_start según documentación oficial SIIGO (formato yyyymmdd)
       if (params.start_date) {
-        defaultParams.start_date = params.start_date;
+        // Convertir de YYYY-MM-DD a YYYYMMDD
+        const dateStartFormatted = this.formatDateForSiigo(params.start_date);
+        defaultParams.date_start = dateStartFormatted;
+        console.log(`📅 Usando date_start (formato SIIGO): ${dateStartFormatted}`);
       }
 
       return await this.makeRequestWithRetry(async () => {
-        console.log(`📋 Obteniendo facturas (página ${defaultParams.page})...`);
+        console.log(`📋 Obteniendo facturas (página ${defaultParams.page}, page_size: ${defaultParams.page_size})...`);
+        if (defaultParams.date_start) {
+          console.log(`📅 Filtrando desde fecha: ${defaultParams.date_start}`);
+        }
         
         const response = await axios.get(`${this.baseURL}/v1/invoices`, {
           headers,
@@ -195,13 +202,49 @@ class SiigoService {
           timeout: 45000 // Timeout aumentado
         });
 
-        console.log(`✅ ${response.data.results?.length || 0} facturas obtenidas`);
+        console.log(`✅ ${response.data.results?.length || 0} facturas obtenidas desde ${defaultParams.date_start || 'inicio'}`);
+        console.log(`📊 Total disponible en SIIGO: ${response.data.pagination?.total_results || 'N/A'}`);
         return response.data;
       });
 
     } catch (error) {
       console.error('❌ Error obteniendo facturas:', error.message);
       throw error;
+    }
+  }
+
+  // Función para convertir fecha a formato SIIGO (yyyy-MM-dd)
+  formatDateForSiigo(dateString) {
+    try {
+      // Si ya está en formato yyyy-MM-dd, devolverlo tal como está
+      if (/^\d{4}-\d{2}-\d{2}$/.test(dateString)) {
+        console.log(`📅 Fecha ya en formato SIIGO: ${dateString}`);
+        return dateString;
+      }
+      
+      // Si está en formato yyyymmdd (sin guiones), convertir a yyyy-MM-dd
+      if (/^\d{8}$/.test(dateString)) {
+        const formatted = `${dateString.slice(0,4)}-${dateString.slice(4,6)}-${dateString.slice(6,8)}`;
+        console.log(`📅 Fecha convertida de ${dateString} a formato SIIGO: ${formatted}`);
+        return formatted;
+      }
+      
+      // Si es un objeto Date, convertir a yyyy-MM-dd
+      const date = new Date(dateString);
+      if (!isNaN(date.getTime())) {
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+        const formatted = `${year}-${month}-${day}`;
+        console.log(`📅 Fecha convertida de Date a formato SIIGO: ${formatted}`);
+        return formatted;
+      }
+      
+      console.warn(`⚠️ Formato de fecha no reconocido: ${dateString}`);
+      return dateString;
+    } catch (error) {
+      console.error(`❌ Error formateando fecha para SIIGO: ${error.message}`);
+      return dateString;
     }
   }
 
@@ -574,7 +617,7 @@ class SiigoService {
         customer_email: sanitizedCustomerEmail,
         customer_department: sanitizedCustomerDepartment,
         customer_country: sanitizedCustomerCountry,
-        customer_city: customerCity,
+        customer_city: sanitizedCustomerCity,
         total_amount: totalAmount,
         status: 'pendiente_por_facturacion',
         delivery_method: deliveryMethod,
@@ -632,24 +675,33 @@ class SiigoService {
         
         for (const item of fullInvoice.items) {
           try {
+            console.log(`🔍 Insertando item: ${item.description || item.name || 'Producto SIIGO'}`);
             await query(`
               INSERT INTO order_items (
-                order_id, name, quantity, price, product_code
-              ) VALUES (?, ?, ?, ?, ?)
+                order_id, name, quantity, price, description, created_at
+              ) VALUES (?, ?, ?, ?, ?, NOW())
             `, [
               orderId,
-              item.description || item.name || 'Producto SIIGO',
+              sanitizeText(item.description || item.name || 'Producto SIIGO'),
               parseFloat(item.quantity || 1),
               parseFloat(item.price || item.unit_price || 0),
-              item.code || null
+              sanitizeText(item.code || item.description || item.name || null)
             ]);
             itemsInserted++;
+            console.log(`✅ Item insertado exitosamente: ${item.description || item.name}`);
           } catch (itemError) {
-            console.error(`❌ Error insertando item:`, itemError.message);
+            console.error(`❌ Error insertando item "${item.description || item.name}":`, itemError.message);
+            console.error(`📊 Datos del item:`, JSON.stringify({
+              orderId,
+              name: item.description || item.name,
+              quantity: item.quantity,
+              price: item.price || item.unit_price,
+              code: item.code
+            }, null, 2));
           }
         }
         
-        console.log(`✅ ${itemsInserted} items insertados`);
+        console.log(`✅ ${itemsInserted} items insertados de ${fullInvoice.items.length} intentados`);
       } else {
         console.log(`⚠️ Factura sin items detallados`);
       }
@@ -685,6 +737,65 @@ class SiigoService {
       }
       
       throw error;
+    }
+  }
+
+  // Función para extraer items de una factura de SIIGO
+  extractOrderItems(invoiceData) {
+    try {
+      if (!invoiceData || !invoiceData.items || !Array.isArray(invoiceData.items)) {
+        console.log('⚠️ Factura sin items detallados');
+        return [];
+      }
+
+      console.log(`📦 Extrayendo ${invoiceData.items.length} items de la factura...`);
+      
+      return invoiceData.items.map(item => ({
+        name: item.description || item.name || 'Producto SIIGO',
+        quantity: parseFloat(item.quantity || 1),
+        price: parseFloat(item.price || item.unit_price || 0),
+        description: item.description || item.name || null,
+        product_code: item.code || null
+      }));
+      
+    } catch (error) {
+      console.error('❌ Error extrayendo items de SIIGO:', error.message);
+      return [];
+    }
+  }
+
+  // Función para construir notas del pedido desde SIIGO
+  buildOrderNotes(invoiceData, customerInfo = {}) {
+    try {
+      let notes = [];
+      
+      // Agregar observaciones de SIIGO
+      if (invoiceData.observations) {
+        notes.push(`OBSERVACIONES SIIGO: ${invoiceData.observations}`);
+      }
+      
+      // Agregar notas de SIIGO
+      if (invoiceData.notes) {
+        notes.push(`NOTAS SIIGO: ${invoiceData.notes}`);
+      }
+      
+      // Agregar información adicional del cliente si está disponible
+      if (customerInfo.identification) {
+        notes.push(`IDENTIFICACIÓN: ${customerInfo.identification}`);
+      }
+      
+      if (customerInfo.id_type?.name) {
+        notes.push(`TIPO ID: ${customerInfo.id_type.name}`);
+      }
+      
+      const result = notes.join('\n\n');
+      console.log(`📝 Notas del pedido construidas: ${result || 'Sin notas'}`);
+      
+      return result || null;
+      
+    } catch (error) {
+      console.error('❌ Error construyendo notas del pedido:', error.message);
+      return null;
     }
   }
 

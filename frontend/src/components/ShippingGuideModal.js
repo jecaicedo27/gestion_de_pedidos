@@ -48,8 +48,18 @@ const ShippingGuideModal = ({ isOpen, onClose, order, onSuccess }) => {
       setCompanies(companiesResponse.data.data);
       
       // Cargar configuración del remitente
-      const senderResponse = await api.get('/shipping/sender-config');
-      setSenderConfig(senderResponse.data.data);
+      const senderResponse = await api.get('/company-config/shipping-info');
+      const companyData = senderResponse.data.data;
+      
+      // Mapear los campos para que coincidan con lo que espera el frontend
+      const mappedData = {
+        ...companyData,
+        company_nit: companyData.nit,
+        phone: companyData.whatsapp,
+        address_line1: companyData.address
+      };
+      
+      setSenderConfig(mappedData);
       
     } catch (error) {
       console.error('Error cargando datos iniciales:', error);
