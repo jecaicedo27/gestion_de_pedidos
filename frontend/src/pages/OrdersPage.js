@@ -181,6 +181,7 @@ const OrdersPage = () => {
     if (!['admin', 'logistica'].includes(user?.role)) return;
     
     try {
+      console.log('🚚 Iniciando loadReadyForDelivery...');
       setReadyForDelivery(prev => ({ ...prev, loading: true }));
       
       const response = await fetch('/api/logistics/ready-for-delivery', {
@@ -189,21 +190,38 @@ const OrdersPage = () => {
         }
       });
       
+      console.log('📡 Response status:', response.status);
+      
       if (!response.ok) {
-        throw new Error('Error cargando pedidos listos');
+        throw new Error(`Error cargando pedidos listos: ${response.status}`);
       }
       
       const data = await response.json();
+      console.log('📊 Datos recibidos:', data);
+      
+      // Asegurar que los datos existen y tienen la estructura correcta
+      const groupedOrders = data?.data?.groupedOrders || {};
+      const stats = data?.data?.stats || {};
+      
+      console.log('📦 Grupos:', Object.keys(groupedOrders));
+      console.log('📈 Stats:', stats);
       
       setReadyForDelivery({
-        groupedOrders: data.data.groupedOrders,
-        stats: data.data.stats,
+        groupedOrders,
+        stats,
         loading: false
       });
       
+      console.log('✅ loadReadyForDelivery completado');
+      
     } catch (error) {
-      console.error('Error cargando pedidos listos para entrega:', error);
-      setReadyForDelivery(prev => ({ ...prev, loading: false }));
+      console.error('❌ Error cargando pedidos listos para entrega:', error);
+      setReadyForDelivery(prev => ({ 
+        ...prev, 
+        loading: false,
+        groupedOrders: {},
+        stats: {}
+      }));
     }
   };
 
@@ -1245,7 +1263,7 @@ const OrdersPage = () => {
                           <div className="flex-1">
                             <div className="font-medium text-sm">{order.order_number}</div>
                             <div className="text-xs text-gray-600">{order.customer_name}</div>
-                            <div className="text-xs text-green-600">${order.total?.toLocaleString('es-CO')}</div>
+                            <div className="text-xs text-green-600">${order.total_amount?.toLocaleString('es-CO')}</div>
                           </div>
                           <div className="flex items-center space-x-2">
                             <button
@@ -1516,6 +1534,61 @@ const OrdersPage = () => {
                                 defaultValue=""
                               >
                                 <option value="">Reasignar</option>
+                                {messengers.map((messenger) => (
+                                  <option key={messenger.id} value={messenger.id}>
+                                    {messenger.name}
+                                  </option>
+                                ))}
+                              </select>
+                            )}
+                            <button
+                              onClick={() => navigate(`/orders/${order.id}`)}
+                              className="text-blue-600 hover:text-blue-800"
+                              title="Ver detalles"
+                            >
+                              <Icons.Eye className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Mensajería Local */}
+              {readyForDelivery.stats.mensajeria_local > 0 && (
+                <div className="card">
+                  <div className="card-header">
+                    <h3 className="text-lg font-semibold text-gray-900 flex items-center">
+                      <Icons.MessageSquare className="w-5 h-5 mr-2 text-purple-600" />
+                      Mensajería Local
+                      <span className="ml-2 px-2 py-1 text-xs font-medium bg-purple-100 text-purple-800 rounded-full">
+                        {readyForDelivery.stats.mensajeria_local}
+                      </span>
+                    </h3>
+                  </div>
+                  <div className="card-content">
+                    <div className="space-y-2 max-h-64 overflow-y-auto">
+                      {readyForDelivery.groupedOrders.mensajeria_local?.map((order) => (
+                        <div key={order.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                          <div className="flex-1">
+                            <div className="font-medium text-sm">{order.order_number}</div>
+                            <div className="text-xs text-gray-600">{order.customer_name}</div>
+                            <div className="text-xs text-purple-600">${order.total_amount?.toLocaleString('es-CO')}</div>
+                          </div>
+                          <div className="flex items-center space-x-2">
+                            {messengers.length > 0 && (
+                              <select
+                                onChange={(e) => {
+                                  if (e.target.value) {
+                                    handleAssignMessengerToOrder(order.id, parseInt(e.target.value));
+                                  }
+                                }}
+                                className="text-xs px-2 py-1 border border-gray-300 rounded"
+                                defaultValue=""
+                              >
+                                <option value="">Asignar mensajero</option>
                                 {messengers.map((messenger) => (
                                   <option key={messenger.id} value={messenger.id}>
                                     {messenger.name}

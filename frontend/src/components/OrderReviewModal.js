@@ -75,8 +75,10 @@ const OrderReviewModal = ({ isOpen, onClose, order, onConfirm }) => {
       const defaultShippingDate = today.toISOString().split('T')[0];
       
       setFormData({
-        delivery_method: order.delivery_method || '',
-        payment_method: order.payment_method || '',
+        delivery_method: '',  // Siempre vacío para forzar selección manual
+        payment_method: '',   // Siempre vacío para forzar selección manual
+        electronic_payment_type: '', // Resetear tipo de pago electrónico
+        electronic_payment_notes: '', // Resetear notas de pago electrónico
         shipping_payment_method: 'contado',
         shipping_date: order.shipping_date || defaultShippingDate,
         notes: order.notes || ''

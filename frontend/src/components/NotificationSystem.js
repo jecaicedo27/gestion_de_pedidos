@@ -18,10 +18,10 @@ const NotificationSystem = () => {
     // Cargar notificaciones iniciales
     loadNotifications();
 
-    // Configurar polling para nuevas notificaciones cada 30 segundos
+    // Configurar polling para nuevas notificaciones cada 2 minutos (menos frecuente para evitar 429)
     const interval = setInterval(() => {
       checkForNewInvoices();
-    }, 30000);
+    }, 120000); // 2 minutos en lugar de 30 segundos
 
     return () => clearInterval(interval);
   }, [canReceiveNotifications]);
@@ -334,7 +334,7 @@ const NotificationSystem = () => {
 
           <div className="p-3 border-t border-gray-200 text-center">
             <p className="text-xs text-gray-500 mb-2">
-              Actualizándose automáticamente cada 30 segundos
+              Actualizándose automáticamente cada 2 minutos
             </p>
             {/* Botón de prueba temporal */}
             <button

@@ -587,7 +587,56 @@ class SiigoService {
         return result || null;
       };
       
+      // EXTRAER MÉTODO DE PAGO DE ENVÍO desde observaciones SIIGO
+      const extractShippingPaymentMethod = (invoice, fullInvoice) => {
+        console.log('💰 Extrayendo método de pago de envío desde SIIGO...');
+        
+        // Buscar en todas las fuentes de texto disponibles
+        const textSources = [
+          fullInvoice.observations,
+          fullInvoice.notes,
+          fullInvoice.comments,
+          invoice.observations,
+          invoice.notes
+        ].filter(Boolean);
+        
+        for (const text of textSources) {
+          if (!text) continue;
+          
+          console.log('🔍 Analizando texto:', text.substring(0, 100) + '...');
+          
+          // Normalizar texto
+          const normalizedText = text
+            .replace(/\r\n/g, '\n')
+            .replace(/\r/g, '\n')
+            .replace(/\s+/g, ' ');
+          
+          const lines = normalizedText.split('\n');
+          
+          for (const line of lines) {
+            const trimmedLine = line.trim();
+            
+            // Buscar específicamente "FORMA DE PAGO DE ENVIO:" en cualquier parte de la línea
+            if (trimmedLine.match(/FORMA\s+DE\s+PAGO\s+DE\s+ENVIO\s*:/i)) {
+              const paymentMethodMatch = trimmedLine.replace(/.*FORMA\s+DE\s+PAGO\s+DE\s+ENVIO\s*:\s*/i, '').trim();
+              if (paymentMethodMatch) {
+                console.log(`✅ Método de pago de envío encontrado: ${paymentMethodMatch}`);
+                // Normalizar valores comunes
+                const normalized = paymentMethodMatch.toLowerCase();
+                if (normalized.includes('contado')) return 'contado';
+                if (normalized.includes('contraentrega') || normalized.includes('contra entrega')) return 'contraentrega';
+                return paymentMethodMatch; // Devolver valor original si no coincide con patrones conocidos
+              }
+            }
+          }
+        }
+        
+        console.log('❌ No se encontró método de pago de envío en observaciones SIIGO');
+        return null;
+      };
+      
       const siigoObservations = extractSiigoObservations(invoice, fullInvoice);
+      const shippingPaymentMethod = extractShippingPaymentMethod(invoice, fullInvoice);
       
       // Sanitizar datos del cliente antes de procesarlos
       const sanitizedCustomerName = sanitizeText(customerName);
@@ -630,7 +679,7 @@ class SiigoService {
       
       console.log(`💾 Insertando pedido con TODOS los campos: ${orderData.order_number}`);
       
-      // Insertar pedido con TODOS los campos disponibles incluyendo siigo_public_url y siigo_observations
+      // Insertar pedido con TODOS los campos disponibles incluyendo siigo_public_url, siigo_observations y shipping_payment_method
       const insertResult = await query(`
         INSERT INTO orders (
           order_number, invoice_code, siigo_invoice_id, customer_name, 
@@ -638,8 +687,9 @@ class SiigoService {
           customer_id_type, siigo_customer_id, customer_person_type,
           customer_email, customer_department, customer_country, customer_city,
           total_amount, status, delivery_method, payment_method, 
-          siigo_public_url, siigo_observations, created_by, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          shipping_payment_method, siigo_public_url, siigo_observations, 
+          created_by, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `, [
         orderData.order_number,
         orderData.invoice_code,
@@ -659,6 +709,7 @@ class SiigoService {
         orderData.status,
         orderData.delivery_method,
         orderData.payment_method,
+        shippingPaymentMethod, // CAMPO AUTOMÁTICO DESDE SIIGO
         siigoPublicUrl,
         sanitizedSiigoObservations,
         orderData.created_by,

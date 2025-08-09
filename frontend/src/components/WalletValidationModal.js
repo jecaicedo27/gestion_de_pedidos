@@ -335,34 +335,61 @@ const WalletValidationModal = ({ isOpen, onClose, order, onValidate }) => {
     
     setLoading(true);
     try {
-      const formDataToSend = new FormData();
-      
-      // Datos básicos
-      formDataToSend.append('orderId', order.id);
-      formDataToSend.append('paymentMethod', order.payment_method);
-      formDataToSend.append('validationType', validationType);
-      formDataToSend.append('validationNotes', formData.validationNotes);
-      
-      // Solo agregar datos de pago si es aprobación
-      if (validationType === 'approved') {
-        // Para transferencias y efectivo
-        if (['transferencia', 'efectivo'].includes(order.payment_method)) {
+    const formDataToSend = new FormData();
+    
+    // Datos básicos
+    formDataToSend.append('orderId', order.id);
+    formDataToSend.append('paymentMethod', order.payment_method);
+    formDataToSend.append('validationType', validationType);
+    formDataToSend.append('validationNotes', formData.validationNotes);
+    
+    // Solo agregar datos de pago si es aprobación
+    if (validationType === 'approved') {
+      // Para transferencias
+      if (order.payment_method === 'transferencia') {
+        formDataToSend.append('paymentType', formData.paymentType);
+        
+        if (formData.paymentType === 'mixed') {
+          // Pago mixto
+          formDataToSend.append('transferredAmount', formData.transferredAmount);
+          formDataToSend.append('cashAmount', formData.cashAmount);
+          
           if (formData.paymentProofImage) {
             formDataToSend.append('paymentProofImage', formData.paymentProofImage);
           }
-          formDataToSend.append('paymentReference', formData.paymentReference);
+          if (formData.cashProofImage) {
+            formDataToSend.append('cashProofImage', formData.cashProofImage);
+          }
+        } else {
+          // Pago simple
           formDataToSend.append('paymentAmount', formData.paymentAmount);
-          formDataToSend.append('paymentDate', formData.paymentDate);
-          formDataToSend.append('bankName', formData.bankName);
+          
+          if (formData.paymentProofImage) {
+            formDataToSend.append('paymentProofImage', formData.paymentProofImage);
+          }
         }
         
-        // Para crédito
-        if (order.payment_method === 'cliente_credito') {
-          formDataToSend.append('creditApproved', formData.creditApproved);
-          formDataToSend.append('customerCreditLimit', customerCredit.credit_limit);
-          formDataToSend.append('customerCurrentBalance', customerCredit.current_balance);
-        }
+        formDataToSend.append('paymentReference', formData.paymentReference);
+        formDataToSend.append('paymentDate', formData.paymentDate);
+        formDataToSend.append('bankName', formData.bankName);
       }
+      
+      // Para efectivo
+      if (order.payment_method === 'efectivo') {
+        if (formData.paymentProofImage) {
+          formDataToSend.append('paymentProofImage', formData.paymentProofImage);
+        }
+        formDataToSend.append('paymentAmount', formData.paymentAmount || order.total_amount);
+        formDataToSend.append('paymentDate', formData.paymentDate);
+      }
+      
+      // Para crédito
+      if (order.payment_method === 'cliente_credito') {
+        formDataToSend.append('creditApproved', formData.creditApproved);
+        formDataToSend.append('customerCreditLimit', customerCredit?.credit_limit || 0);
+        formDataToSend.append('customerCurrentBalance', customerCredit?.current_balance || 0);
+      }
+    }
       
       await onValidate(formDataToSend);
       onClose();

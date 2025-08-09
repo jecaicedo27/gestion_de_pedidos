@@ -76,23 +76,53 @@ const SiigoImportModal = ({ isOpen, onClose, invoice, onImportSuccess }) => {
   const customer = currentInvoice.customer || {};
   const items = currentInvoice.items || [];
 
-  // Función simplificada para extraer nombre del cliente
+  // Función mejorada para extraer nombre del cliente (igual que en backend)
   const getCustomerName = () => {
-    return customer.person?.first_name 
-      ? `${customer.person.first_name} ${customer.person.last_name || ''}`.trim()
-      : customer.company?.name 
-      || customer.name 
-      || customer.identification?.name
-      || customer.commercial_name
-      || 'N/A';
+    if (loadingDetails) return 'Cargando...';
+    
+    // Prioridad 1: Nombre comercial (IGNORAR "No aplica")
+    if (customer.commercial_name && customer.commercial_name !== 'No aplica') {
+      return customer.commercial_name;
+    }
+    
+    // Prioridad 2: Persona física - nombre completo
+    if (customer.name && Array.isArray(customer.name) && customer.name.length >= 2) {
+      return customer.name.join(' ').trim();
+    }
+    
+    // Prioridad 3: first_name + last_name
+    if (customer.person?.first_name) {
+      return `${customer.person.first_name} ${customer.person.last_name || ''}`.trim();
+    }
+    
+    // Prioridad 4: Empresa
+    if (customer.company?.name) {
+      return customer.company.name;
+    }
+    
+    // Prioridad 5: Nombre directo
+    if (customer.name && typeof customer.name === 'string') {
+      return customer.name;
+    }
+    
+    // Prioridad 6: Desde customer_info enriquecido
+    if (currentInvoice.customer_info?.commercial_name) {
+      return currentInvoice.customer_info.commercial_name;
+    }
+    
+    // Fallback
+    return 'Cliente SIIGO';
   };
 
   const getCustomerPhone = () => {
+    if (loadingDetails) return 'Cargando...';
+    
     return customer.phones?.[0]?.number 
       || customer.person?.phones?.[0]?.number
       || customer.company?.phones?.[0]?.number
       || customer.phone
-      || 'N/A';
+      || currentInvoice.customer_info?.phone
+      || 'Sin teléfono';
   };
 
   // Funciones para extraer datos geográficos de SIIGO

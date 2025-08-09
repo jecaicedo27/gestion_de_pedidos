@@ -203,11 +203,20 @@ const validatePayment = async (req, res) => {
       bankName,
       creditApproved,
       customerCreditLimit,
-      customerCurrentBalance
+      customerCurrentBalance,
+      // Nuevos campos para pagos mixtos
+      paymentType,
+      transferredAmount,
+      cashAmount
     } = req.body;
 
     const userId = req.user.id;
-    const paymentProofImage = req.file ? req.file.filename : null;
+    
+    // Manejar múltiples archivos para pagos mixtos
+    const files = req.files || {};
+    const paymentProofImage = req.file ? req.file.filename : 
+                             (files.paymentProofImage ? files.paymentProofImage[0].filename : null);
+    const cashProofImage = files.cashProofImage ? files.cashProofImage[0].filename : null;
 
     // Verificar que el pedido existe y está en revisión por cartera
     const order = await query(
@@ -595,7 +604,10 @@ const getWalletStats = async (req, res) => {
 
 module.exports = {
   getCustomerCredit,
-  validatePayment: [upload.single('paymentProofImage'), validatePayment],
+  validatePayment: [upload.fields([
+    { name: 'paymentProofImage', maxCount: 1 },
+    { name: 'cashProofImage', maxCount: 1 }
+  ]), validatePayment],
   getValidationHistory,
   getCreditCustomers,
   upsertCreditCustomer,

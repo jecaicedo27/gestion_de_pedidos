@@ -101,45 +101,33 @@ const corsOptions = {
 };
 app.use(cors(corsOptions));
 
-// Rate limiting - Configuración más flexible
-const generalLimiter = rateLimit({
-  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000, // 15 minutos
-  max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 500, // Aumentado el límite general
-  message: {
-    success: false,
-    message: 'Demasiadas solicitudes desde esta IP, intenta de nuevo más tarde.'
-  },
-  standardHeaders: true,
-  legacyHeaders: false,
-  // Excluir rutas críticas del frontend
-  skip: (req) => {
-    const criticalRoutes = [
-      '/api/auth/verify',
-      '/api/auth/profile', 
-      '/api/config/public',
-      '/api/company-config/public',
-      '/api/health',
-      '/api/info'
-    ];
-    return criticalRoutes.some(route => req.path === route);
-  }
-});
+// Importar los rate limiters configurados
+const { generalLimiter, authLimiter, siigoLimiter, queryLimiter } = require('./middleware/rateLimiter');
 
-// Rate limiter específico para SIIGO (más restrictivo)
-const siigoLimiter = rateLimit({
-  windowMs: 5 * 60 * 1000, // 5 minutos
-  max: 50, // Límite más bajo para SIIGO
+// Rate limiter para rutas públicas (muy permisivo)
+const publicLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000, // 1 minuto
+  max: 200, // 200 peticiones por minuto
   message: {
     success: false,
-    message: 'Demasiadas solicitudes a SIIGO, intenta de nuevo más tarde.'
+    message: 'Demasiadas solicitudes, intenta de nuevo en un momento.'
   },
   standardHeaders: true,
   legacyHeaders: false
 });
 
-// Aplicar rate limiters
-app.use('/api/', generalLimiter);
+// Aplicar rate limiters específicos por ruta
+app.use('/api/auth/login', authLimiter);
+app.use('/api/auth/verify', publicLimiter);
+app.use('/api/auth/profile', publicLimiter);
+app.use('/api/config', publicLimiter);
+app.use('/api/company-config/public', publicLimiter);
 app.use('/api/siigo/', siigoLimiter);
+app.use('/api/orders', queryLimiter);
+app.use('/api/users', queryLimiter);
+
+// Rate limiter general para otras rutas (debe ir al final)
+app.use('/api/', generalLimiter);
 
 // Middleware de logging
 if (process.env.NODE_ENV === 'development') {

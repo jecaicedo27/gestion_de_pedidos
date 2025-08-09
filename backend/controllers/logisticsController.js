@@ -215,9 +215,9 @@ const getLogisticsOrders = async (req, res) => {
       `SELECT 
         o.id, o.order_number, o.customer_name, o.phone, o.address, o.email,
         o.city, o.department, o.delivery_method, o.carrier_id, o.tracking_number,
-        o.payment_method, o.total_amount, o.shipping_date, o.shipping_guide_generated,
+        o.payment_method, o.shipping_payment_method, o.total_amount, o.shipping_date, o.shipping_guide_generated,
         o.created_at, o.updated_at,
-        c.name as carrier_name, c.code as carrier_code
+        c.name as carrier_name
        FROM orders o
        LEFT JOIN carriers c ON o.carrier_id = c.id
        ${whereClause}
@@ -386,6 +386,7 @@ const processOrder = async (req, res) => {
       shippingMethod, 
       transportCompany, 
       trackingNumber, 
+      shippingPaymentMethod,
       notes 
     } = req.body;
 
@@ -439,12 +440,13 @@ const processOrder = async (req, res) => {
          delivery_method = ?, 
          carrier_id = ?, 
          tracking_number = ?, 
+         shipping_payment_method = ?,
          logistics_notes = ?,
          status = 'en_empaque',
          shipping_date = NOW(),
          updated_at = NOW()
        WHERE id = ?`,
-      [shippingMethod, carrierId, trackingNumber || null, notes || null, orderId]
+      [shippingMethod, carrierId, trackingNumber || null, shippingPaymentMethod || null, notes || null, orderId]
     );
 
     console.log(`✅ Pedido ${order[0].order_number} enviado correctamente a empaque`);
@@ -474,6 +476,8 @@ const extractRecipientDataFromNotes = (notes) => {
     const trimmedLine = line.trim();
     
     if (trimmedLine.includes('FORMA DE PAGO DE ENVIO:')) {
+      data.shippingPaymentMethod = trimmedLine.split(':')[1]?.trim();
+    } else if (trimmedLine.includes('MEDIO DE PAGO:')) {
       data.paymentMethod = trimmedLine.split(':')[1]?.trim();
     } else if (trimmedLine.includes('NOMBRE:')) {
       data.name = trimmedLine.split(':')[1]?.trim();
@@ -681,12 +685,14 @@ const getReadyForDeliveryOrders = async (req, res) => {
       });
     }
 
-    // Obtener pedidos listos para entrega con query más segura
+    // Obtener pedidos listos para entrega con información de transportadora
     const readyOrders = await query(
       `SELECT 
         o.id, o.order_number, o.customer_name, o.status, o.delivery_method,
-        o.total_amount, o.created_at, o.updated_at
+        o.total_amount, o.created_at, o.updated_at, o.carrier_id,
+        c.name as carrier_name
        FROM orders o
+       LEFT JOIN carriers c ON o.carrier_id = c.id
        WHERE o.status IN ('listo_para_entrega', 'empacado', 'listo')
        ORDER BY o.created_at ASC`,
       []
@@ -701,6 +707,7 @@ const getReadyForDeliveryOrders = async (req, res) => {
       transprensa: [], 
       envia: [],
       camion_externo: [],
+      mensajeria_local: [],
       mensajero_julian: [],
       mensajero_juan: [],
       otros: []
@@ -709,30 +716,39 @@ const getReadyForDeliveryOrders = async (req, res) => {
     readyOrders.forEach(order => {
       const { delivery_method, carrier_name, assigned_messenger_id } = order;
       
-      if (delivery_method === 'recoge_bodega' || delivery_method === 'recogida_tienda') {
+      // Normalizar texto para comparación (quitar acentos y convertir a minúsculas)
+      const normalizeText = (text) => {
+        if (!text) return '';
+        return text.toLowerCase()
+                  .replace(/á/g, 'a')
+                  .replace(/é/g, 'e') 
+                  .replace(/í/g, 'i')
+                  .replace(/ó/g, 'o')
+                  .replace(/ú/g, 'u')
+                  .replace(/ñ/g, 'n')
+                  .trim();
+      };
+      
+      const normalizedCarrier = normalizeText(carrier_name);
+      const normalizedMethod = normalizeText(delivery_method);
+      
+      if (normalizedMethod === 'recoge_bodega' || normalizedMethod === 'recogida_tienda') {
         groupedOrders.recoge_bodega.push(order);
-      } else if (carrier_name && carrier_name.toLowerCase().includes('interrapidisimo')) {
+      } else if (normalizedCarrier.includes('inter') && normalizedCarrier.includes('rapidisimo')) {
         groupedOrders.interrapidisimo.push(order);
-      } else if (carrier_name && carrier_name.toLowerCase().includes('transprensa')) {
+      } else if (normalizedCarrier.includes('transprensa')) {
         groupedOrders.transprensa.push(order);
-      } else if (carrier_name && carrier_name.toLowerCase().includes('envia')) {
+      } else if (normalizedCarrier.includes('envia')) {
         groupedOrders.envia.push(order);
-      } else if (delivery_method === 'camion_externo') {
+      } else if (normalizedCarrier.includes('camion') && normalizedCarrier.includes('externo')) {
         groupedOrders.camion_externo.push(order);
-      } else if (delivery_method === 'mensajero') {
-        // Verificar qué mensajero está asignado
-        if (assigned_messenger_id) {
-          const messengerName = order.messenger_name?.toLowerCase() || '';
-          if (messengerName.includes('julian')) {
-            groupedOrders.mensajero_julian.push(order);
-          } else if (messengerName.includes('juan')) {
-            groupedOrders.mensajero_juan.push(order);
-          } else {
-            groupedOrders.otros.push(order);
-          }
-        } else {
-          groupedOrders.otros.push(order);
-        }
+      } else if (normalizedMethod === 'mensajeria_local' || normalizedMethod === 'mensajero' || 
+                 normalizedCarrier.includes('mensajeria') || normalizedCarrier === 'mensajeria local') {
+        // Si es mensajería local, agregar a la categoría correspondiente
+        groupedOrders.mensajeria_local.push(order);
+      } else if (!normalizedMethod && !normalizedCarrier) {
+        // Si no tiene método ni transportadora, también va a mensajería local
+        groupedOrders.mensajeria_local.push(order);
       } else {
         groupedOrders.otros.push(order);
       }
@@ -746,6 +762,7 @@ const getReadyForDeliveryOrders = async (req, res) => {
       transprensa: groupedOrders.transprensa.length,
       envia: groupedOrders.envia.length,
       camion_externo: groupedOrders.camion_externo.length,
+      mensajeria_local: groupedOrders.mensajeria_local.length,
       mensajero_julian: groupedOrders.mensajero_julian.length,
       mensajero_juan: groupedOrders.mensajero_juan.length,
       otros: groupedOrders.otros.length

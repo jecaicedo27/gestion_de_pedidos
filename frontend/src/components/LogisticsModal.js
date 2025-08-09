@@ -59,6 +59,7 @@ const LogisticsModal = ({ isOpen, onClose, order, onProcess }) => {
     transportCompany: '',
     trackingNumber: '',
     shippingDate: '',
+    shippingPaymentMethod: '',
     notes: ''
   });
   const [loading, setLoading] = useState(false);
@@ -127,7 +128,14 @@ const LogisticsModal = ({ isOpen, onClose, order, onProcess }) => {
             data.nit = nitMatch;
           }
         }
-        // Buscar FORMA DE PAGO o MÉTODO DE PAGO
+        // Buscar FORMA DE PAGO DE ENVIO (específico)
+        else if (trimmedLine.match(/^FORMA\s+DE\s+PAGO\s+DE\s+ENVIO\s*:/i)) {
+          const shippingPaymentMatch = trimmedLine.replace(/^FORMA\s+DE\s+PAGO\s+DE\s+ENVIO\s*:\s*/i, '').trim();
+          if (shippingPaymentMatch && !data.shippingPaymentMethod) {
+            data.shippingPaymentMethod = shippingPaymentMatch;
+          }
+        }
+        // Buscar FORMA DE PAGO o MÉTODO DE PAGO (general)
         else if (trimmedLine.match(/^(FORMA|M[ÉE]TODO)\s+(DE\s+)?PAGO\s*:/i)) {
           const paymentMatch = trimmedLine.replace(/^(FORMA|M[ÉE]TODO)\s+(DE\s+)?PAGO\s*:\s*/i, '').trim();
           if (paymentMatch && !data.paymentMethod) {
@@ -168,6 +176,10 @@ const LogisticsModal = ({ isOpen, onClose, order, onProcess }) => {
       setFormData(prev => ({
         ...prev,
         shippingMethod: order.delivery_method || '',
+        // Cargar automáticamente el método de pago de envío
+        // PRIORIDAD 1: Desde la base de datos
+        // PRIORIDAD 2: Desde los datos extraídos
+        shippingPaymentMethod: order.shipping_payment_method || extracted?.shippingPaymentMethod?.toLowerCase() || '',
         notes: order.notes || ''
       }));
     } else {
@@ -177,6 +189,7 @@ const LogisticsModal = ({ isOpen, onClose, order, onProcess }) => {
         shippingMethod: '',
         transportCompany: '',
         trackingNumber: '',
+        shippingPaymentMethod: '',
         notes: ''
       });
     }
@@ -296,16 +309,91 @@ const LogisticsModal = ({ isOpen, onClose, order, onProcess }) => {
     }
   }, [isOpen]);
 
-  // Transportadoras disponibles
-  const transportCompanies = [
-    'Servientrega',
-    'Coordinadora',
-    'TCC',
-    'Envía',
-    'Inter Rapidísimo',
-    'Deprisa',
-    'Mensajería Local'
-  ];
+  // Estado para transportadoras dinámicas
+  const [transportCompanies, setTransportCompanies] = useState([]);
+  const [loadingCarriers, setLoadingCarriers] = useState(true);
+
+  // Cargar transportadoras dinámicamente
+  React.useEffect(() => {
+    const fetchCarriers = async () => {
+      try {
+        setLoadingCarriers(true);
+        
+        // Intentar cargar desde el endpoint de logística
+        const response = await fetch('/api/logistics/carriers', {
+          headers: {
+            'Authorization': `Bearer ${localStorage.getItem('token')}`
+          }
+        });
+        
+        if (response.ok) {
+          const carriers = await response.json();
+          // Si el response es un array directo
+          if (Array.isArray(carriers)) {
+            setTransportCompanies(carriers.map(c => c.name));
+          } 
+          // Si viene envuelto en un objeto con success/data
+          else if (carriers.success && carriers.data) {
+            setTransportCompanies(carriers.data.map(c => c.name));
+          }
+        } else {
+          console.error('Error cargando transportadoras:', response.status);
+          // Fallback: cargar directamente de la base de datos
+          fetchCarriersFromDB();
+        }
+      } catch (error) {
+        console.error('Error cargando transportadoras:', error);
+        // Fallback: cargar directamente de la base de datos
+        fetchCarriersFromDB();
+      } finally {
+        setLoadingCarriers(false);
+      }
+    };
+
+    // Función fallback para cargar transportadoras
+    const fetchCarriersFromDB = async () => {
+      try {
+        const response = await fetch('/api/carriers', {
+          headers: {
+            'Authorization': `Bearer ${localStorage.getItem('token')}`
+          }
+        });
+        
+        if (response.ok) {
+          const carriers = await response.json();
+          setTransportCompanies(carriers.map(c => c.name));
+        } else {
+          // Último fallback: usar lista hardcodeada pero incluyendo Camión Externo
+          setTransportCompanies([
+            'Servientrega',
+            'Coordinadora',
+            'TCC',
+            'Envía',
+            'Inter Rapidísimo',
+            'Deprisa',
+            'Camión Externo',
+            'Mensajería Local'
+          ]);
+        }
+      } catch (error) {
+        // Último fallback: usar lista hardcodeada pero incluyendo Camión Externo
+        setTransportCompanies([
+          'Servientrega',
+          'Coordinadora',
+          'TCC',
+          'Envía',
+          'Inter Rapidísimo',
+          'Deprisa',
+          'Camión Externo',
+          'Mensajería Local'
+        ]);
+      }
+    };
+
+    if (isOpen) {
+      fetchCarriers();
+    }
+  }, [isOpen]);
 
   const handleInputChange = (field, value) => {
     setFormData(prev => ({
@@ -330,6 +418,7 @@ const LogisticsModal = ({ isOpen, onClose, order, onProcess }) => {
         shippingMethod: formData.shippingMethod,
         transportCompany: formData.transportCompany,
         trackingNumber: formData.trackingNumber,
+        shippingPaymentMethod: formData.shippingPaymentMethod,
         notes: formData.notes
       };
 
@@ -677,10 +766,21 @@ const LogisticsModal = ({ isOpen, onClose, order, onProcess }) => {
                       <p className="text-green-800">{extractedData.paymentMethod}</p>
                     </div>
                   )}
+                  {extractedData.shippingPaymentMethod && (
+                    <div>
+                      <span className="text-green-700 font-medium">Método de Pago de Envío:</span>
+                      <p className="text-green-800 font-bold">{extractedData.shippingPaymentMethod}</p>
+                    </div>
+                  )}
                 </div>
                 <div className="mt-3 p-2 bg-green-100 rounded border border-green-300">
                   <p className="text-xs text-green-700">
                     ✅ <strong>Datos extraídos automáticamente</strong> - Estos datos se usarán para generar la guía de envío
+                    {extractedData.shippingPaymentMethod && (
+                      <span className="block mt-1">
+                        💰 <strong>Método de Pago de Envío detectado:</strong> {extractedData.shippingPaymentMethod}
+                      </span>
+                    )}
                   </p>
                 </div>
               </div>
@@ -712,6 +812,32 @@ const LogisticsModal = ({ isOpen, onClose, order, onProcess }) => {
                   options={transportCompanies.map(company => ({ value: company, label: company }))}
                   placeholder="Seleccionar transportadora"
                 />
+              </div>
+            )}
+
+            {/* Método de Pago de Envío */}
+            {formData.transportCompany && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Método de Pago de Envío *
+                </label>
+                <CustomDropdown
+                  value={formData.shippingPaymentMethod}
+                  onChange={(value) => handleInputChange('shippingPaymentMethod', value)}
+                  options={[
+                    { value: 'contado', label: 'Contado (Paga la empresa)' },
+                    { value: 'contraentrega', label: 'Contraentrega (Paga el cliente)' }
+                  ]}
+                  placeholder="Seleccionar método de pago"
+                  required
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  {formData.shippingPaymentMethod === 'contado' 
+                    ? '💰 La empresa pagará el costo del envío'
+                    : formData.shippingPaymentMethod === 'contraentrega'
+                    ? '📦 El cliente pagará al recibir el pedido'
+                    : ''}
+                </p>
               </div>
             )}
 

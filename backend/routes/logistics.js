@@ -9,11 +9,11 @@ router.post('/generate-guide-test', logisticsController.generateGuide);
 router.post('/generate-guide-html', simplePdfController.generateSimpleGuide);
 router.get('/ready-for-delivery-test', logisticsController.getReadyForDeliveryOrders);
 
+// Rutas públicas para transportadoras (sin autenticación)
+router.get('/carriers', logisticsController.getCarriers);
+
 // Middleware de autenticación para el resto de rutas
 router.use(verifyToken);
-
-// Rutas para transportadoras
-router.get('/carriers', logisticsController.getCarriers);
 
 // Rutas para gestión de logística
 router.get('/orders', logisticsController.getLogisticsOrders);

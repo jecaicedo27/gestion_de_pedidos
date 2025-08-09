@@ -25,7 +25,20 @@ const CompanyConfigPage = () => {
   const loadCompanyConfig = async () => {
     try {
       const response = await companyConfigService.getConfig();
-      setConfig(response.data || {});
+      // Normalizar valores para evitar null en inputs
+      const normalizedConfig = {
+        company_name: response.data?.company_name || '',
+        nit: response.data?.nit || '',
+        email: response.data?.email || '',
+        address: response.data?.address || '',
+        whatsapp: response.data?.whatsapp || '',
+        city: response.data?.city || '',
+        department: response.data?.department || '',
+        postal_code: response.data?.postal_code || '',
+        website: response.data?.website || '',
+        logo_url: response.data?.logo_url || ''
+      };
+      setConfig(normalizedConfig);
     } catch (error) {
       console.error('Error cargando configuración:', error);
       toast.error('Error al cargar configuración de empresa');
