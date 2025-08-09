@@ -169,7 +169,8 @@ const OrdersPage = () => {
     if (['admin', 'logistica'].includes(user?.role)) {
       try {
         const response = await userService.getUsers({ role: 'mensajero', active: true });
-        setMessengers(response.data.users || []);
+        // La respuesta viene en response.data.data.users debido a la estructura del backend
+        setMessengers(response.data.data?.users || response.data.users || []);
       } catch (error) {
         console.error('Error cargando mensajeros:', error);
       }
