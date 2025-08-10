@@ -1,11 +1,22 @@
 const bcrypt = require('bcryptjs');
 const { query } = require('../config/database');
 
-// Obtener todos los usuarios (solo admin)
+// Obtener todos los usuarios (admin, facturador, y logistica solo para mensajeros)
 const getUsers = async (req, res) => {
   try {
     const { page = 1, limit = 10, role, active } = req.query;
     const offset = (page - 1) * limit;
+
+    // Verificar permisos según el rol del usuario autenticado
+    if (req.user.role === 'logistica') {
+      // Los usuarios de logística solo pueden ver mensajeros
+      if (!role || role !== 'mensajero') {
+        return res.status(403).json({
+          success: false,
+          message: 'Los usuarios de logística solo pueden consultar mensajeros'
+        });
+      }
+    }
 
     // Construir query con filtros
     let whereClause = 'WHERE 1=1';

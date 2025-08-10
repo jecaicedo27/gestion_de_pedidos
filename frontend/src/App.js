@@ -22,6 +22,7 @@ import ShippingGuidesPage from './pages/ShippingGuidesPage';
 import CustomerCreditPage from './pages/CustomerCreditPage';
 import PackagingPage from './pages/PackagingPage';
 import DeliveryMethodsPage from './pages/DeliveryMethodsPage';
+import ProductsPage from './pages/ProductsPage';
 
 // Componentes de layout
 import Layout from './components/Layout';
@@ -207,6 +208,16 @@ const AppRoutes = () => {
           element={
             <ProtectedRoute requiredRole="admin">
               <DeliveryMethodsPage />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Productos y Códigos de Barras - admin y logística */}
+        <Route
+          path="products"
+          element={
+            <ProtectedRoute requiredRole={['admin', 'logistica']}>
+              <ProductsPage />
             </ProtectedRoute>
           }
         />

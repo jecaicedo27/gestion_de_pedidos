@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import * as Icons from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
 import toast from 'react-hot-toast';
 
 
@@ -54,6 +55,7 @@ const CustomDropdown = ({ value, onChange, options, placeholder, required }) => 
 };
 
 const LogisticsModal = ({ isOpen, onClose, order, onProcess }) => {
+  const { token } = useAuth();
   const [formData, setFormData] = useState({
     shippingMethod: '',
     transportCompany: '',
@@ -311,18 +313,20 @@ const LogisticsModal = ({ isOpen, onClose, order, onProcess }) => {
 
   // Estado para transportadoras dinámicas
   const [transportCompanies, setTransportCompanies] = useState([]);
-  const [loadingCarriers, setLoadingCarriers] = useState(true);
 
   // Cargar transportadoras dinámicamente
   React.useEffect(() => {
     const fetchCarriers = async () => {
-      try {
-        setLoadingCarriers(true);
+    if (!token) {
+      console.warn('No hay token disponible para cargar transportadoras');
+      return;
+    }
+    try {
         
         // Intentar cargar desde el endpoint de logística
         const response = await fetch('/api/logistics/carriers', {
           headers: {
-            'Authorization': `Bearer ${localStorage.getItem('token')}`
+            'Authorization': `Bearer ${token}`
           }
         });
         
@@ -345,8 +349,6 @@ const LogisticsModal = ({ isOpen, onClose, order, onProcess }) => {
         console.error('Error cargando transportadoras:', error);
         // Fallback: cargar directamente de la base de datos
         fetchCarriersFromDB();
-      } finally {
-        setLoadingCarriers(false);
       }
     };
 
@@ -355,7 +357,7 @@ const LogisticsModal = ({ isOpen, onClose, order, onProcess }) => {
       try {
         const response = await fetch('/api/carriers', {
           headers: {
-            'Authorization': `Bearer ${localStorage.getItem('token')}`
+            'Authorization': `Bearer ${token}`
           }
         });
         
@@ -393,7 +395,8 @@ const LogisticsModal = ({ isOpen, onClose, order, onProcess }) => {
     if (isOpen) {
       fetchCarriers();
     }
-  }, [isOpen]);
+  }, [isOpen, token]);
+
 
   const handleInputChange = (field, value) => {
     setFormData(prev => ({
@@ -410,6 +413,7 @@ const LogisticsModal = ({ isOpen, onClose, order, onProcess }) => {
       return;
     }
 
+
     try {
       setLoading(true);
       
@@ -419,6 +423,7 @@ const LogisticsModal = ({ isOpen, onClose, order, onProcess }) => {
         transportCompany: formData.transportCompany,
         trackingNumber: formData.trackingNumber,
         shippingPaymentMethod: formData.shippingPaymentMethod,
+        assignedMessenger: formData.assignedMessenger,
         notes: formData.notes
       };
 
@@ -432,6 +437,7 @@ const LogisticsModal = ({ isOpen, onClose, order, onProcess }) => {
         shippingMethod: '',
         transportCompany: '',
         trackingNumber: '',
+        assignedMessenger: '',
         notes: ''
       });
       
@@ -815,6 +821,7 @@ const LogisticsModal = ({ isOpen, onClose, order, onProcess }) => {
               </div>
             )}
 
+
             {/* Método de Pago de Envío */}
             {formData.transportCompany && (
               <div>
@@ -841,8 +848,8 @@ const LogisticsModal = ({ isOpen, onClose, order, onProcess }) => {
               </div>
             )}
 
-            {/* Número de guía */}
-            {formData.transportCompany && (
+            {/* Número de guía - Solo para transportadoras que no sean Mensajería Local */}
+            {formData.transportCompany && formData.transportCompany !== 'Mensajería Local' && (
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Número de Guía

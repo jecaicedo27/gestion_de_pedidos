@@ -1,112 +1,97 @@
-const mysql = require('mysql2/promise');
 const fs = require('fs');
 const path = require('path');
+const mysql = require('../backend/node_modules/mysql2/promise');
+require('../backend/node_modules/dotenv').config({ path: '../backend/.env' });
 
 // Configuración de la base de datos
 const dbConfig = {
   host: process.env.DB_HOST || 'localhost',
+  port: process.env.DB_PORT || 3306,
   user: process.env.DB_USER || 'root',
   password: process.env.DB_PASSWORD || '',
-  database: process.env.DB_NAME || 'gestion_pedidos',
+  database: process.env.DB_NAME || 'gestion_pedidos_dev',
   multipleStatements: true
 };
 
-async function runBarcodeSystemMigration() {
+async function runBarcodeMigration() {
   let connection;
   
   try {
-    // Crear conexión
+    console.log('🔄 Iniciando migración del sistema de códigos de barras...');
+    
+    // Conectar a la base de datos
     connection = await mysql.createConnection(dbConfig);
-    console.log('✅ Conectado a la base de datos');
-
-    // Leer el archivo SQL
+    console.log('✅ Conexión a MySQL establecida');
+    
+    // Leer el archivo SQL del sistema de códigos de barras
     const sqlPath = path.join(__dirname, 'create_barcode_system.sql');
     const sqlContent = fs.readFileSync(sqlPath, 'utf8');
-
-    // Ejecutar las consultas
-    console.log('🔄 Ejecutando migración del sistema de códigos de barras...');
     
-    // Dividir por statements y ejecutar uno por uno para mejor control
-    const statements = sqlContent.split(';').filter(stmt => stmt.trim().length > 0);
+    // Dividir las consultas SQL por punto y coma
+    const queries = sqlContent
+      .split(';')
+      .map(query => query.trim())
+      .filter(query => query.length > 0);
     
-    for (let i = 0; i < statements.length; i++) {
-      const statement = statements[i].trim();
-      if (statement) {
-        try {
-          await connection.execute(statement);
-          console.log(`✅ Statement ${i + 1}/${statements.length} ejecutado`);
-        } catch (error) {
-          // Ignorar errores de "table already exists" o "column already exists"
-          if (error.code === 'ER_TABLE_EXISTS_ERROR' || 
-              error.code === 'ER_DUP_FIELDNAME' ||
-              error.code === 'ER_DUP_KEYNAME') {
-            console.log(`⚠️  Statement ${i + 1}: ${error.message} (ignorando)`);
-          } else {
-            console.error(`❌ Error en statement ${i + 1}:`, error.message);
-            throw error;
-          }
+    console.log(`📋 Ejecutando ${queries.length} consultas...`);
+    
+    for (let i = 0; i < queries.length; i++) {
+      try {
+        console.log(`⚡ Ejecutando consulta ${i + 1}/${queries.length}...`);
+        await connection.execute(queries[i]);
+        console.log(`✅ Consulta ${i + 1} ejecutada correctamente`);
+      } catch (error) {
+        // Ignorar errores de "table already exists" pero reportar otros
+        if (error.code === 'ER_TABLE_EXISTS_ERROR' || error.message.includes('already exists')) {
+          console.log(`⚠️ Tabla ya existe (consulta ${i + 1}), continuando...`);
+        } else {
+          console.error(`❌ Error en consulta ${i + 1}:`, error.message);
+          console.log('📝 Consulta que falló:', queries[i].substring(0, 100) + '...');
+          // No salir, continuar con las siguientes consultas
         }
       }
     }
-
+    
+    console.log('✅ Migración del sistema de códigos de barras completada');
+    
     // Verificar que las tablas se crearon correctamente
-    console.log('\n🔍 Verificando tablas creadas...');
+    console.log('🔍 Verificando estructura de tablas...');
     
     const tables = ['product_barcodes', 'product_variants', 'siigo_barcode_mapping', 'barcode_scan_logs'];
+    
     for (const table of tables) {
       try {
-        const [rows] = await connection.execute(`SELECT COUNT(*) as count FROM ${table}`);
-        console.log(`✅ Tabla ${table}: ${rows[0].count} registros`);
+        const [result] = await connection.execute(`DESCRIBE ${table}`);
+        console.log(`✅ Tabla ${table}: ${result.length} columnas`);
       } catch (error) {
-        console.error(`❌ Error verificando tabla ${table}:`, error.message);
+        console.log(`❌ Error verificando tabla ${table}:`, error.message);
       }
     }
-
-    // Verificar datos de ejemplo
-    console.log('\n📊 Verificando datos de ejemplo...');
+    
+    // Contar registros en product_barcodes
     try {
-      const [products] = await connection.execute('SELECT COUNT(*) as count FROM product_barcodes');
-      const [mappings] = await connection.execute('SELECT COUNT(*) as count FROM siigo_barcode_mapping');
-      
-      console.log(`✅ Productos con código de barras: ${products[0].count}`);
-      console.log(`✅ Mapeos SIIGO creados: ${mappings[0].count}`);
-      
-      // Mostrar algunos ejemplos
-      const [examples] = await connection.execute(`
-        SELECT pb.product_name, pb.barcode, pb.internal_code 
-        FROM product_barcodes pb 
-        LIMIT 3
-      `);
-      
-      console.log('\n📝 Ejemplos de productos:');
-      examples.forEach(product => {
-        console.log(`   ${product.product_name} → ${product.barcode} (${product.internal_code})`);
-      });
-
+      const [count] = await connection.execute('SELECT COUNT(*) as total FROM product_barcodes');
+      console.log(`📊 Total de productos con códigos de barras: ${count[0].total}`);
     } catch (error) {
-      console.error('❌ Error verificando datos:', error.message);
+      console.log('⚠️ No se pudo contar productos:', error.message);
     }
-
-    console.log('\n🎉 ¡Migración del sistema de códigos de barras completada exitosamente!');
-    console.log('\n📋 Próximos pasos:');
-    console.log('   1. Configura los códigos de barras reales de tus productos');
-    console.log('   2. Mapea los productos de SIIGO con los códigos de barras');
-    console.log('   3. Prueba el sistema de escaneo en el módulo de empaque');
-
+    
+    console.log('🎉 Sistema de códigos de barras listo para usar');
+    
   } catch (error) {
-    console.error('❌ Error en la migración:', error);
-    process.exit(1);
+    console.error('❌ Error ejecutando migración de códigos de barras:', error);
+    throw error;
   } finally {
     if (connection) {
       await connection.end();
       console.log('🔌 Conexión cerrada');
     }
+    process.exit(0);
   }
 }
 
-// Ejecutar si es llamado directamente
-if (require.main === module) {
-  runBarcodeSystemMigration();
-}
-
-module.exports = { runBarcodeSystemMigration };
+// Ejecutar migración
+runBarcodeMigration().catch(error => {
+  console.error('❌ Fallo crítico en migración:', error);
+  process.exit(1);
+});

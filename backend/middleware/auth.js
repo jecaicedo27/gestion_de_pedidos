@@ -16,9 +16,19 @@ const authenticateToken = async (req, res, next) => {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     
     // Verificar que el usuario existe y está activo
+    // Compatibilidad: userId (nuevo) o id (anterior)
+    const userId = decoded.userId || decoded.id;
+    
+    if (!userId) {
+      return res.status(401).json({ 
+        success: false, 
+        message: 'Token inválido: ID de usuario no encontrado' 
+      });
+    }
+    
     const users = await query(
       'SELECT id, username, email, role, created_at, updated_at FROM users WHERE id = ?',
-      [decoded.userId]
+      [userId]
     );
 
     if (!users.length) {

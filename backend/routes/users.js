@@ -4,10 +4,10 @@ const { verifyToken, verifyRoles } = require('../middleware/auth');
 const { validate, validateParams, schemas, paramSchemas } = require('../middleware/validation');
 const userController = require('../controllers/userController');
 
-// GET /api/users - Obtener todos los usuarios (admin y facturador)
+// GET /api/users - Obtener todos los usuarios (admin, facturador, y logistica para mensajeros)
 router.get('/', 
   verifyToken,
-  verifyRoles.adminOrFacturador,
+  verifyRoles.allRoles, // Permitir todos los roles autenticados, el controller filtrará por permisos
   userController.getUsers
 );
 

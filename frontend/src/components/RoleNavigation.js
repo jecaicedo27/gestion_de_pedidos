@@ -113,6 +113,7 @@ const RoleNavigation = () => {
     if (path === '/billing' || path === '/siigo-invoices') return 'facturacion';
     if (path === '/siigo-consulta') return 'siigo-consulta';
     if (path === '/packaging') return 'empaque';
+    if (path === '/products') return 'productos';
     if (path === '/delivery-methods') return 'delivery-methods';
     
     return 'dashboard';

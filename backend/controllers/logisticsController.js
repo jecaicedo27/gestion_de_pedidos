@@ -714,7 +714,7 @@ const getReadyForDeliveryOrders = async (req, res) => {
     };
 
     readyOrders.forEach(order => {
-      const { delivery_method, carrier_name, assigned_messenger_id } = order;
+      const { delivery_method, carrier_name, assigned_messenger } = order;
       
       // Normalizar texto para comparación (quitar acentos y convertir a minúsculas)
       const normalizeText = (text) => {
@@ -791,6 +791,8 @@ const assignMessenger = async (req, res) => {
   try {
     const { orderId, messengerId } = req.body;
 
+    console.log(`📦 Asignando mensajero ${messengerId} al pedido ${orderId}`);
+
     // Verificar que el pedido existe
     const order = await query(
       'SELECT id, status, order_number FROM orders WHERE id = ?',
@@ -804,9 +806,9 @@ const assignMessenger = async (req, res) => {
       });
     }
 
-    // Verificar que el mensajero existe
+    // Verificar que el mensajero existe en la tabla users
     const messenger = await query(
-      'SELECT id, username FROM users WHERE id = ? AND role = "mensajero" AND active = TRUE',
+      'SELECT id, username, full_name FROM users WHERE id = ? AND role = "mensajero" AND active = TRUE',
       [messengerId]
     );
 
@@ -817,17 +819,21 @@ const assignMessenger = async (req, res) => {
       });
     }
 
-    // Asignar mensajero y cambiar estado
+    console.log(`✅ Mensajero válido: ${messenger[0].full_name || messenger[0].username}`);
+
+    // CORREGIDO: Usar el campo assigned_messenger (sin foreign key constraint) en lugar de assigned_messenger_id
     await query(
       `UPDATE orders 
-       SET assigned_messenger_id = ?, status = 'en_reparto', updated_at = NOW()
+       SET assigned_messenger = ?, status = 'en_reparto', updated_at = NOW()
        WHERE id = ?`,
       [messengerId, orderId]
     );
 
+    console.log(`✅ Pedido ${order[0].order_number} asignado exitosamente`);
+
     res.json({
       success: true,
-      message: `Pedido asignado a ${messenger[0].username} exitosamente`
+      message: `Pedido asignado a ${messenger[0].full_name || messenger[0].username} exitosamente`
     });
 
   } catch (error) {
@@ -937,11 +943,11 @@ const markInDelivery = async (req, res) => {
       });
     }
 
-    // Actualizar estado del pedido y asignar mensajero si se proporciona
+    // CORREGIDO: Usar assigned_messenger en lugar de assigned_messenger_id
     if (messengerId) {
       await query(
         `UPDATE orders 
-         SET status = ?, assigned_messenger_id = ?, delivery_notes = ?, updated_at = NOW()
+         SET status = ?, assigned_messenger = ?, delivery_notes = ?, updated_at = NOW()
          WHERE id = ?`,
         [status || 'en_reparto', messengerId, delivery_notes, orderId]
       );

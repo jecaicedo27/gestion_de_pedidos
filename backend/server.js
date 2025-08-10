@@ -19,6 +19,7 @@ const { testConnection } = require('./config/database');
 const authRoutes = require('./routes/auth');
 const userRoutes = require('./routes/users');
 const orderRoutes = require('./routes/orders');
+const productRoutes = require('./routes/products');
 const siigoRoutes = require('./routes/siigo');
 const whatsappRoutes = require('./routes/whatsapp');
 const shippingRoutes = require('./routes/shipping');
@@ -33,6 +34,7 @@ const companyConfigRoutes = require('./routes/companyConfig');
 // Importar servicios
 const siigoUpdateService = require('./services/siigoUpdateService');
 const { initializeAutoImport } = require('./initAutoImport');
+const autoSyncService = require('./services/autoSyncService');
 
 const app = express();
 const server = http.createServer(app);
@@ -160,6 +162,7 @@ app.use((error, req, res, next) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/orders', orderRoutes);
+app.use('/api/products', productRoutes);
 app.use('/api/siigo', siigoRoutes);
 app.use('/api/whatsapp', whatsappRoutes);
 app.use('/api/shipping', shippingRoutes);
@@ -288,6 +291,9 @@ const startServer = async () => {
       
       // Inicializar sistema de importación automática
       initializeAutoImport();
+      
+      // Inicializar sistema de sincronización automática de productos
+      autoSyncService.init();
     });
 
   } catch (error) {

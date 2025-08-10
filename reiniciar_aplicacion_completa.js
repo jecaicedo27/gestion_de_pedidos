@@ -1,55 +1,77 @@
-const { exec, spawn } = require('child_process');
+const { spawn } = require('child_process');
 const path = require('path');
 
-async function reiniciarAplicacionCompleta() {
-    console.log('🔄 Iniciando reinicio completo de la aplicación...');
-    
+console.log('🔄 REINICIANDO APLICACIÓN COMPLETA...');
+
+function delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function reiniciarAplicacion() {
     try {
-        // Detener procesos existentes
-        console.log('⏹️ Deteniendo procesos actuales...');
+        console.log('\n🔴 PASO 1: Deteniendo todos los procesos...');
         
-        // Matar procesos de Node.js específicos
+        // Terminar todos los procesos Node.js
+        const killProcess = spawn('taskkill', ['/f', '/im', 'node.exe'], { 
+            stdio: 'inherit',
+            shell: true 
+        });
+        
         await new Promise((resolve) => {
-            exec('taskkill /f /im node.exe', (error) => {
-                // Ignorar errores ya que puede que no haya procesos corriendo
-                console.log('📋 Procesos de Node.js detenidos');
+            killProcess.on('close', (code) => {
+                if (code === 0) {
+                    console.log('✅ Procesos Node.js terminados');
+                } else {
+                    console.log('⚠️ No había procesos Node.js ejecutándose');
+                }
                 resolve();
             });
         });
         
-        // Esperar un poco para que se liberen los puertos
-        console.log('⏳ Esperando liberación de puertos...');
-        await new Promise(resolve => setTimeout(resolve, 3000));
+        // Esperar 2 segundos
+        console.log('\n⏳ Esperando 2 segundos...');
+        await delay(2000);
         
-        console.log('🚀 Iniciando backend...');
+        console.log('\n🚀 PASO 2: Iniciando BACKEND...');
         
         // Iniciar backend
         const backendProcess = spawn('node', ['server.js'], {
-            cwd: path.join(__dirname, 'backend'),
+            cwd: path.join(process.cwd(), 'backend'),
             stdio: 'inherit',
-            detached: false
+            detached: true,
+            shell: true
         });
         
-        // Esperar un poco para que el backend inicie
-        await new Promise(resolve => setTimeout(resolve, 5000));
+        backendProcess.unref();
+        console.log('✅ Backend iniciado en puerto 3001');
         
-        console.log('🌐 Iniciando frontend...');
+        // Esperar 3 segundos
+        console.log('\n⏳ Esperando 3 segundos para que el backend se estabilice...');
+        await delay(3000);
+        
+        console.log('\n🌐 PASO 3: Iniciando FRONTEND...');
         
         // Iniciar frontend
         const frontendProcess = spawn('npm', ['start'], {
-            cwd: path.join(__dirname, 'frontend'),
+            cwd: path.join(process.cwd(), 'frontend'),
             stdio: 'inherit',
-            detached: false
+            detached: true,
+            shell: true
         });
         
-        console.log('✅ Aplicación reiniciada exitosamente');
-        console.log('📋 Backend ejecutándose en puerto 3001');
-        console.log('📋 Frontend ejecutándose en puerto 3000');
-        console.log('🌍 Abrir: http://localhost:3000');
+        frontendProcess.unref();
+        console.log('✅ Frontend iniciado en puerto 3000');
+        
+        console.log('\n🎉 APLICACIÓN REINICIADA COMPLETAMENTE:');
+        console.log('   🖥️  Backend: http://localhost:3001');
+        console.log('   🌐 Frontend: http://localhost:3000');
+        console.log('   📊 Health Check: http://localhost:3001/api/health');
+        console.log('\n✨ Sistema listo para usar!');
         
     } catch (error) {
-        console.error('❌ Error durante el reinicio:', error);
+        console.error('❌ Error reiniciando aplicación:', error.message);
     }
 }
 
-reiniciarAplicacionCompleta();
+// Ejecutar reinicio
+reiniciarAplicacion();

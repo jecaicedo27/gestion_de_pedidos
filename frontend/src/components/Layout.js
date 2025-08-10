@@ -15,7 +15,8 @@ import {
   CreditCard,
   Database,
   Building,
-  Calendar
+  Calendar,
+  Package
 } from 'lucide-react';
 import NotificationSystem from './NotificationSystem';
 import RoleNavigation from './RoleNavigation';
@@ -37,6 +38,13 @@ const Layout = () => {
       href: '/orders',
       icon: ShoppingCart,
       current: location.pathname === '/orders',
+    },
+    {
+      name: 'Productos',
+      href: '/products',
+      icon: Package,
+      current: location.pathname === '/products',
+      requiresPermission: ['admin', 'logistica'],
     },
     {
       name: 'Facturas SIIGO',

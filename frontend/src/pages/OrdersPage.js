@@ -1482,7 +1482,7 @@ const OrdersPage = () => {
                                 <option value="">Reasignar</option>
                                 {messengers.map((messenger) => (
                                   <option key={messenger.id} value={messenger.id}>
-                                    {messenger.name}
+                                    {messenger.username || `Usuario ${messenger.id}`}
                                   </option>
                                 ))}
                               </select>
@@ -1537,7 +1537,7 @@ const OrdersPage = () => {
                                 <option value="">Reasignar</option>
                                 {messengers.map((messenger) => (
                                   <option key={messenger.id} value={messenger.id}>
-                                    {messenger.name}
+                                    {messenger.full_name || messenger.name || messenger.username || `Usuario ${messenger.id}`}
                                   </option>
                                 ))}
                               </select>
@@ -1592,7 +1592,7 @@ const OrdersPage = () => {
                                 <option value="">Asignar mensajero</option>
                                 {messengers.map((messenger) => (
                                   <option key={messenger.id} value={messenger.id}>
-                                    {messenger.name}
+                                    {messenger.full_name || messenger.name || messenger.username || `Usuario ${messenger.id}`}
                                   </option>
                                 ))}
                               </select>

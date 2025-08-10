@@ -4,6 +4,24 @@ const { query } = require('../config/database');
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 
+// Función para obtener ID del usuario del sistema
+async function getSystemUserId() {
+  try {
+    const result = await query(`
+      SELECT id FROM users 
+      WHERE role IN ('admin', 'sistema') 
+      ORDER BY 
+        CASE WHEN username = 'sistema' THEN 1 ELSE 2 END, 
+        id 
+      LIMIT 1
+    `);
+    return result.length > 0 ? result[0].id : null;
+  } catch (error) {
+    console.warn('Error obteniendo usuario del sistema:', error.message);
+    return null;
+  }
+}
+
 
 // Función para sanitizar texto y evitar errores de Unicode
 function sanitizeText(text) {
@@ -671,7 +689,7 @@ class SiigoService {
         status: 'pendiente_por_facturacion',
         delivery_method: deliveryMethod,
         payment_method: paymentMethod,
-        created_by: 1,
+        created_by: await getSystemUserId(),
         created_at: new Date()
       };
       
@@ -847,6 +865,70 @@ class SiigoService {
     } catch (error) {
       console.error('❌ Error construyendo notas del pedido:', error.message);
       return null;
+    }
+  }
+
+  // Método para obtener todos los productos desde SIIGO
+  async getAllProducts(page = 1, pageSize = 100) {
+    try {
+      console.log(`📦 Obteniendo productos de SIIGO (página ${page}, tamaño: ${pageSize})...`);
+      
+      const headers = await this.getHeaders();
+      
+      return await this.makeRequestWithRetry(async () => {
+        const response = await axios.get(`${this.baseURL}/v1/products`, {
+          headers,
+          params: {
+            page: page,
+            page_size: pageSize
+          },
+          timeout: 30000
+        });
+
+        console.log(`✅ ${response.data.results?.length || 0} productos obtenidos`);
+        console.log(`📊 Total disponible: ${response.data.pagination?.total_results || 'N/A'}`);
+        
+        // Si hay más páginas, obtenerlas todas recursivamente
+        const products = response.data.results || [];
+        
+        if (response.data.pagination && response.data.pagination.total_pages > page) {
+          console.log(`📄 Obteniendo página ${page + 1} de ${response.data.pagination.total_pages}...`);
+          const nextPageProducts = await this.getAllProducts(page + 1, pageSize);
+          return products.concat(nextPageProducts);
+        }
+        
+        return products;
+      });
+
+    } catch (error) {
+      console.error('❌ Error obteniendo productos de SIIGO:', error.message);
+      if (error.response) {
+        console.error('Respuesta del error:', error.response.data);
+      }
+      throw error;
+    }
+  }
+
+  // Método para obtener detalles completos de un producto
+  async getProductDetails(productId) {
+    try {
+      console.log(`📦 Obteniendo detalles del producto: ${productId}`);
+      
+      const headers = await this.getHeaders();
+      
+      return await this.makeRequestWithRetry(async () => {
+        const response = await axios.get(`${this.baseURL}/v1/products/${productId}`, {
+          headers,
+          timeout: 20000
+        });
+
+        console.log(`✅ Detalles obtenidos para producto ${productId}`);
+        return response.data;
+      });
+
+    } catch (error) {
+      console.error(`❌ Error obteniendo detalles del producto ${productId}:`, error.message);
+      throw error;
     }
   }
 
