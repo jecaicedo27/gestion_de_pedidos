@@ -76,9 +76,21 @@ const UsersPage = () => {
   // Crear usuario
   const handleCreateUser = async () => {
     try {
-      if (!formData.username || !formData.email || !formData.password) {
-        toast.error('Todos los campos son obligatorios');
+      if (!formData.username || !formData.password || !formData.role) {
+        toast.error('Usuario, contraseña y rol son obligatorios');
         return;
+      }
+
+      // Preparar datos para envío
+      const dataToSend = {
+        username: formData.username,
+        password: formData.password,
+        role: formData.role
+      };
+
+      // Solo agregar email si no está vacío
+      if (formData.email && formData.email.trim() !== '') {
+        dataToSend.email = formData.email.trim();
       }
 
       const token = localStorage.getItem('token');
@@ -88,7 +100,7 @@ const UsersPage = () => {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify(formData)
+        body: JSON.stringify(dataToSend)
       });
 
       if (response.ok) {
@@ -433,14 +445,14 @@ const UsersPage = () => {
 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Email *
+                    Email (opcional)
                   </label>
                   <input
                     type="email"
                     value={formData.email}
                     onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                     className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    placeholder="correo@ejemplo.com"
+                    placeholder="correo@ejemplo.com (opcional)"
                   />
                 </div>
 

@@ -79,7 +79,7 @@ const getOrders = async (req, res) => {
         o.id, o.order_number, o.customer_name, o.customer_phone, o.customer_address, 
         o.customer_email, o.customer_city, o.customer_department, o.customer_country,
         o.status, o.total_amount, o.notes, o.delivery_date, o.shipping_date,
-        o.payment_method, o.delivery_method, o.shipping_payment_method, o.created_at, o.updated_at,
+        o.payment_method, o.delivery_method, o.shipping_payment_method, o.carrier_id, o.created_at, o.updated_at,
         o.siigo_invoice_id, o.siigo_invoice_number, o.siigo_public_url, o.siigo_customer_id,
         o.siigo_observations, o.siigo_payment_info, o.siigo_seller_id, o.siigo_balance,
         o.siigo_document_type, o.siigo_stamp_status, o.siigo_mail_status,
@@ -371,9 +371,32 @@ const updateOrder = async (req, res) => {
         delete updateData.shipping_date;
       }
 
+      // 🚚 LÓGICA ESPECIAL PARA DOMICILIO LOCAL
+      // Si el método de envío es domicilio, domicilio_local o similar, asignar automáticamente carrier_id = 32 (Mensajería Local)
+      let shouldUpdateCarrier = false;
+      let carrierIdToSet = null;
+      
+      const deliveryMethod = updateData.delivery_method || updateData.deliveryMethod;
+      
+      if (deliveryMethod === 'domicilio' || 
+          deliveryMethod === 'domicilio_local' ||
+          deliveryMethod === 'domicilio_ciudad' ||
+          (deliveryMethod && deliveryMethod.toLowerCase().includes('domicilio'))) {
+        carrierIdToSet = 32; // ID de Mensajería Local
+        shouldUpdateCarrier = true;
+        console.log(`🚚 Método de envío "${deliveryMethod}" detectado - Asignando carrier_id = 32 (Mensajería Local)`);
+      }
+
       // Actualizar pedido
       const updateFields = [];
       const updateValues = [];
+      
+      // Si necesitamos actualizar el carrier_id
+      if (shouldUpdateCarrier) {
+        updateFields.push('carrier_id = ?');
+        updateValues.push(carrierIdToSet);
+        console.log(`✅ Configurando carrier_id = ${carrierIdToSet} para domicilio local`);
+      }
       
       Object.keys(updateData).forEach(key => {
         if (!['items', 'auto_processed'].includes(key)) {

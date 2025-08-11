@@ -104,15 +104,37 @@ const getUserById = async (req, res) => {
 // Crear nuevo usuario (solo admin)
 const createUser = async (req, res) => {
   try {
-    const { username, email, password, role, fullName, phone } = req.validatedData;
+    console.log('🔍 CREAR USUARIO - Datos recibidos:', req.validatedData);
+    
+    const { username, email, password, role, fullName, full_name, phone } = req.validatedData;
+    
+    // Manejar tanto fullName como full_name, usar username si no se proporciona nombre
+    const finalFullName = fullName || full_name || username;
+    const finalEmail = (email && email.trim() !== '') ? email.trim() : null;
+    const finalPhone = (phone && phone.trim() !== '') ? phone.trim() : null;
 
-    // Verificar si el username ya existe
-    const existingUser = await query(
-      'SELECT id FROM users WHERE username = ? OR email = ?',
-      [username, email]
-    );
+    console.log('🔍 Valores procesados:', {
+      username,
+      finalEmail,
+      role,
+      finalFullName,
+      finalPhone
+    });
+
+    // Verificar si el username ya existe  
+    let existingUserQuery = 'SELECT id FROM users WHERE username = ?';
+    const queryParams = [username];
+    
+    if (finalEmail) {
+      existingUserQuery += ' OR email = ?';
+      queryParams.push(finalEmail);
+    }
+    
+    console.log('🔍 Query verificación:', existingUserQuery, queryParams);
+    const existingUser = await query(existingUserQuery, queryParams);
 
     if (existingUser.length > 0) {
+      console.log('❌ Usuario existente encontrado');
       return res.status(400).json({
         success: false,
         message: 'El nombre de usuario o email ya existe'
@@ -122,19 +144,27 @@ const createUser = async (req, res) => {
     // Encriptar contraseña
     const saltRounds = 10;
     const hashedPassword = await bcrypt.hash(password, saltRounds);
+    console.log('✅ Contraseña encriptada');
 
     // Crear usuario
+    const insertParams = [username, finalEmail, hashedPassword, role, finalFullName, finalPhone];
+    console.log('🔍 Parámetros INSERT:', insertParams);
+    
     const result = await query(
       `INSERT INTO users (username, email, password, role, full_name, phone, active, created_at) 
        VALUES (?, ?, ?, ?, ?, ?, true, NOW())`,
-      [username, email, hashedPassword, role, fullName, phone || null]
+      insertParams
     );
+
+    console.log('✅ Usuario insertado con ID:', result.insertId);
 
     // Obtener el usuario creado
     const newUser = await query(
       'SELECT id, username, email, role, full_name, phone, active, created_at FROM users WHERE id = ?',
       [result.insertId]
     );
+
+    console.log('✅ Usuario creado exitosamente:', newUser[0]);
 
     res.status(201).json({
       success: true,
@@ -143,10 +173,18 @@ const createUser = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error creando usuario:', error);
+    console.error('❌ ERROR DETALLADO creando usuario:', {
+      message: error.message,
+      code: error.code,
+      errno: error.errno,
+      sqlState: error.sqlState,
+      sqlMessage: error.sqlMessage,
+      sql: error.sql
+    });
     res.status(500).json({
       success: false,
-      message: 'Error interno del servidor'
+      message: 'Error interno del servidor',
+      details: error.message
     });
   }
 };

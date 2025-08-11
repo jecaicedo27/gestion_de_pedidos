@@ -30,6 +30,7 @@ const packagingRoutes = require('./routes/packaging');
 const deliveryMethodsRoutes = require('./routes/deliveryMethods');
 const adminRoutes = require('./routes/admin');
 const companyConfigRoutes = require('./routes/companyConfig');
+const messengerRoutes = require('./routes/messenger');
 
 // Importar servicios
 const siigoUpdateService = require('./services/siigoUpdateService');
@@ -177,6 +178,8 @@ app.use('/api/system-config', require('./routes/systemConfig'));
 app.use('/api/siigo-credentials', require('./routes/siigoCredentials'));
 app.use('/api/api-config', require('./routes/apiConfig'));
 app.use('/api/siigo-auto-import', require('./routes/siigoAutoImport'));
+app.use('/api/carriers', require('./routes/carriers'));
+app.use('/api/messenger', messengerRoutes);
 
 // Ruta de health check
 app.get('/api/health', (req, res) => {

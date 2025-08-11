@@ -16,7 +16,8 @@ import {
   Database,
   Building,
   Calendar,
-  Package
+  Package,
+  Truck
 } from 'lucide-react';
 import NotificationSystem from './NotificationSystem';
 import RoleNavigation from './RoleNavigation';
@@ -101,6 +102,13 @@ const Layout = () => {
       icon: Settings,
       current: location.pathname === '/delivery-methods',
       requiresPermission: 'admin',
+    },
+    {
+      name: 'Transportadoras',
+      href: '/carriers',
+      icon: Truck,
+      current: location.pathname === '/carriers',
+      requiresPermission: ['admin', 'logistica'],
     },
   ];
 

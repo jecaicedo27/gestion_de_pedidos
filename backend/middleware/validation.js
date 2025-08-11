@@ -10,11 +10,12 @@ const schemas = {
 
   // Validación para crear usuario
   createUser: Joi.object({
-    username: Joi.string().alphanum().min(3).max(30).required(),
-    email: Joi.string().email().required(),
+    username: Joi.string().pattern(/^[a-zA-Z0-9_]+$/).min(3).max(30).required(),
+    email: Joi.string().email().optional().allow(''),
     password: Joi.string().min(6).required(),
     role: Joi.string().valid('admin', 'facturador', 'cartera', 'logistica', 'mensajero').required(),
-    fullName: Joi.string().min(2).max(100).required(),
+    fullName: Joi.string().min(2).max(100).optional().allow(''),
+    full_name: Joi.string().min(2).max(100).optional().allow(''),
     phone: Joi.string().pattern(/^[0-9+\-\s()]+$/).optional()
   }),
 

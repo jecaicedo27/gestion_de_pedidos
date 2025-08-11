@@ -743,7 +743,8 @@ const getReadyForDeliveryOrders = async (req, res) => {
       } else if (normalizedCarrier.includes('camion') && normalizedCarrier.includes('externo')) {
         groupedOrders.camion_externo.push(order);
       } else if (normalizedMethod === 'mensajeria_local' || normalizedMethod === 'mensajero' || 
-                 normalizedCarrier.includes('mensajeria') || normalizedCarrier === 'mensajeria local') {
+                 normalizedCarrier.includes('mensajeria') || normalizedCarrier === 'mensajeria local' ||
+                 normalizedCarrier.includes('mensajero')) {
         // Si es mensajería local, agregar a la categoría correspondiente
         groupedOrders.mensajeria_local.push(order);
       } else if (!normalizedMethod && !normalizedCarrier) {

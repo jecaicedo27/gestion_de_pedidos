@@ -23,6 +23,7 @@ import CustomerCreditPage from './pages/CustomerCreditPage';
 import PackagingPage from './pages/PackagingPage';
 import DeliveryMethodsPage from './pages/DeliveryMethodsPage';
 import ProductsPage from './pages/ProductsPage';
+import CarriersManagementPage from './pages/CarriersManagementPage';
 
 // Componentes de layout
 import Layout from './components/Layout';
@@ -218,6 +219,16 @@ const AppRoutes = () => {
           element={
             <ProtectedRoute requiredRole={['admin', 'logistica']}>
               <ProductsPage />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Gestión de Transportadoras - admin y logística */}
+        <Route
+          path="carriers"
+          element={
+            <ProtectedRoute requiredRole={['admin', 'logistica']}>
+              <CarriersManagementPage />
             </ProtectedRoute>
           }
         />

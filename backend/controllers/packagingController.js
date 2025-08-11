@@ -82,7 +82,7 @@ const getPackagingChecklist = async (req, res) => {
       });
     }
     
-    // Obtener items del pedido con su estado de verificación
+    // Obtener items del pedido con su estado de verificación y códigos de barras
     const itemsQuery = `
       SELECT 
         oi.id,
@@ -95,9 +95,13 @@ const getPackagingChecklist = async (req, res) => {
         piv.packed_weight,
         piv.packed_flavor,
         piv.packed_size,
-        piv.verification_notes
+        piv.verification_notes,
+        p.barcode,
+        p.internal_code,
+        p.siigo_product_id
       FROM order_items oi
       LEFT JOIN packaging_item_verifications piv ON oi.id = piv.item_id AND piv.order_id = ?
+      LEFT JOIN products p ON LOWER(TRIM(p.product_name)) = LOWER(TRIM(oi.name))
       WHERE oi.order_id = ?
     `;
 
@@ -116,8 +120,8 @@ const getPackagingChecklist = async (req, res) => {
       quality_checks: JSON.stringify(['Verificar estado del producto', 'Confirmar cantidad', 'Revisar empaque']),
       common_errors: JSON.stringify(['Cantidad incorrecta', 'Producto dañado', 'Empaque defectuoso']),
       available_flavors: null,
-      product_code: null,
-      barcode: null,
+      product_code: item.internal_code || null,
+      barcode: item.barcode || null,
       is_verified: Boolean(item.is_verified),
       packed_quantity: item.packed_quantity,
       packed_weight: item.packed_weight,
@@ -414,9 +418,137 @@ const verifyAllItems = async (req, res) => {
   }
 };
 
-// Verificar por código de barras (placeholder para compatibilidad)
+// Verificar por código de barras
 const verifyItemByBarcode = async (req, res) => {
-  res.json({ success: true, message: 'Item verificado por código de barras' });
+  try {
+    const { orderId } = req.params;
+    const { barcode } = req.body;
+    
+    if (!barcode) {
+      return res.status(400).json({
+        success: false,
+        message: 'Código de barras requerido'
+      });
+    }
+    
+    console.log(`🔍 Verificando código de barras: ${barcode} para pedido ${orderId}`);
+    
+    // Buscar el producto por código de barras
+    const productQuery = `
+      SELECT 
+        p.id as product_id,
+        p.product_name,
+        p.barcode,
+        p.internal_code
+      FROM products p
+      WHERE p.barcode = ? OR p.internal_code = ?
+      LIMIT 1
+    `;
+    
+    const productResult = await query(productQuery, [barcode, barcode]);
+    
+    if (productResult.length === 0) {
+      console.log(`❌ Producto no encontrado con código: ${barcode}`);
+      return res.status(404).json({
+        success: false,
+        message: `Producto no encontrado con código: ${barcode}`
+      });
+    }
+    
+    const product = productResult[0];
+    console.log(`✅ Producto encontrado:`, product);
+    
+    // Buscar el item del pedido que corresponde al producto
+    const itemQuery = `
+      SELECT 
+        oi.id,
+        oi.name,
+        oi.quantity,
+        piv.is_verified
+      FROM order_items oi
+      LEFT JOIN packaging_item_verifications piv ON oi.id = piv.item_id AND piv.order_id = ?
+      WHERE oi.order_id = ? 
+        AND LOWER(TRIM(oi.name)) = LOWER(TRIM(?))
+      LIMIT 1
+    `;
+    
+    const itemResult = await query(itemQuery, [orderId, orderId, product.product_name]);
+    
+    if (itemResult.length === 0) {
+      console.log(`⚠️ Producto ${product.product_name} no está en el pedido ${orderId}`);
+      return res.status(400).json({
+        success: false,
+        message: `El producto "${product.product_name}" no está en este pedido`,
+        data: {
+          scanned_product: product.product_name,
+          barcode: barcode
+        }
+      });
+    }
+    
+    const item = itemResult[0];
+    
+    // Verificar si ya fue verificado
+    if (item.is_verified) {
+      console.log(`⚠️ Item ${item.id} ya fue verificado`);
+      return res.json({
+        success: true,
+        message: `Producto "${item.name}" ya fue verificado anteriormente`,
+        data: {
+          itemId: item.id,
+          product_name: item.name,
+          already_verified: true,
+          quantity: item.quantity
+        }
+      });
+    }
+    
+    // Verificar el item
+    const upsertQuery = `
+      INSERT INTO packaging_item_verifications 
+      (order_id, item_id, packed_quantity, verification_notes, is_verified, verified_by)
+      VALUES (?, ?, ?, ?, TRUE, 'escaneo_barcode')
+      ON DUPLICATE KEY UPDATE
+        packed_quantity = VALUES(packed_quantity),
+        verification_notes = VALUES(verification_notes),
+        is_verified = TRUE,
+        verified_by = 'escaneo_barcode',
+        verified_at = CURRENT_TIMESTAMP,
+        updated_at = CURRENT_TIMESTAMP
+    `;
+    
+    await query(upsertQuery, [
+      orderId, 
+      item.id, 
+      item.quantity,
+      `Verificado por código de barras: ${barcode}`
+    ]);
+    
+    console.log(`✅ Item ${item.id} verificado por código de barras`);
+    
+    // Verificar si el pedido se puede auto-completar
+    const autoCompleted = await checkAndAutoCompleteOrder(orderId);
+    
+    res.json({
+      success: true,
+      message: `Producto "${item.name}" verificado correctamente`,
+      data: {
+        itemId: item.id,
+        product_name: item.name,
+        quantity: item.quantity,
+        barcode: barcode,
+        is_verified: true,
+        auto_completed: autoCompleted
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Error verificando por código de barras:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error interno del servidor'
+    });
+  }
 };
 
 // Obtener plantillas (placeholder para compatibilidad)

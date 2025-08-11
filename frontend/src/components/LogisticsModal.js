@@ -9,11 +9,21 @@ const CustomDropdown = ({ value, onChange, options, placeholder, required }) => 
   const [isOpen, setIsOpen] = useState(false);
 
   const handleSelect = (optionValue) => {
+    console.log('🔄 CustomDropdown - Seleccionando:', optionValue);
     onChange(optionValue);
     setIsOpen(false);
   };
 
   const selectedOption = options.find(opt => opt.value === value);
+
+  // Log de depuración para el CustomDropdown
+  console.log('🎯 CustomDropdown - Debug:', {
+    value,
+    valueType: typeof value,
+    options: options.map(opt => ({value: opt.value, label: opt.label})),
+    selectedOption,
+    placeholder
+  });
 
   return (
     <div className="relative">
@@ -36,7 +46,9 @@ const CustomDropdown = ({ value, onChange, options, placeholder, required }) => 
               key={option.value}
               type="button"
               onClick={() => handleSelect(option.value)}
-              className="w-full px-3 py-2 text-left hover:bg-gray-100 transition-colors"
+              className={`w-full px-3 py-2 text-left hover:bg-gray-100 transition-colors ${
+                option.value === value ? 'bg-blue-50 text-blue-900' : ''
+              }`}
             >
               {option.label}
             </button>
@@ -67,6 +79,7 @@ const LogisticsModal = ({ isOpen, onClose, order, onProcess }) => {
   const [loading, setLoading] = useState(false);
   const [extractedData, setExtractedData] = useState(null);
   const [companyData, setCompanyData] = useState(null);
+  const [initialCarrierSet, setInitialCarrierSet] = useState(false);
 
   // Función para extraer datos del destinatario desde las observaciones y notas de SIIGO
   const extractRecipientData = (observations, notes) => {
@@ -311,91 +324,124 @@ const LogisticsModal = ({ isOpen, onClose, order, onProcess }) => {
     }
   }, [isOpen]);
 
-  // Estado para transportadoras dinámicas
+  // Estado para transportadoras dinámicas con el objeto completo (id + name)
   const [transportCompanies, setTransportCompanies] = useState([]);
+  const [carriersList, setCarriersList] = useState([]); // Lista completa de carriers con ID y nombre
 
-  // Cargar transportadoras dinámicamente
+  // Cargar transportadoras dinámicamente desde la API - COMPLETAMENTE DINÁMICO
   React.useEffect(() => {
     const fetchCarriers = async () => {
-    if (!token) {
-      console.warn('No hay token disponible para cargar transportadoras');
-      return;
-    }
-    try {
-        
-        // Intentar cargar desde el endpoint de logística
-        const response = await fetch('/api/logistics/carriers', {
-          headers: {
-            'Authorization': `Bearer ${token}`
-          }
-        });
+      try {
+        // Cargar desde el endpoint público de transportadoras activas
+        const response = await fetch('/api/carriers/active');
         
         if (response.ok) {
-          const carriers = await response.json();
-          // Si el response es un array directo
-          if (Array.isArray(carriers)) {
-            setTransportCompanies(carriers.map(c => c.name));
+          const result = await response.json();
+          let carriers = [];
+          
+          // Si el response viene con success/data
+          if (result.success && result.data) {
+            carriers = result.data;
           } 
-          // Si viene envuelto en un objeto con success/data
-          else if (carriers.success && carriers.data) {
-            setTransportCompanies(carriers.data.map(c => c.name));
+          // Si el response es un array directo
+          else if (Array.isArray(result)) {
+            carriers = result;
           }
+
+          // Siempre usar solo las transportadoras de la base de datos
+          // No usar fallbacks hardcodeados para escalabilidad
+          setCarriersList(carriers);
+          
+          // Extraer solo los nombres para el dropdown
+          const carrierNames = carriers.map(c => c.name);
+          setTransportCompanies(carrierNames);
+          
+          console.log(`✅ ${carrierNames.length} transportadoras cargadas desde la base de datos`);
+          console.log('📦 Transportadoras disponibles:', carriers);
+          
         } else {
           console.error('Error cargando transportadoras:', response.status);
-          // Fallback: cargar directamente de la base de datos
-          fetchCarriersFromDB();
+          // No usar fallback hardcodeado - mantener lista vacía
+          setCarriersList([]);
+          setTransportCompanies([]);
+          toast.error('No se pudieron cargar las transportadoras');
         }
       } catch (error) {
         console.error('Error cargando transportadoras:', error);
-        // Fallback: cargar directamente de la base de datos
-        fetchCarriersFromDB();
+        // No usar fallback hardcodeado - mantener lista vacía
+        setCarriersList([]);
+        setTransportCompanies([]);
+        toast.error('Error de conexión al cargar transportadoras');
       }
     };
 
-    // Función fallback para cargar transportadoras
-    const fetchCarriersFromDB = async () => {
-      try {
-        const response = await fetch('/api/carriers', {
-          headers: {
-            'Authorization': `Bearer ${token}`
-          }
-        });
-        
-        if (response.ok) {
-          const carriers = await response.json();
-          setTransportCompanies(carriers.map(c => c.name));
-        } else {
-          // Último fallback: usar lista hardcodeada pero incluyendo Camión Externo
-          setTransportCompanies([
-            'Servientrega',
-            'Coordinadora',
-            'TCC',
-            'Envía',
-            'Inter Rapidísimo',
-            'Deprisa',
-            'Camión Externo',
-            'Mensajería Local'
-          ]);
-        }
-      } catch (error) {
-        // Último fallback: usar lista hardcodeada pero incluyendo Camión Externo
-        setTransportCompanies([
-          'Servientrega',
-          'Coordinadora',
-          'TCC',
-          'Envía',
-          'Inter Rapidísimo',
-          'Deprisa',
-          'Camión Externo',
-          'Mensajería Local'
-        ]);
-      }
-    };
-
+    // Solo cargar cuando el modal esté abierto
     if (isOpen) {
       fetchCarriers();
     }
-  }, [isOpen, token]);
+  }, [isOpen]);
+
+  // Efecto separado para preseleccionar la transportadora cuando ya tengamos los carriers cargados
+  React.useEffect(() => {
+    console.log('🔍 Verificando preselección:', {
+      orderExists: !!order,
+      orderId: order?.id,
+      carrierId: order?.carrier_id,
+      carriersListLength: carriersList.length,
+      transportCompaniesLength: transportCompanies.length,
+      initialCarrierSet: initialCarrierSet,
+      currentTransportCompany: formData.transportCompany,
+      shippingMethod: formData.shippingMethod
+    });
+    
+    // SOLO preseleccionar si el método de envío requiere transportadora
+    if (order && order.carrier_id && carriersList.length > 0 && transportCompanies.length > 0 && 
+        formData.shippingMethod && formData.shippingMethod !== 'recoge_bodega' && !initialCarrierSet) {
+      
+      const carrierId = parseInt(order.carrier_id);
+      const selectedCarrier = carriersList.find(c => parseInt(c.id) === carrierId);
+      
+      console.log(`🔎 Buscando carrier ID ${carrierId} en lista:`, carriersList);
+      console.log(`📋 Transportadoras disponibles en dropdown:`, transportCompanies);
+      
+      if (selectedCarrier) {
+        console.log(`✅ Transportadora encontrada: ${selectedCarrier.name} (ID: ${selectedCarrier.id})`);
+        
+        // Verificar que el nombre existe en la lista de transportCompanies
+        if (transportCompanies.includes(selectedCarrier.name)) {
+          console.log(`📦 Preseleccionando transportadora: ${selectedCarrier.name}`);
+          
+          // Actualización inmediata sin setTimeout
+          setFormData(prev => {
+            // Solo actualizar si no está ya establecida
+            if (prev.transportCompany !== selectedCarrier.name) {
+              console.log('🔄 Actualizando transportadora:', {
+                anterior: prev.transportCompany,
+                nueva: selectedCarrier.name
+              });
+              return {
+                ...prev,
+                transportCompany: selectedCarrier.name
+              };
+            }
+            return prev;
+          });
+          setInitialCarrierSet(true);
+          
+        } else {
+          console.log(`⚠️ La transportadora ${selectedCarrier.name} no está en la lista del dropdown`);
+        }
+      } else {
+        console.log(`❌ No se encontró transportadora con ID ${carrierId}`);
+      }
+    }
+  }, [order?.carrier_id, carriersList.length, transportCompanies.length, formData.shippingMethod]); // Agregamos shippingMethod
+
+  // Reset initialCarrierSet cuando cambie el pedido
+  React.useEffect(() => {
+    console.log('🔄 Reset initialCarrierSet para pedido:', order?.id);
+    setInitialCarrierSet(false);
+  }, [order?.id]);
 
 
   const handleInputChange = (field, value) => {
@@ -507,12 +553,12 @@ const LogisticsModal = ({ isOpen, onClose, order, onProcess }) => {
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" style={{ zIndex: 9999 }}>
       <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto" style={{ zIndex: 10000 }}>
         {/* Header */}
-        <div className="flex items-center justify-between p-6 border-b border-gray-200">
+        <div className="flex items-center justify-between p-4 border-b border-gray-200">
           <div>
-            <h2 className="text-xl font-semibold text-gray-900">
+            <h2 className="text-lg font-semibold text-gray-900">
               Procesar Envío - Pedido {order?.order_number}
             </h2>
-            <p className="text-sm text-gray-600 mt-1">
+            <p className="text-xs text-gray-600">
               Cliente: {order?.customer_name}
             </p>
           </div>
@@ -520,65 +566,65 @@ const LogisticsModal = ({ isOpen, onClose, order, onProcess }) => {
             onClick={onClose}
             className="text-gray-400 hover:text-gray-600"
           >
-            <Icons.X className="w-6 h-6" />
+            <Icons.X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Content */}
-        <form onSubmit={handleSubmit} className="p-6">
-          <div className="space-y-6">
-            {/* Información del pedido */}
-            <div className="bg-gray-50 p-4 rounded-lg">
-              <h3 className="font-medium text-gray-900 mb-3">Información del Pedido</h3>
-              <div className="grid grid-cols-2 gap-4 text-sm">
+        <form onSubmit={handleSubmit} className="p-4">
+          <div className="space-y-3">
+            {/* Información del pedido - Más compacta */}
+            <div className="bg-gray-50 p-3 rounded-lg">
+              <h3 className="font-medium text-gray-900 mb-2 text-sm">Información del Pedido</h3>
+              <div className="grid grid-cols-3 gap-2 text-xs">
                 <div>
                   <span className="text-gray-600">Cliente:</span>
-                  <p className="font-medium">{order?.customer_name}</p>
+                  <span className="ml-1 font-medium">{order?.customer_name}</span>
                 </div>
                 <div>
                   <span className="text-gray-600">Teléfono:</span>
-                  <p className="font-medium">{order?.customer_phone}</p>
-                </div>
-                <div>
-                  <span className="text-gray-600">Dirección:</span>
-                  <p className="font-medium">{order?.customer_address}</p>
-                </div>
-                <div>
-                  <span className="text-gray-600">Ciudad:</span>
-                  <p className="font-medium">{order?.customer_city || 'No especificada'}</p>
-                </div>
-                <div>
-                  <span className="text-gray-600">Departamento:</span>
-                  <p className="font-medium">{order?.customer_department || 'No especificado'}</p>
+                  <span className="ml-1 font-medium">{order?.customer_phone}</span>
                 </div>
                 <div>
                   <span className="text-gray-600">Total:</span>
-                  <p className="font-medium">${order?.total_amount?.toLocaleString('es-CO')}</p>
+                  <span className="ml-1 font-medium text-green-600">${order?.total_amount?.toLocaleString('es-CO')}</span>
+                </div>
+                <div className="col-span-2">
+                  <span className="text-gray-600">Dirección:</span>
+                  <span className="ml-1 font-medium">{order?.customer_address}</span>
                 </div>
                 <div>
                   <span className="text-gray-600">Items:</span>
-                  <p className="font-medium">{order?.items?.length || 0} productos</p>
+                  <span className="ml-1 font-medium">{order?.items?.length || 0} productos</span>
+                </div>
+                <div>
+                  <span className="text-gray-600">Ciudad:</span>
+                  <span className="ml-1 font-medium">{order?.customer_city || 'No especificada'}</span>
+                </div>
+                <div>
+                  <span className="text-gray-600">Depto:</span>
+                  <span className="ml-1 font-medium">{order?.customer_department || 'No especificado'}</span>
                 </div>
               </div>
 
-              {/* Link para descargar factura de SIIGO */}
+              {/* Link para descargar factura de SIIGO - Más compacto */}
               {order?.siigo_public_url && (
-                <div className="mt-4 pt-3 border-t border-gray-200">
-                  <div className="flex items-center justify-between bg-blue-50 p-3 rounded-lg border border-blue-200">
+                <div className="mt-2 pt-2 border-t border-gray-200">
+                  <div className="flex items-center justify-between bg-blue-50 p-2 rounded border border-blue-200">
                     <div className="flex items-center space-x-2">
-                      <Icons.FileText className="w-5 h-5 text-blue-600" />
+                      <Icons.FileText className="w-4 h-4 text-blue-600" />
                       <div>
-                        <p className="text-sm font-medium text-blue-900">Factura Original SIIGO</p>
-                        <p className="text-xs text-blue-700">Descarga la factura oficial para imprimir</p>
+                        <p className="text-xs font-medium text-blue-900">Factura Original SIIGO</p>
+                        <p className="text-xs text-blue-700">Descarga la factura oficial</p>
                       </div>
                     </div>
                     <a
                       href={order.siigo_public_url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center space-x-2 transition-colors"
+                      className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded text-xs font-medium flex items-center space-x-1 transition-colors"
                     >
-                      <Icons.Download className="w-4 h-4" />
+                      <Icons.Download className="w-3 h-3" />
                       <span>Descargar</span>
                     </a>
                   </div>
@@ -652,66 +698,8 @@ const LogisticsModal = ({ isOpen, onClose, order, onProcess }) => {
               </div>
             )}
 
-            {/* Observaciones de SIIGO */}
-            {order?.siigo_observations && (
-              <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
-                <h3 className="font-medium text-amber-900 mb-3 flex items-center">
-                  <Icons.FileText className="w-4 h-4 mr-2" />
-                  Observaciones de SIIGO
-                </h3>
-                <p className="text-sm text-amber-800 mb-2">
-                  <strong>Información extraída automáticamente de la factura:</strong>
-                </p>
-                <div className="bg-white border border-amber-200 rounded p-4">
-                  <pre className="text-sm text-gray-700 whitespace-pre-wrap font-sans leading-relaxed">
-                    {(() => {
-                      // Algoritmo simple y directo para formatear observaciones de SIIGO
-                      let formattedText = order.siigo_observations;
-                      
-                      // Lista de campos específicos a identificar y separar
-                      const fieldsToSeparate = [
-                        'OBSERVACIONES:',
-                        'ESTADO DE PAGO:',
-                        'MEDIO DE PAGO:',
-                        'FORMA DE PAGO DE ENVIO:',
-                        'NOMBRE:',
-                        'NIT:',
-                        'TELÉFONO:',
-                        'DEPARTAMENTO:',
-                        'CIUDAD:',
-                        'DIRECCIÓN:',
-                        'NOTA:'
-                      ];
-                      
-                      // Separar cada campo específico con un salto de línea
-                      fieldsToSeparate.forEach(field => {
-                        // Crear un patrón que busque el campo precedido por cualquier caracter que no sea salto de línea
-                        const pattern = new RegExp(`([^\\n])${field.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'g');
-                        formattedText = formattedText.replace(pattern, `$1\n${field}`);
-                      });
-                      
-                      // Normalizar saltos de línea y espacios
-                      formattedText = formattedText
-                        .replace(/\r\n/g, '\n')          // Normalizar CRLF a LF
-                        .replace(/\r/g, '\n')            // Normalizar CR a LF
-                        .replace(/\n+/g, '\n')           // Eliminar saltos múltiples
-                        .split('\n')
-                        .map(line => line.replace(/\s+/g, ' ').trim())  // Limpiar espacios en cada línea
-                        .filter(line => line.length > 0)               // Eliminar líneas vacías
-                        .join('\n');
-                      
-                      return formattedText;
-                    })()}
-                  </pre>
-                </div>
-                <p className="text-xs text-amber-700 mt-2">
-                  Estas observaciones fueron extraídas automáticamente de la factura de SIIGO
-                </p>
-              </div>
-            )}
-
-            {/* Notas de la Factura SIIGO */}
-            {order?.notes && (
+            {/* Notas de la Factura SIIGO - Información consolidada */}
+            {(order?.siigo_observations || order?.notes) && (
               <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
                 <h3 className="font-medium text-blue-900 mb-2 flex items-center">
                   <Icons.FileText className="w-4 h-4 mr-2" />
@@ -721,12 +709,49 @@ const LogisticsModal = ({ isOpen, onClose, order, onProcess }) => {
                   <strong>Información importante acordada con el cliente:</strong>
                 </p>
                 <div className="bg-white p-3 rounded border border-blue-200">
-                  <p className="text-sm text-gray-700 whitespace-pre-wrap">{order.notes}</p>
+                  <pre className="text-sm text-gray-700 whitespace-pre-wrap font-sans leading-relaxed">
+                    {(() => {
+                      // Priorizar siigo_observations si existe, sino usar notes
+                      let textToFormat = order.siigo_observations || order.notes || '';
+                      
+                      // Si hay observaciones de SIIGO, formatearlas
+                      if (order.siigo_observations) {
+                        // Lista de campos específicos a identificar y separar
+                        const fieldsToSeparate = [
+                          'OBSERVACIONES SIIGO:',
+                          'ESTADO DE PAGO:',
+                          'MEDIO DE PAGO:',
+                          'FORMA DE PAGO DE ENVIO:',
+                          'NOMBRE:',
+                          'NIT:',
+                          'TELÉFONO:',
+                          'DEPARTAMENTO:',
+                          'CIUDAD:',
+                          'DIRECCIÓN:',
+                          'NOTA:'
+                        ];
+                        
+                        // Separar cada campo específico con un salto de línea
+                        fieldsToSeparate.forEach(field => {
+                          const pattern = new RegExp(`([^\\n])${field.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'g');
+                          textToFormat = textToFormat.replace(pattern, `$1\n${field}`);
+                        });
+                        
+                        // Normalizar saltos de línea y espacios
+                        textToFormat = textToFormat
+                          .replace(/\r\n/g, '\n')
+                          .replace(/\r/g, '\n')
+                          .replace(/\n+/g, '\n')
+                          .split('\n')
+                          .map(line => line.replace(/\s+/g, ' ').trim())
+                          .filter(line => line.length > 0)
+                          .join('\n');
+                      }
+                      
+                      return textToFormat;
+                    })()}
+                  </pre>
                 </div>
-                <p className="text-xs text-blue-600 mt-2">
-                  💡 Esta información puede contener detalles sobre el método de envío, dirección especial, 
-                  horarios de entrega u otras instrucciones importantes del cliente.
-                </p>
               </div>
             )}
 
@@ -863,20 +888,6 @@ const LogisticsModal = ({ isOpen, onClose, order, onProcess }) => {
                 />
               </div>
             )}
-
-            {/* Notas adicionales */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Notas Adicionales
-              </label>
-              <textarea
-                value={formData.notes}
-                onChange={(e) => handleInputChange('notes', e.target.value)}
-                placeholder="Instrucciones especiales, observaciones..."
-                rows={3}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
 
             {/* Vista previa de la guía de envío */}
             {formData.shippingMethod && (
@@ -1033,7 +1044,7 @@ const LogisticsModal = ({ isOpen, onClose, order, onProcess }) => {
           </div>
 
           {/* Actions */}
-          <div className="flex items-center justify-end space-x-3 mt-8 pt-6 border-t border-gray-200">
+          <div className="flex items-center justify-end space-x-3 mt-4 pt-3 border-t border-gray-200">
             <button
               type="button"
               onClick={onClose}

@@ -560,6 +560,24 @@ const OrderReviewModal = ({ isOpen, onClose, order, onConfirm }) => {
             </div>
           )}
 
+          {/* Notas de la Factura SIIGO - Campo notes existente */}
+          {order.notes && order.notes.trim() !== '' && (
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+              <h3 className="font-medium text-blue-900 mb-3 flex items-center">
+                <Icons.StickyNote className="w-4 h-4 mr-2" />
+                Notas de la Factura SIIGO
+              </h3>
+              <div className="bg-white border border-blue-200 rounded p-4">
+                <pre className="text-sm text-gray-700 whitespace-pre-wrap font-sans leading-relaxed">
+                  {order.notes}
+                </pre>
+              </div>
+              <p className="text-xs text-blue-700 mt-2">
+                Información importante acordada con el cliente
+              </p>
+            </div>
+          )}
+
           {/* Mensaje si no hay items */}
           {(!order.items || order.items.length === 0) && (
             <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
