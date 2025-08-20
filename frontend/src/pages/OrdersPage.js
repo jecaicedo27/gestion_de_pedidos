@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { orderService, userService, walletService } from '../services/api';
 import DeliveryRegistrationModal from '../components/DeliveryRegistrationModal';
+import DeliveryConfirmationModal from '../components/DeliveryConfirmationModal';
 import OrderReviewModal from '../components/OrderReviewModal';
 import WalletValidationModal from '../components/WalletValidationModal';
 import LogisticsModal from '../components/LogisticsModal';
@@ -121,6 +122,11 @@ const OrdersPage = () => {
     loading: false
   });
 
+  const [deliveryConfirmationModal, setDeliveryConfirmationModal] = useState({
+    isOpen: false,
+    order: null
+  });
+
   // Estados para acciones
   const [selectedOrders, setSelectedOrders] = useState([]);
   const [bulkAction, setBulkAction] = useState('');
@@ -135,25 +141,73 @@ const OrdersPage = () => {
       const isWalletView = view === 'cartera' || filtersToUse.status === 'revision_cartera';
       const isAllOrdersView = view === 'todos';
       
-      // Preparar filtros - si es vista "todos", eliminar filtro de estado
-      let finalFilters = { ...filtersToUse };
-      if (isAllOrdersView) {
-        finalFilters = { ...filtersToUse, status: '' };
-        console.log('📋 Vista "Todos los Pedidos" - mostrando pedidos sin filtrar por estado');
-      }
-      
-      let response;
-      if (isWalletView) {
-        // Usar el endpoint específico de cartera que garantiza datos correctos
-        console.log('🏦 Usando endpoint de cartera para obtener pedidos');
-        response = await walletService.getWalletOrders(finalFilters);
+      // Si es mensajero o logística con vista de mensajero, usar el endpoint específico de mensajeros
+      if (user?.role === 'mensajero' || (user?.role === 'logistica' && view === 'mensajero')) {
+        console.log('📱 Usuario mensajero/logística - usando endpoint específico de mensajeros');
+        try {
+          let endpoint = '/api/messenger/orders';
+          
+          // Si es logística, obtener todos los pedidos de mensajeros (no solo los asignados al usuario actual)
+          if (user?.role === 'logistica') {
+            endpoint = '/api/orders';
+            console.log('🏢 Usuario logística - obteniendo vista completa de mensajeros');
+          }
+          
+          const response = await fetch(endpoint, {
+            headers: {
+              'Authorization': `Bearer ${localStorage.getItem('token')}`
+            }
+          });
+          
+          if (!response.ok) {
+            throw new Error('Error cargando pedidos de mensajero');
+          }
+          
+          const data = await response.json();
+          
+          // Si es logística, filtrar solo pedidos con mensajeros asignados
+          let ordersToShow = data.data?.orders || data.data || [];
+          if (user?.role === 'logistica') {
+            ordersToShow = ordersToShow.filter(order => 
+              order.assigned_messenger_id && 
+              ['listo_para_entrega', 'en_reparto', 'entregado_cliente'].includes(order.status)
+            );
+            console.log(`🔍 Logística - Mostrando ${ordersToShow.length} pedidos con mensajeros asignados`);
+          }
+          
+          setOrders(ordersToShow);
+          setPagination({ 
+            page: 1, 
+            pages: 1, 
+            total: ordersToShow.length || 0, 
+            limit: 50 
+          });
+          
+        } catch (error) {
+          console.error('Error cargando pedidos de mensajero:', error);
+          toast.error('Error cargando pedidos asignados');
+        }
       } else {
-        // Usar el endpoint general de pedidos
-        response = await orderService.getOrders(finalFilters);
+        // Preparar filtros - si es vista "todos", eliminar filtro de estado
+        let finalFilters = { ...filtersToUse };
+        if (isAllOrdersView) {
+          finalFilters = { ...filtersToUse, status: '' };
+          console.log('📋 Vista "Todos los Pedidos" - mostrando pedidos sin filtrar por estado');
+        }
+        
+        let response;
+        if (isWalletView) {
+          // Usar el endpoint específico de cartera que garantiza datos correctos
+          console.log('🏦 Usando endpoint de cartera para obtener pedidos');
+          response = await walletService.getWalletOrders(finalFilters);
+        } else {
+          // Usar el endpoint general de pedidos
+          response = await orderService.getOrders(finalFilters);
+        }
+        
+        setOrders(response.data.orders);
+        setPagination(response.data.pagination);
       }
-      
-      setOrders(response.data.orders);
-      setPagination(response.data.pagination);
       
       // Auto-focus removido para evitar interferencias
     } catch (error) {
@@ -162,7 +216,7 @@ const OrdersPage = () => {
     } finally {
       setLoading(false);
     }
-  }, [searchParams]);
+  }, [searchParams, user?.role]);
 
   // Cargar mensajeros (para asignación)
   const loadMessengers = async () => {
@@ -662,6 +716,115 @@ const OrdersPage = () => {
     }
   };
 
+  // Funciones para mensajeros
+  const handleAcceptOrder = async (orderId) => {
+    try {
+      const response = await fetch(`/api/messenger/orders/${orderId}/accept`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error('Error aceptando pedido');
+      }
+
+      const result = await response.json();
+      toast.success(result.message || 'Pedido aceptado exitosamente');
+      loadOrders();
+      
+    } catch (error) {
+      console.error('Error aceptando pedido:', error);
+      toast.error('Error aceptando pedido');
+    }
+  };
+
+  const handleRejectOrder = async (orderId) => {
+    const reason = prompt('¿Por qué rechazas este pedido?');
+    if (!reason || reason.trim() === '') {
+      toast.error('Debes proporcionar una razón para rechazar el pedido');
+      return;
+    }
+
+    try {
+      const response = await fetch(`/api/messenger/orders/${orderId}/reject`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
+        body: JSON.stringify({ reason: reason.trim() })
+      });
+
+      if (!response.ok) {
+        throw new Error('Error rechazando pedido');
+      }
+
+      const result = await response.json();
+      toast.success(result.message || 'Pedido rechazado y devuelto a logística');
+      loadOrders();
+      
+    } catch (error) {
+      console.error('Error rechazando pedido:', error);
+      toast.error('Error rechazando pedido');
+    }
+  };
+
+  const handleStartDelivery = async (orderId) => {
+    try {
+      const response = await fetch(`/api/messenger/orders/${orderId}/start-delivery`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error('Error iniciando entrega');
+      }
+
+      const result = await response.json();
+      toast.success(result.message || 'Entrega iniciada exitosamente');
+      loadOrders();
+      
+    } catch (error) {
+      console.error('Error iniciando entrega:', error);
+      toast.error('Error iniciando entrega');
+    }
+  };
+
+  const handleMarkDeliveryFailed = async (orderId) => {
+    const reason = prompt('¿Por qué falló la entrega?');
+    if (!reason || reason.trim() === '') {
+      toast.error('Debes proporcionar una razón para marcar la entrega como fallida');
+      return;
+    }
+
+    try {
+      const response = await fetch(`/api/messenger/orders/${orderId}/mark-failed`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
+        body: JSON.stringify({ reason: reason.trim() })
+      });
+
+      if (!response.ok) {
+        throw new Error('Error marcando entrega como fallida');
+      }
+
+      const result = await response.json();
+      toast.success(result.message || 'Entrega marcada como fallida');
+      loadOrders();
+      
+    } catch (error) {
+      console.error('Error marcando entrega como fallida:', error);
+      toast.error('Error marcando entrega como fallida');
+    }
+  };
+
   // Manejar selección múltiple
   const handleSelectOrder = (orderId) => {
     setSelectedOrders(prev => 
@@ -738,6 +901,16 @@ const OrdersPage = () => {
       cancelado: 'Cancelado'
     };
     return labels[status] || status;
+  };
+
+  // Helper para obtener el monto correcto según el endpoint usado
+  const getOrderAmount = (order) => {
+    // Para mensajeros, el campo se llama 'total'
+    if (user?.role === 'mensajero') {
+      return parseFloat(order.total || 0);
+    }
+    // Para otros roles, el campo se llama 'total_amount'
+    return parseFloat(order.total_amount || 0);
   };
 
   // Obtener etiqueta del método de envío
@@ -960,6 +1133,11 @@ const OrdersPage = () => {
                       Método de Envío
                     </th>
                   )}
+                  {['admin', 'logistica'].includes(user?.role) && (
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Mensajero
+                    </th>
+                  )}
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Fecha de Envío
                   </th>
@@ -996,10 +1174,10 @@ const OrdersPage = () => {
                     <td className="px-6 py-4">
                       <div className="max-w-xs">
                         <div className="text-sm font-medium text-gray-900 break-words leading-tight">
-                          {order.customer_name}
+                          {order.customer_name || order.client_name}
                         </div>
                         <div className="text-sm text-gray-500 whitespace-nowrap">
-                          {order.customer_phone}
+                          {order.customer_phone || order.client_phone}
                         </div>
                       </div>
                     </td>
@@ -1018,7 +1196,33 @@ const OrdersPage = () => {
                     </td>
                     
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      ${order.total_amount?.toLocaleString('es-CO')}
+                      <div className="flex flex-col">
+                        <span className="font-semibold">
+                          ${getOrderAmount(order).toLocaleString('es-CO')}
+                        </span>
+                        {/* Indicadores de método de pago */}
+                        <div className="flex space-x-1 mt-1">
+                          {order.payment_method === 'efectivo' || order.payment_method === 'contraentrega' || order.payment_method === 'cash' || !order.payment_method ? (
+                            <span className="px-1 py-0.5 text-xs font-medium bg-red-100 text-red-700 rounded">
+                              💰 COBRAR
+                            </span>
+                          ) : (
+                            <span className="px-1 py-0.5 text-xs font-medium bg-green-100 text-green-700 rounded">
+                              ✅ PAGADO
+                            </span>
+                          )}
+                          
+                          {order.shipping_payment_method === 'pending' || order.shipping_payment_method === 'por_cobrar' || order.shipping_payment_method === 'unpaid' || !order.shipping_payment_method ? (
+                            <span className="px-1 py-0.5 text-xs font-medium bg-orange-100 text-orange-700 rounded">
+                              🚚 +FLETE
+                            </span>
+                          ) : (
+                            <span className="px-1 py-0.5 text-xs font-medium bg-blue-100 text-blue-700 rounded">
+                              🚚 PAGADO
+                            </span>
+                          )}
+                        </div>
+                      </div>
                     </td>
                     
                     {/* Método de envío - Solo visible para mensajeros */}
@@ -1027,6 +1231,20 @@ const OrdersPage = () => {
                         <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getDeliveryMethodColor(order.delivery_method)}`}>
                           {getDeliveryMethodLabel(order.delivery_method)}
                         </span>
+                      </td>
+                    )}
+                    
+                    {/* Columna Mensajero - Solo visible para admin y logística */}
+                    {['admin', 'logistica'].includes(user?.role) && (
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="text-sm text-gray-900">
+                          {order.assigned_messenger_name || order.messenger_name || (order.assigned_messenger_id ? `Mensajero ID: ${order.assigned_messenger_id}` : '-')}
+                        </div>
+                        {order.messenger_status && (
+                          <div className="text-xs text-gray-500">
+                            Estado: {order.messenger_status}
+                          </div>
+                        )}
                       </td>
                     )}
                     
@@ -1096,6 +1314,30 @@ const OrdersPage = () => {
                           >
                             <Icons.Box className="w-4 h-4" />
                           </button>
+                        ) : (user?.role === 'mensajero' && order.assigned_messenger_id === user.id && order.messenger_status === 'assigned') ? (
+                          <button
+                            onClick={() => handleAcceptOrder(order.id)}
+                            className="text-green-600 hover:text-green-900 w-4 h-4 flex items-center justify-center"
+                            title="Aceptar pedido"
+                          >
+                            <Icons.Check className="w-4 h-4" />
+                          </button>
+                        ) : (user?.role === 'mensajero' && order.assigned_messenger_id === user.id && order.messenger_status === 'accepted') ? (
+                          <button
+                            onClick={() => setDeliveryConfirmationModal({ isOpen: true, order })}
+                            className="text-blue-600 hover:text-blue-900 w-4 h-4 flex items-center justify-center"
+                            title="Iniciar entrega"
+                          >
+                            <Icons.Play className="w-4 h-4" />
+                          </button>
+                        ) : (user?.role === 'mensajero' && order.assigned_messenger_id === user.id && order.messenger_status === 'in_delivery') ? (
+                          <button
+                            onClick={() => setDeliveryModal({ isOpen: true, order })}
+                            className="text-purple-600 hover:text-purple-900 w-4 h-4 flex items-center justify-center"
+                            title="Completar entrega"
+                          >
+                            <Icons.Package className="w-4 h-4" />
+                          </button>
                         ) : (order.status === 'en_reparto' && user?.role === 'mensajero') ? (
                           <button
                             onClick={() => setDeliveryModal({ isOpen: true, order })}
@@ -1116,6 +1358,22 @@ const OrdersPage = () => {
                             title="Finalizar Empaque"
                           >
                             <Icons.CheckCircle className="w-4 h-4" />
+                          </button>
+                        ) : (user?.role === 'mensajero' && order.assigned_messenger_id === user.id && order.messenger_status === 'assigned') ? (
+                          <button
+                            onClick={() => handleRejectOrder(order.id)}
+                            className="text-red-600 hover:text-red-900 w-4 h-4 flex items-center justify-center"
+                            title="Rechazar pedido"
+                          >
+                            <Icons.X className="w-4 h-4" />
+                          </button>
+                        ) : (user?.role === 'mensajero' && order.assigned_messenger_id === user.id && order.messenger_status === 'in_delivery') ? (
+                          <button
+                            onClick={() => handleMarkDeliveryFailed(order.id)}
+                            className="text-orange-600 hover:text-orange-900 w-4 h-4 flex items-center justify-center"
+                            title="Marcar entrega fallida"
+                          >
+                            <Icons.AlertTriangle className="w-4 h-4" />
                           </button>
                         ) : (order.status === 'pendiente' && canChangeStatus(order, 'confirmado')) ? (
                           <button
@@ -1712,6 +1970,14 @@ const OrdersPage = () => {
         order={deleteSiigoModal.order}
         onConfirm={handleDeleteSiigoOrderConfirm}
         loading={deleteSiigoModal.loading}
+      />
+
+      {/* Modal de confirmación de entrega */}
+      <DeliveryConfirmationModal
+        isOpen={deliveryConfirmationModal.isOpen}
+        onClose={() => setDeliveryConfirmationModal({ isOpen: false, order: null })}
+        order={deliveryConfirmationModal.order}
+        onConfirmStart={handleStartDelivery}
       />
     </div>
   );

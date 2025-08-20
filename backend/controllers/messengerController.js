@@ -40,60 +40,54 @@ const upload = multer({
 const getAssignedOrders = async (req, res) => {
   try {
     const messengerId = req.user.id;
-    const { status } = req.query;
+    console.log('🚚 Obteniendo pedidos para mensajero ID:', messengerId);
 
-    let whereClause = 'WHERE o.assigned_messenger_id = ?';
-    const params = [messengerId];
-
-    // Filtrar por estado si se especifica
-    if (status) {
-      whereClause += ' AND o.messenger_status = ?';
-      params.push(status);
-    }
-
+    console.log('🔍 Intentando consulta a base de datos...');
+    
+    // Buscar pedidos que estén listos para entrega y asignados a mensajería urbana
     const orders = await query(`
       SELECT 
         o.id,
         o.order_number,
-        o.client_name,
-        o.client_phone,
-        o.delivery_address,
-        o.total_amount,
+        o.customer_name,
+        o.customer_phone,
+        o.customer_address,
+        o.total_amount as total,
         o.status,
-        o.messenger_status,
-        o.delivery_attempts,
-        o.requires_payment,
-        o.payment_amount,
-        o.delivery_fee,
+        o.delivery_method,
         o.created_at,
         o.shipping_date,
-        c.name as carrier_name,
-        dt.assigned_at,
-        dt.accepted_at,
-        dt.rejection_reason,
-        dt.failure_reason,
-        dt.delivery_notes
+        o.notes,
+        o.assigned_messenger_id,
+        u.full_name as messenger_name,
+        o.messenger_status
       FROM orders o
-      LEFT JOIN carriers c ON o.carrier_id = c.id
-      LEFT JOIN delivery_tracking dt ON o.id = dt.order_id AND dt.messenger_id = ?
-      ${whereClause}
+      LEFT JOIN users u ON o.assigned_messenger_id = u.id
+      WHERE (
+        (o.status = 'listo_para_entrega' AND o.delivery_method IN ('mensajeria_urbana', 'domicilio'))
+        OR 
+        (o.assigned_messenger_id = ? AND o.status IN ('en_reparto', 'listo_para_entrega'))
+      )
       ORDER BY 
-        CASE o.messenger_status 
-          WHEN 'assigned' THEN 1
-          WHEN 'accepted' THEN 2
-          WHEN 'in_delivery' THEN 3
-          ELSE 4
+        CASE 
+          WHEN o.assigned_messenger_id = ? THEN 1
+          ELSE 2
         END,
         o.created_at DESC
-    `, [messengerId, ...params]);
+    `, [messengerId, messengerId]);
+
+    console.log(`📋 Query ejecutada exitosamente`);
+    console.log(`📦 Encontrados ${orders.length} pedidos para el mensajero`);
 
     res.json({
       success: true,
-      data: orders
+      data: orders,
+      message: `${orders.length} pedidos encontrados`
     });
 
   } catch (error) {
-    console.error('Error obteniendo pedidos asignados:', error);
+    console.error('❌ Error obteniendo pedidos asignados:', error);
+    console.error('❌ Stack trace:', error.stack);
     res.status(500).json({
       success: false,
       message: 'Error interno del servidor'

@@ -27,8 +27,8 @@ const getOrders = async (req, res) => {
       whereClause += ' AND (o.status IN ("en_reparto", "entregado_transportadora") OR o.assigned_to = ?)';
       params.push(userId);
     } else if (userRole === 'logistica') {
-      // Logística puede ver pedidos en su fase y también en empaque ya que supervisan ese proceso
-      whereClause += ' AND o.status IN ("en_logistica", "en_preparacion", "listo", "en_empaque", "empacado")';
+      // Logística puede ver pedidos en TODAS las fases que supervisan: desde logística hasta entrega
+      whereClause += ' AND o.status IN ("en_logistica", "en_preparacion", "listo", "en_empaque", "empacado", "listo_para_entrega", "en_reparto", "entregado_transportadora")';
     } else if (userRole === 'empaque') {
       // Rol específico de empaque (si existiera) - pero empaque usa rol logistica
       whereClause += ' AND o.status IN ("en_empaque", "empacado")';
@@ -73,7 +73,7 @@ const getOrders = async (req, res) => {
     const orderBy = validSortFields.includes(sortBy) ? sortBy : 'created_at';
     const order = validSortOrders.includes(sortOrder.toUpperCase()) ? sortOrder.toUpperCase() : 'DESC';
 
-    // Obtener pedidos con información del usuario creador
+    // Obtener pedidos con información del usuario creador Y MENSAJEROS
     const orders = await query(
       `SELECT 
         o.id, o.order_number, o.customer_name, o.customer_phone, o.customer_address, 
@@ -83,11 +83,15 @@ const getOrders = async (req, res) => {
         o.siigo_invoice_id, o.siigo_invoice_number, o.siigo_public_url, o.siigo_customer_id,
         o.siigo_observations, o.siigo_payment_info, o.siigo_seller_id, o.siigo_balance,
         o.siigo_document_type, o.siigo_stamp_status, o.siigo_mail_status,
+        o.assigned_messenger_id, o.messenger_status,
         u.full_name as created_by_name,
-        assigned_user.full_name as assigned_to_name
+        assigned_user.full_name as assigned_to_name,
+        messenger.username as assigned_messenger_name,
+        messenger.full_name as messenger_name
        FROM orders o
        LEFT JOIN users u ON o.created_by = u.id
        LEFT JOIN users assigned_user ON o.assigned_to = assigned_user.id
+       LEFT JOIN users messenger ON o.assigned_messenger_id = messenger.id
        ${whereClause}
        ORDER BY o.${orderBy} ${order}
        LIMIT ? OFFSET ?`,

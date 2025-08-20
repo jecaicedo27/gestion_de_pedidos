@@ -16,8 +16,14 @@ const DeliveryRegistrationModal = ({ isOpen, onClose, order, onConfirm }) => {
     reset
   } = useForm();
 
+  // Helper para obtener el monto correcto según el endpoint usado
+  const getOrderAmount = (order) => {
+    // Para mensajeros, el campo se llama 'total'
+    return parseFloat(order?.total || order?.total_amount || 0);
+  };
+
   const amountReceived = watch('amountReceived');
-  const expectedAmount = order?.total_amount || 0;
+  const expectedAmount = getOrderAmount(order);
   const amountMatch = parseFloat(amountReceived || 0) === expectedAmount;
 
   const handleClose = () => {

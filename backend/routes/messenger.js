@@ -15,32 +15,32 @@ const requireMessengerRole = (req, res, next) => {
 };
 
 // GET /api/messenger/orders - Obtener pedidos asignados
-router.get('/orders', auth, requireMessengerRole, messengerController.getAssignedOrders);
+router.get('/orders', auth.authenticateToken, requireMessengerRole, messengerController.getAssignedOrders);
 
 // POST /api/messenger/orders/:orderId/accept - Aceptar pedido
-router.post('/orders/:orderId/accept', auth, requireMessengerRole, messengerController.acceptOrder);
+router.post('/orders/:orderId/accept', auth.authenticateToken, requireMessengerRole, messengerController.acceptOrder);
 
 // POST /api/messenger/orders/:orderId/reject - Rechazar pedido
-router.post('/orders/:orderId/reject', auth, requireMessengerRole, messengerController.rejectOrder);
+router.post('/orders/:orderId/reject', auth.authenticateToken, requireMessengerRole, messengerController.rejectOrder);
 
 // POST /api/messenger/orders/:orderId/start-delivery - Iniciar entrega
-router.post('/orders/:orderId/start-delivery', auth, requireMessengerRole, messengerController.startDelivery);
+router.post('/orders/:orderId/start-delivery', auth.authenticateToken, requireMessengerRole, messengerController.startDelivery);
 
 // POST /api/messenger/orders/:orderId/complete - Completar entrega
-router.post('/orders/:orderId/complete', auth, requireMessengerRole, messengerController.completeDelivery);
+router.post('/orders/:orderId/complete', auth.authenticateToken, requireMessengerRole, messengerController.completeDelivery);
 
 // POST /api/messenger/orders/:orderId/mark-failed - Marcar entrega como fallida
-router.post('/orders/:orderId/mark-failed', auth, requireMessengerRole, messengerController.markDeliveryFailed);
+router.post('/orders/:orderId/mark-failed', auth.authenticateToken, requireMessengerRole, messengerController.markDeliveryFailed);
 
 // POST /api/messenger/orders/:orderId/upload-evidence - Subir evidencia fotográfica
 router.post('/orders/:orderId/upload-evidence', 
-  auth, 
+  auth.authenticateToken, 
   requireMessengerRole,
-  messengerController.upload.single('photo'), 
+  messengerController.upload.single('photo'),
   messengerController.uploadEvidence
 );
 
 // GET /api/messenger/daily-summary - Obtener resumen diario
-router.get('/daily-summary', auth, requireMessengerRole, messengerController.getDailySummary);
+router.get('/daily-summary', auth.authenticateToken, requireMessengerRole, messengerController.getDailySummary);
 
 module.exports = router;

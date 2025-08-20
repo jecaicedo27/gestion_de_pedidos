@@ -18,6 +18,7 @@ const UsersPage = () => {
   const [formData, setFormData] = useState({
     username: '',
     email: '',
+    full_name: '',
     role: 'facturador',
     password: ''
   });
@@ -68,7 +69,8 @@ const UsersPage = () => {
   // Filtros
   const filteredUsers = Array.isArray(users) ? users.filter(u => {
     const matchesSearch = u.username.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         u.email.toLowerCase().includes(searchTerm.toLowerCase());
+                         u.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         (u.full_name && u.full_name.toLowerCase().includes(searchTerm.toLowerCase()));
     const matchesRole = selectedRole === '' || u.role === selectedRole;
     return matchesSearch && matchesRole;
   }) : [];
@@ -91,6 +93,11 @@ const UsersPage = () => {
       // Solo agregar email si no está vacío
       if (formData.email && formData.email.trim() !== '') {
         dataToSend.email = formData.email.trim();
+      }
+
+      // Solo agregar full_name si no está vacío
+      if (formData.full_name && formData.full_name.trim() !== '') {
+        dataToSend.full_name = formData.full_name.trim();
       }
 
       const token = localStorage.getItem('token');
@@ -125,6 +132,7 @@ const UsersPage = () => {
       const updateData = {
         username: formData.username,
         email: formData.email,
+        full_name: formData.full_name,
         role: formData.role
       };
 
@@ -214,7 +222,8 @@ const UsersPage = () => {
     setEditingUser(userToEdit);
     setFormData({
       username: userToEdit.username,
-      email: userToEdit.email,
+      email: userToEdit.email || '',
+      full_name: userToEdit.full_name || '',
       role: userToEdit.role,
       password: ''
     });
@@ -326,6 +335,9 @@ const UsersPage = () => {
                   Usuario
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Nombre
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Email
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -358,6 +370,9 @@ const UsersPage = () => {
                           )}
                         </div>
                       </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      {u.full_name || '-'}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                       {u.email}
@@ -440,6 +455,19 @@ const UsersPage = () => {
                     onChange={(e) => setFormData({ ...formData, username: e.target.value })}
                     className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                     placeholder="Nombre de usuario"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Nombre completo (opcional)
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.full_name}
+                    onChange={(e) => setFormData({ ...formData, full_name: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="Nombre completo de la persona"
                   />
                 </div>
 
@@ -536,7 +564,20 @@ const UsersPage = () => {
 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Email *
+                    Nombre completo (opcional)
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.full_name}
+                    onChange={(e) => setFormData({ ...formData, full_name: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="Nombre completo de la persona"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Email (opcional)
                   </label>
                   <input
                     type="email"

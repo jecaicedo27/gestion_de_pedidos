@@ -65,7 +65,7 @@ const RoleNavigation = () => {
       icon: Icons.Truck,
       path: '/orders?view=mensajero&status=en_reparto',
       description: 'Entregas y cobros',
-      roles: ['admin', 'mensajero']
+      roles: ['admin', 'logistica', 'mensajero']
     }
   ];
 

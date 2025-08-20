@@ -1020,9 +1020,17 @@ const FastPackagingValidation = ({ checklist, onVerifyItem, onVerifyAll }) => {
                         {item.required_flavor && (
                           <span>🎨 {item.required_flavor}</span>
                         )}
-                        {item.product_code && (
-                          <span className="font-mono text-blue-600">#{item.product_code}</span>
-                        )}
+                        {/* Códigos del producto - más prominentes */}
+                        <div className="flex items-center space-x-2 bg-gray-50 px-2 py-1 rounded">
+                          {item.product_code && (
+                            <span className="font-mono text-blue-700 font-medium">#{item.product_code}</span>
+                          )}
+                          {item.barcode && (
+                            <span className="font-mono text-green-700 font-medium border-l border-gray-300 pl-2">
+                              📊{item.barcode}
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -1225,7 +1233,17 @@ const FastPackagingValidation = ({ checklist, onVerifyItem, onVerifyAll }) => {
                         <span>{item.required_unit}</span>
                         {item.required_weight && <span>⚖️{item.required_weight}kg</span>}
                         {item.required_flavor && <span>🎨{item.required_flavor}</span>}
-                        {item.product_code && <span className="font-mono">#{item.product_code}</span>}
+                        {/* Códigos del producto - juntos y visibles */}
+                        <div className="flex items-center space-x-1 bg-gray-100 px-2 py-0.5 rounded">
+                          {item.product_code && (
+                            <span className="font-mono text-blue-600 font-medium">#{item.product_code}</span>
+                          )}
+                          {item.barcode && (
+                            <span className="font-mono text-green-600 font-medium border-l border-gray-400 pl-1">
+                              📊{item.barcode}
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </div>

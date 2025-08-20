@@ -506,8 +506,8 @@ const OrderReviewModal = ({ isOpen, onClose, order, onConfirm }) => {
             </div>
           )}
 
-          {/* Observaciones de SIIGO */}
-          {order.siigo_observations && (
+          {/* Observaciones de SIIGO - Solo visible para roles que no sean logistica ni admin */}
+          {order.siigo_observations && !['logistica', 'admin'].includes(user?.role) && (
             <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-4">
               <h3 className="font-medium text-amber-900 mb-3 flex items-center">
                 <Icons.FileText className="w-4 h-4 mr-2" />
