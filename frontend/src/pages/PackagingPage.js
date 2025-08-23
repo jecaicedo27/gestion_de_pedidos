@@ -820,24 +820,25 @@ const FastPackagingValidation = ({ checklist, onVerifyItem, onVerifyAll }) => {
 
   const [itemCounters, setItemCounters] = useState({});
 
-  const verifyItemQuick = (item, isCorrect) => {
+  const verifyItemQuick = (item, isCorrect, overrideCount = null) => {
     const requiredQty = Math.floor(parseFloat(item.required_quantity) || 0);
     
     // Si es cantidad > 1 y está marcando como correcto, verificar conteo
     if (requiredQty > 1 && isCorrect) {
-      const currentCount = itemCounters[item.id] || 0;
+      const currentCount = overrideCount !== null ? overrideCount : (itemCounters[item.id] || 0);
       if (currentCount !== requiredQty) {
         toast.error(`⚠️ Debe contar exactamente ${requiredQty} unidades. Actualmente: ${currentCount}`);
         return;
       }
     }
 
+    const finalCount = overrideCount !== null ? overrideCount : (itemCounters[item.id] || 0);
     const itemData = {
-      packed_quantity: requiredQty > 1 ? (itemCounters[item.id] || 0) : item.required_quantity,
+      packed_quantity: requiredQty > 1 ? finalCount : item.required_quantity,
       packed_weight: item.required_weight || '',
       packed_flavor: item.required_flavor || '',
       packed_size: item.required_size || '',
-      verification_notes: isCorrect ? `Verificado - ${requiredQty > 1 ? `Contadas ${itemCounters[item.id] || 0} unidades` : 'Todo correcto'}` : 'Requiere atención',
+      verification_notes: isCorrect ? `Verificado - ${requiredQty > 1 ? `Contadas ${finalCount} unidades` : 'Todo correcto'}` : 'Requiere atención',
       is_verified: isCorrect
     };
     onVerifyItem(item.id, itemData);
@@ -868,8 +869,32 @@ const FastPackagingValidation = ({ checklist, onVerifyItem, onVerifyAll }) => {
     );
 
     if (matchedItem && !matchedItem.is_verified) {
-      verifyItemQuick(matchedItem, true);
-      toast.success(`✅ ${matchedItem.item_name} verificado por código de barras`);
+      const requiredQty = Math.floor(parseFloat(matchedItem.required_quantity) || 0);
+      
+      if (requiredQty > 1) {
+        // Para cantidades múltiples, incrementar el contador
+        const currentCount = itemCounters[matchedItem.id] || 0;
+        const newCount = currentCount + 1;
+        
+        // Actualizar el estado del contador
+        setItemCounters(prev => ({ ...prev, [matchedItem.id]: newCount }));
+        
+        if (newCount === requiredQty) {
+          // Si se completó el conteo, verificar automáticamente pasando el contador correcto
+          verifyItemQuick(matchedItem, true, newCount);
+          toast.success(`✅ ${matchedItem.item_name} - ${newCount}/${requiredQty} unidades completadas y verificado`);
+        } else if (newCount < requiredQty) {
+          toast.success(`📊 ${matchedItem.item_name} - ${newCount}/${requiredQty} unidades escaneadas`);
+        } else {
+          // Si se excede, mostrar advertencia pero no incrementar más allá del requerido
+          setItemCounters(prev => ({ ...prev, [matchedItem.id]: requiredQty }));
+          toast.error(`⚠️ ${matchedItem.item_name} - Ya se escanearon todas las ${requiredQty} unidades requeridas`);
+        }
+      } else {
+        // Para cantidad única, verificar directamente
+        verifyItemQuick(matchedItem, true);
+        toast.success(`✅ ${matchedItem.item_name} verificado por código de barras`);
+      }
       setBarcodeInput('');
     } else if (matchedItem && matchedItem.is_verified) {
       toast(`⚠️ ${matchedItem.item_name} ya está verificado`);
@@ -1012,26 +1037,35 @@ const FastPackagingValidation = ({ checklist, onVerifyItem, onVerifyAll }) => {
                       }`}>
                         {item.item_name}
                       </h5>
-                      <div className="flex items-center space-x-3 text-xs text-gray-600 mt-1">
-                        <span>📦 {item.required_unit}</span>
-                        {item.required_weight && (
-                          <span>⚖️ {item.required_weight}kg</span>
-                        )}
-                        {item.required_flavor && (
-                          <span>🎨 {item.required_flavor}</span>
-                        )}
-                        {/* Códigos del producto - más prominentes */}
-                        <div className="flex items-center space-x-2 bg-gray-50 px-2 py-1 rounded">
-                          {item.product_code && (
-                            <span className="font-mono text-blue-700 font-medium">#{item.product_code}</span>
+                        <div className="flex items-center space-x-3 text-xs text-gray-600 mt-1">
+                          <span>📦 {item.required_unit}</span>
+                          {item.required_weight && (
+                            <span>⚖️ {item.required_weight}kg</span>
                           )}
-                          {item.barcode && (
-                            <span className="font-mono text-green-700 font-medium border-l border-gray-300 pl-2">
-                              📊{item.barcode}
-                            </span>
+                          {item.required_flavor && (
+                            <span>🎨 {item.required_flavor}</span>
                           )}
                         </div>
-                      </div>
+                        {/* CÓDIGOS DEL PRODUCTO Y CÓDIGO DE BARRAS - SÚPER PROMINENTES Y VISIBLES */}
+                        <div className="flex items-center space-x-3 mt-3 p-3 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg border-2 border-blue-300 shadow-md">
+                          {item.product_code && (
+                            <div className="bg-white border-3 border-blue-500 px-4 py-3 rounded-xl shadow-lg transform hover:scale-105 transition-transform">
+                              <div className="text-xs text-blue-600 font-extrabold uppercase tracking-widest mb-1">CÓDIGO PRODUCTO</div>
+                              <div className="font-mono text-blue-900 font-black text-lg tracking-wider"># {item.product_code}</div>
+                            </div>
+                          )}
+                          {item.barcode && (
+                            <div className="bg-white border-3 border-gray-500 px-4 py-3 rounded-xl shadow-lg transform hover:scale-105 transition-transform">
+                              <div className="text-xs text-gray-600 font-extrabold uppercase tracking-widest mb-1">CÓDIGO DE BARRAS</div>
+                              <div className="font-mono text-gray-900 font-black text-lg tracking-wider">📊 {item.barcode}</div>
+                            </div>
+                          )}
+                          {!item.product_code && !item.barcode && (
+                            <div className="bg-yellow-100 border-2 border-yellow-400 px-4 py-3 rounded-xl">
+                              <div className="text-xs text-yellow-700 font-bold">⚠️ SIN CÓDIGOS DISPONIBLES</div>
+                            </div>
+                          )}
+                        </div>
                     </div>
                   </div>
 
@@ -1233,15 +1267,19 @@ const FastPackagingValidation = ({ checklist, onVerifyItem, onVerifyAll }) => {
                         <span>{item.required_unit}</span>
                         {item.required_weight && <span>⚖️{item.required_weight}kg</span>}
                         {item.required_flavor && <span>🎨{item.required_flavor}</span>}
-                        {/* Códigos del producto - juntos y visibles */}
-                        <div className="flex items-center space-x-1 bg-gray-100 px-2 py-0.5 rounded">
+                        {/* Códigos del producto - PROMINENTES Y VISIBLES */}
+                        <div className="flex items-center space-x-2 bg-gray-50 px-3 py-1.5 rounded-lg border">
                           {item.product_code && (
-                            <span className="font-mono text-blue-600 font-medium">#{item.product_code}</span>
+                            <div className="bg-blue-100 px-2 py-1 rounded border border-blue-300">
+                              <span className="text-xs text-blue-700 font-bold">CÓDIGO</span>
+                              <div className="font-mono text-blue-900 font-bold text-sm"># {item.product_code}</div>
+                            </div>
                           )}
                           {item.barcode && (
-                            <span className="font-mono text-green-600 font-medium border-l border-gray-400 pl-1">
-                              📊{item.barcode}
-                            </span>
+                            <div className="bg-gray-200 px-2 py-1 rounded border border-gray-400">
+                              <span className="text-xs text-gray-700 font-bold">BARRAS</span>
+                              <div className="font-mono text-gray-900 font-bold text-sm">📊 {item.barcode}</div>
+                            </div>
                           )}
                         </div>
                       </div>
