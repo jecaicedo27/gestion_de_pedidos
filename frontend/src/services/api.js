@@ -2,7 +2,12 @@ import axios from 'axios';
 import toast from 'react-hot-toast';
 
 // Configuración base de axios
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:3001/api';
+/**
+ * Base URL de la API:
+ * - En producción detrás de Nginx, usamos ruta relativa '/api' para evitar llamadas a localhost.
+ * - Si existe REACT_APP_API_URL en tiempo de build, tendrá prioridad.
+ */
+const API_BASE_URL = process.env.REACT_APP_API_URL || '/api';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
