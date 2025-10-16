@@ -93,6 +93,17 @@ backend/uploads/
 .env.test.local
 .env.production.local
 
+# Backend env files
+backend/.env
+backend/.env.*
+!backend/.env.example
+!backend/.env.production.example
+
+# Frontend env files
+frontend/.env
+frontend/.env.*
+!frontend/.env.production.example
+
 # Temporary folders
 tmp/
 temp/
