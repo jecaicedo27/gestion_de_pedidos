@@ -1,0 +1,106 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage
+coverage
+*.lcov
+.nyc_output
+
+# Build/Dist outputs
+build/
+dist/
+.next
+.nuxt
+.cache
+.parcel-cache
+.cache/
+public
+.out
+.storybook-out
+
+# Dependency directories
+node_modules/
+*/node_modules/
+bower_components
+jspm_packages/
+
+# TypeScript cache
+*.tsbuildinfo
+
+# Package manager cache/history
+.npm
+.node_repl_history
+*.tgz
+.yarn-integrity
+
+# Editor/IDE
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+.AppleDouble
+.LSOverride
+
+# Lint/formatter caches
+.eslintcache
+.prettiercache
+.stylelintcache
+.rpt2_cache/
+.rts2_cache_cjs/
+.rts2_cache_es/
+.rts2_cache_umd/
+
+# App specific
+frontend/build/
+backend/uploads/
+
+# Database files
+*.sqlite
+*.db
+
+# Backup files
+*.backup
+*.bak
+
+# dotenv
+.env
+.env.test
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Temporary folders
+tmp/
+temp/
+
+# Frontend caches
+frontend/node_modules/.cache/
+
+# LOCAL heavy artifacts to keep out of git
+/backup_database_*/
+/.git_disabled/
+/gestion_pedidos_dev.sql

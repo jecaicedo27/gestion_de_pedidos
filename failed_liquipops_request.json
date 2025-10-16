@@ -1,0 +1,37 @@
+{
+  "payload": {
+    "customer_id": 85,
+    "items": [
+      {
+        "code": "LIQUIPOPS01",
+        "product_code": "COMPANY-P-ESSKIS-70381453-0038",
+        "product_name": "LIQUIPOPS SABOR A FRESA X 1200 GR",
+        "quantity": 1,
+        "price": 1000,
+        "unit_price": 1000,
+        "siigo_code": "COMPANY-P-ESSKIS-70381453-0038",
+        "original_siigo_code": "COMPANY-P-ESSKIS-70381453-0038",
+        "fallback_generated": true
+      },
+      {
+        "code": "LIQUIPOPS02",
+        "product_code": "COMPANY-P-ESSKIS-70381453-0039",
+        "product_name": "LIQUIPOPS SABOR A FRESA X 3400 GR",
+        "quantity": 1,
+        "price": 2500,
+        "unit_price": 2500,
+        "siigo_code": "COMPANY-P-ESSKIS-70381453-0039",
+        "original_siigo_code": "COMPANY-P-ESSKIS-70381453-0039",
+        "fallback_generated": true
+      }
+    ],
+    "document_type": "FV-1",
+    "notes": "Factura con productos LIQUIPOPS problemáticos",
+    "natural_language_order": "Productos LIQUIPOPS que causaron error 422"
+  },
+  "response": {
+    "success": false,
+    "message": "Error creando factura",
+    "error": "Errores de validación: Cliente debe tener número de identificación"
+  }
+}

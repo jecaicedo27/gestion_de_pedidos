@@ -1,0 +1,289 @@
+[2025-08-22T05:00:04.619Z] (+8ms) 🚀 INICIANDO MONITOREO DE TEST FRONTEND
+{
+  "timestamp": "2025-08-22T05:00:04.618Z",
+  "backend_url": "http://localhost:3001",
+  "frontend_url": "http://localhost:3000"
+}
+================================================================================
+[2025-08-22T05:00:04.625Z] (+14ms) 🔍 VERIFICANDO ESTADO INICIAL DEL BACKEND...
+================================================================================
+[2025-08-22T05:00:04.739Z] (+128ms) ❌ ENDPOINT NO DISPONIBLE: POST /api/auth/login
+{
+  "available": false,
+  "error": "ERR_BAD_REQUEST"
+}
+================================================================================
+[2025-08-22T05:00:04.858Z] (+247ms) ❌ ENDPOINT NO DISPONIBLE: POST /api/quotations/process-natural-order
+{
+  "available": false,
+  "error": "ERR_BAD_REQUEST"
+}
+================================================================================
+[2025-08-22T05:00:04.965Z] (+354ms) ❌ ENDPOINT NO DISPONIBLE: POST /api/quotations/create-invoice
+{
+  "available": false,
+  "error": "ERR_BAD_REQUEST"
+}
+================================================================================
+[2025-08-22T05:00:05.088Z] (+477ms) ❌ ENDPOINT NO DISPONIBLE: POST /api/quotations/customers/search
+{
+  "available": false,
+  "error": "ERR_BAD_REQUEST"
+}
+================================================================================
+[2025-08-22T05:00:05.200Z] (+589ms) ❌ ENDPOINT NO DISPONIBLE: POST /api/config/public
+{
+  "available": false,
+  "error": "ERR_BAD_REQUEST"
+}
+================================================================================
+[2025-08-22T05:00:05.301Z] (+690ms) 📡 BACKEND STATUS CHECK COMPLETADO - INICIANDO MONITOREO CONTINUO...
+================================================================================
+[2025-08-22T05:00:05.302Z] (+691ms) 🎬 LISTO PARA CAPTURAR ACTIVIDAD DEL FRONTEND
+================================================================================
+[2025-08-22T05:00:05.302Z] (+691ms) 👆 HAZ TU PRUEBA EN EL FRONTEND AHORA
+================================================================================
+[2025-08-22T05:00:05.303Z] (+692ms) 📋 Pasos a seguir:
+================================================================================
+[2025-08-22T05:00:05.304Z] (+693ms)    1. Ve a http://localhost:3000
+================================================================================
+[2025-08-22T05:00:05.304Z] (+693ms)    2. Navega a Cotizaciones
+================================================================================
+[2025-08-22T05:00:05.304Z] (+693ms)    3. Selecciona un cliente
+================================================================================
+[2025-08-22T05:00:05.305Z] (+694ms)    4. Escribe un pedido y procesa con ChatGPT
+================================================================================
+[2025-08-22T05:00:05.305Z] (+694ms)    5. Intenta crear una factura FV-1
+================================================================================
+[2025-08-22T05:00:05.306Z] (+695ms)    6. Observa este monitor para ver qué pasa
+================================================================================
+[2025-08-22T05:00:06.306Z] (+1695ms) 🔄 SIMULANDO CAPTURA DE REQUESTS DEL FRONTEND...
+================================================================================
+[2025-08-22T05:00:06.308Z] (+1697ms) 💡 NOTA: Para captura real de requests, usar herramientas como:
+================================================================================
+[2025-08-22T05:00:06.309Z] (+1698ms)    - Chrome DevTools Network tab
+================================================================================
+[2025-08-22T05:00:06.309Z] (+1698ms)    - Postman Interceptor
+================================================================================
+[2025-08-22T05:00:06.310Z] (+1699ms)    - Charles Proxy
+================================================================================
+[2025-08-22T05:00:36.314Z] (+31703ms) 🔐 REQUEST SIN AUTH DETECTADO (esto es normal)
+{
+  "endpoint": "/api/quotations/process-natural-order",
+  "status": 401,
+  "message": "Token requerido"
+}
+================================================================================
+[2025-08-22T05:00:55.328Z] (+50717ms) 💓 MONITOREO ACTIVO (check #10)
+{
+  "backend_responding": true,
+  "time_elapsed": 50717
+}
+================================================================================
+[2025-08-22T05:01:06.315Z] (+61704ms) 🔐 REQUEST SIN AUTH DETECTADO (esto es normal)
+{
+  "endpoint": "/api/quotations/process-natural-order",
+  "status": 401,
+  "message": "Token requerido"
+}
+================================================================================
+[2025-08-22T05:01:36.325Z] (+91714ms) 🔐 REQUEST SIN AUTH DETECTADO (esto es normal)
+{
+  "endpoint": "/api/quotations/process-natural-order",
+  "status": 401,
+  "message": "Token requerido"
+}
+================================================================================
+[2025-08-22T05:01:45.351Z] (+100740ms) 💓 MONITOREO ACTIVO (check #20)
+{
+  "backend_responding": true,
+  "time_elapsed": 100740
+}
+================================================================================
+[2025-08-22T05:02:06.333Z] (+121722ms) 🔐 REQUEST SIN AUTH DETECTADO (esto es normal)
+{
+  "endpoint": "/api/quotations/process-natural-order",
+  "status": 401,
+  "message": "Token requerido"
+}
+================================================================================
+[2025-08-22T05:02:35.384Z] (+150773ms) 💓 MONITOREO ACTIVO (check #30)
+{
+  "backend_responding": true,
+  "time_elapsed": 150773
+}
+================================================================================
+[2025-08-22T05:02:36.333Z] (+151722ms) 🔐 REQUEST SIN AUTH DETECTADO (esto es normal)
+{
+  "endpoint": "/api/quotations/process-natural-order",
+  "status": 401,
+  "message": "Token requerido"
+}
+================================================================================
+[2025-08-22T05:03:06.335Z] (+181724ms) 🔐 REQUEST SIN AUTH DETECTADO (esto es normal)
+{
+  "endpoint": "/api/quotations/process-natural-order",
+  "status": 401,
+  "message": "Token requerido"
+}
+================================================================================
+[2025-08-22T05:03:25.486Z] (+200875ms) 💓 MONITOREO ACTIVO (check #40)
+{
+  "backend_responding": true,
+  "time_elapsed": 200875
+}
+================================================================================
+[2025-08-22T05:03:36.343Z] (+211732ms) 🔐 REQUEST SIN AUTH DETECTADO (esto es normal)
+{
+  "endpoint": "/api/quotations/process-natural-order",
+  "status": 401,
+  "message": "Token requerido"
+}
+================================================================================
+[2025-08-22T05:04:06.343Z] (+241732ms) 🔐 REQUEST SIN AUTH DETECTADO (esto es normal)
+{
+  "endpoint": "/api/quotations/process-natural-order",
+  "status": 401,
+  "message": "Token requerido"
+}
+================================================================================
+[2025-08-22T05:04:15.552Z] (+250941ms) 💓 MONITOREO ACTIVO (check #50)
+{
+  "backend_responding": true,
+  "time_elapsed": 250941
+}
+================================================================================
+[2025-08-22T05:04:36.347Z] (+271736ms) 🔐 REQUEST SIN AUTH DETECTADO (esto es normal)
+{
+  "endpoint": "/api/quotations/process-natural-order",
+  "status": 401,
+  "message": "Token requerido"
+}
+================================================================================
+[2025-08-22T05:05:05.595Z] (+300984ms) 💓 MONITOREO ACTIVO (check #60)
+{
+  "backend_responding": true,
+  "time_elapsed": 300984
+}
+================================================================================
+[2025-08-22T05:05:06.348Z] (+301737ms) 🔐 REQUEST SIN AUTH DETECTADO (esto es normal)
+{
+  "endpoint": "/api/quotations/process-natural-order",
+  "status": 401,
+  "message": "Token requerido"
+}
+================================================================================
+[2025-08-22T05:05:36.349Z] (+331738ms) 🔐 REQUEST SIN AUTH DETECTADO (esto es normal)
+{
+  "endpoint": "/api/quotations/process-natural-order",
+  "status": 401,
+  "message": "Token requerido"
+}
+================================================================================
+[2025-08-22T05:05:55.663Z] (+351052ms) 💓 MONITOREO ACTIVO (check #70)
+{
+  "backend_responding": true,
+  "time_elapsed": 351052
+}
+================================================================================
+[2025-08-22T05:06:06.351Z] (+361740ms) 🔐 REQUEST SIN AUTH DETECTADO (esto es normal)
+{
+  "endpoint": "/api/quotations/process-natural-order",
+  "status": 401,
+  "message": "Token requerido"
+}
+================================================================================
+[2025-08-22T05:06:36.358Z] (+391747ms) 🔐 REQUEST SIN AUTH DETECTADO (esto es normal)
+{
+  "endpoint": "/api/quotations/process-natural-order",
+  "status": 401,
+  "message": "Token requerido"
+}
+================================================================================
+[2025-08-22T05:06:45.709Z] (+401098ms) 💓 MONITOREO ACTIVO (check #80)
+{
+  "backend_responding": true,
+  "time_elapsed": 401098
+}
+================================================================================
+[2025-08-22T05:07:06.369Z] (+421758ms) 🔐 REQUEST SIN AUTH DETECTADO (esto es normal)
+{
+  "endpoint": "/api/quotations/process-natural-order",
+  "status": 401,
+  "message": "Token requerido"
+}
+================================================================================
+[2025-08-22T05:07:35.770Z] (+451159ms) 💓 MONITOREO ACTIVO (check #90)
+{
+  "backend_responding": true,
+  "time_elapsed": 451159
+}
+================================================================================
+[2025-08-22T05:07:36.375Z] (+451764ms) 🔐 REQUEST SIN AUTH DETECTADO (esto es normal)
+{
+  "endpoint": "/api/quotations/process-natural-order",
+  "status": 401,
+  "message": "Token requerido"
+}
+================================================================================
+[2025-08-22T05:08:06.381Z] (+481770ms) 🔐 REQUEST SIN AUTH DETECTADO (esto es normal)
+{
+  "endpoint": "/api/quotations/process-natural-order",
+  "status": 401,
+  "message": "Token requerido"
+}
+================================================================================
+[2025-08-22T05:08:25.792Z] (+501181ms) 💓 MONITOREO ACTIVO (check #100)
+{
+  "backend_responding": true,
+  "time_elapsed": 501181
+}
+================================================================================
+[2025-08-22T05:08:36.395Z] (+511784ms) 🔐 REQUEST SIN AUTH DETECTADO (esto es normal)
+{
+  "endpoint": "/api/quotations/process-natural-order",
+  "status": 401,
+  "message": "Token requerido"
+}
+================================================================================
+[2025-08-22T05:09:06.402Z] (+541791ms) 🔐 REQUEST SIN AUTH DETECTADO (esto es normal)
+{
+  "endpoint": "/api/quotations/process-natural-order",
+  "status": 401,
+  "message": "Token requerido"
+}
+================================================================================
+[2025-08-22T05:09:15.879Z] (+551268ms) 💓 MONITOREO ACTIVO (check #110)
+{
+  "backend_responding": true,
+  "time_elapsed": 551268
+}
+================================================================================
+[2025-08-22T05:09:36.409Z] (+571798ms) 🔐 REQUEST SIN AUTH DETECTADO (esto es normal)
+{
+  "endpoint": "/api/quotations/process-natural-order",
+  "status": 401,
+  "message": "Token requerido"
+}
+================================================================================
+[2025-08-22T05:10:05.310Z] (+600699ms) ⏰ MONITOREO COMPLETADO - ANÁLISIS DISPONIBLE
+================================================================================
+
+========================================
+📊 REPORTE FINAL DE MONITOREO FRONTEND
+========================================
+
+🕐 Inicio: 2025-08-22T05:00:04.611Z
+🕐 Fin: 2025-08-22T05:10:05.311Z
+⏱️ Duración total: 601 segundos
+
+📄 Log completo guardado en: frontend_test_log_1755838804611.txt
+
+🔍 PRÓXIMOS PASOS:
+1. Revisa el archivo frontend_test_log_1755838804611.txt para detalles completos
+2. Comparte cualquier error que hayas visto en el frontend
+3. Si hubo errores, podemos analizarlos juntos
+
+✅ MONITOREO COMPLETADO
+========================================
+        
