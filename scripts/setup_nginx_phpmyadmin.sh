@@ -68,7 +68,7 @@ echo "==> Creando carpeta de frontend si no existe: ${FRONTEND_ROOT}"
 mkdir -p "${FRONTEND_ROOT}"
 
 echo "==> Escribiendo configuración de Nginx en ${SITE_AVAIL} ..."
-cat > "${SITE_AVAIL}" <<NGINX
+cat > "${SITE_AVAIL}" <<'NGINX'
 upstream pedidos_backend {
     server 127.0.0.1:3001;
     keepalive 64;
