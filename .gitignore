@@ -25,7 +25,7 @@ dist/
 .cache
 .parcel-cache
 .cache/
-public
+/public
 .out
 .storybook-out
 
@@ -115,3 +115,4 @@ frontend/node_modules/.cache/
 /backup_database_*/
 /.git_disabled/
 /gestion_pedidos_dev.sql
+.tools/

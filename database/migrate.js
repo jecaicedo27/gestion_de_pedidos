@@ -1,12 +1,12 @@
 const mysql = require('../backend/node_modules/mysql2/promise');
 const bcrypt = require('../backend/node_modules/bcryptjs');
-require('../backend/node_modules/dotenv').config({ path: '../backend/.env' });
 const fs = require('fs');
 const path = require('path');
+require('../backend/node_modules/dotenv').config({ path: path.resolve(__dirname, '../backend/.env') });
 
 // Configuración de la base de datos
 const dbConfig = {
-  host: process.env.DB_HOST || 'localhost',
+  host: process.env.DB_HOST || '127.0.0.1',
   port: process.env.DB_PORT || 3306,
   user: process.env.DB_USER || 'root',
   password: process.env.DB_PASSWORD || '',
@@ -305,14 +305,33 @@ const createTables = async (connection) => {
     `);
     console.log('✅ Tabla manual_shipping_guides creada');
 
-    // Agregar columnas a la tabla orders
-    await connection.execute(`
-      ALTER TABLE orders 
-      ADD COLUMN IF NOT EXISTS delivery_method ENUM('domicilio', 'recogida_tienda', 'envio_nacional', 'envio_internacional') DEFAULT 'domicilio',
-      ADD COLUMN IF NOT EXISTS assigned_guide_id INT,
-      ADD FOREIGN KEY IF NOT EXISTS (assigned_guide_id) REFERENCES manual_shipping_guides(id) ON DELETE SET NULL
-    `);
-    console.log('✅ Tabla orders actualizada con nuevas columnas');
+    // Agregar columnas a la tabla orders (compatibilidad con MySQL 5.7/MariaDB sin IF NOT EXISTS)
+    // 1) Asegurar columna assigned_guide_id
+    const [colAssignedGuide] = await connection.execute(
+      "SELECT COUNT(*) AS count FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'orders' AND COLUMN_NAME = 'assigned_guide_id'",
+      [dbName]
+    );
+    if (colAssignedGuide[0].count === 0) {
+      await connection.execute("ALTER TABLE orders ADD COLUMN assigned_guide_id INT NULL");
+      console.log('✅ Columna orders.assigned_guide_id agregada');
+    } else {
+      console.log('ℹ️  Columna orders.assigned_guide_id ya existe');
+    }
+
+    // 2) Asegurar FK a manual_shipping_guides
+    const [fkRows] = await connection.execute(
+      "SELECT CONSTRAINT_NAME FROM information_schema.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'orders' AND COLUMN_NAME = 'assigned_guide_id' AND REFERENCED_TABLE_NAME = 'manual_shipping_guides'",
+      [dbName]
+    );
+    if (fkRows.length === 0) {
+      await connection.execute("ALTER TABLE orders ADD CONSTRAINT fk_orders_assigned_guide FOREIGN KEY (assigned_guide_id) REFERENCES manual_shipping_guides(id) ON DELETE SET NULL");
+      console.log('✅ FK orders.assigned_guide_id -> manual_shipping_guides.id agregada');
+    } else {
+      console.log('ℹ️  FK de orders.assigned_guide_id ya existe');
+    }
+
+    // Nota: no tocamos delivery_method aquí; se mantiene la definición creada previamente
+    console.log('✅ Tabla orders validada/actualizada con nuevas relaciones');
 
     // Crear/actualizar tabla siigo_credentials y seed por defecto
     try {

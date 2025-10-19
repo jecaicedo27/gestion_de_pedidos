@@ -48,6 +48,7 @@ const autoSyncService = require('./services/autoSyncService');
 const StockSyncService = require('./services/stockSyncService');
 
 const app = express();
+app.set('trust proxy', 1);
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
@@ -157,6 +158,14 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Servir archivos estáticos (uploads)
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
+/**
+ * Ruta raíz y favicon para evitar 404 al abrir http://localhost:3001
+ */
+app.get('/', (req, res) => {
+  res.send('API de Gestión de Pedidos operando. Visita /api/health para estado.');
+});
+app.get('/favicon.ico', (req, res) => res.status(204).end());
 
 // Rutas de la API
 app.use('/api/auth', authRoutes);
