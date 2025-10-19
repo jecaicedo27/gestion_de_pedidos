@@ -130,12 +130,12 @@ server {
         try_files \$uri \$uri/ /phpmyadmin/index.php;
     }
 
-    # Ejecutar PHP bajo /phpmyadmin (usa root y $document_root)
+    # Ejecutar PHP bajo /phpmyadmin (usa root y \$document_root)
     location ~ ^/phpmyadmin/.+\.php$ {
         root /usr/share/;
         include snippets/fastcgi-php.conf;
         fastcgi_pass unix:${SOCK};
-        # fastcgi-php.conf define: fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        # fastcgi-php.conf define: fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
     }
 
     # Archivos estáticos de phpMyAdmin
