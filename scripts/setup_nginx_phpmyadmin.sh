@@ -123,24 +123,24 @@ server {
         return 302 /phpmyadmin/;
     }
 
-    # Alias con slash final + try_files para resolver index correctamente
+    # Sirve phpMyAdmin usando root (más robusto con PHP-FPM)
     location /phpmyadmin/ {
-        alias /usr/share/phpmyadmin/;
-        index index.php;
-        try_files \$uri \$uri/ /phpmyadmin/index.php;
+        root /usr/share/;
+        index phpmyadmin/index.php index.php;
+        try_files $uri $uri/ /phpmyadmin/index.php;
     }
 
-    # Ejecutar PHP bajo /phpmyadmin
-    location ~ ^/phpmyadmin/(.+\.php)$ {
-        alias /usr/share/phpmyadmin/\$1;
+    # Ejecutar PHP bajo /phpmyadmin (usa root y $document_root)
+    location ~ ^/phpmyadmin/.+\.php$ {
+        root /usr/share/;
         include snippets/fastcgi-php.conf;
         fastcgi_pass unix:${SOCK};
-        fastcgi_param SCRIPT_FILENAME \$request_filename;
+        # fastcgi-php.conf define: fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
     }
 
     # Archivos estáticos de phpMyAdmin
     location ~* ^/phpmyadmin/(.+\.(?:css|js|jpg|jpeg|png|gif|ico|svg))$ {
-        alias /usr/share/phpmyadmin/\$1;
+        root /usr/share/;
         expires 7d;
         add_header Cache-Control "public, max-age=604800, immutable";
     }
