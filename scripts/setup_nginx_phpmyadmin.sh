@@ -127,7 +127,7 @@ server {
     location /phpmyadmin/ {
         root /usr/share/;
         index phpmyadmin/index.php index.php;
-        try_files $uri $uri/ /phpmyadmin/index.php;
+        try_files \$uri \$uri/ /phpmyadmin/index.php;
     }
 
     # Ejecutar PHP bajo /phpmyadmin (usa root y $document_root)
