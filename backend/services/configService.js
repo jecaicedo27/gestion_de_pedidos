@@ -21,19 +21,19 @@ class ConfigService {
     const isProd = (process.env.NODE_ENV === 'production');
 
     if (!envKey) {
+      const fallbackSource = process.env.JWT_SECRET || process.env.OPENAI_API_KEY || 'temporary-key-change-this';
       if (isProd) {
-        throw new Error('CONFIG_ENCRYPTION_KEY is required in production (64 hex chars)');
+        console.warn('⚠️  CONFIG_ENCRYPTION_KEY no configurada en producción. Usando clave derivada temporalmente (instalación). Configura una hex de 64 chars lo antes posible.');
+      } else {
+        console.warn('⚠️  CONFIG_ENCRYPTION_KEY no configurada. Usando clave temporal SOLO para desarrollo.');
       }
-      console.warn('⚠️  CONFIG_ENCRYPTION_KEY no configurada. Usando clave temporal SOLO para desarrollo.');
-      return crypto.scryptSync('temporary-key-change-this', 'salt', 32);
+      return crypto.scryptSync(fallbackSource, 'install-mode-salt', 32);
     }
 
     // Validar longitud/formato (hex de 64 caracteres -> 256 bits)
     if (!/^[0-9a-fA-F]{64}$/.test(envKey)) {
-      if (isProd) {
-        throw new Error('CONFIG_ENCRYPTION_KEY inválida. Debe ser hex de 64 caracteres (256 bits).');
-      }
-      console.warn('⚠️  CONFIG_ENCRYPTION_KEY no parece hex de 64 chars. Intentando continuar en desarrollo.');
+      console.warn('⚠️  CONFIG_ENCRYPTION_KEY no parece hex de 64 chars. Derivando clave a partir del valor proporcionado.');
+      return crypto.scryptSync(envKey, 'install-mode-salt', 32);
     }
 
     return Buffer.from(envKey, 'hex');

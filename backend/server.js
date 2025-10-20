@@ -86,6 +86,13 @@ function generateSecret(length = 48) {
   return res;
 }
 
+function generateHexKey64() {
+  const hex = '0123456789abcdef';
+  let out = '';
+  for (let i = 0; i < 64; i++) out += hex[Math.floor(Math.random() * hex.length)];
+  return out;
+}
+
 /**
  * Fallback para crear BD/usuario usando CLI mysql/mariadb (auth_socket root)
  */
@@ -304,6 +311,9 @@ app.post('/install', async (req, res) => {
 
     const resolvedPort = String(port || '') || String(PORT);
     const secret = jwt_secret && String(jwt_secret).trim() ? jwt_secret.trim() : generateSecret(48);
+    const encKey = (process.env.CONFIG_ENCRYPTION_KEY && /^[0-9a-fA-F]{64}$/.test(process.env.CONFIG_ENCRYPTION_KEY))
+      ? process.env.CONFIG_ENCRYPTION_KEY
+      : generateHexKey64();
 
     // Optionally create DB/user using admin credentials (TCP) o fallback CLI (auth_socket)
     let created = false;
@@ -356,6 +366,7 @@ DB_NAME=${db_name || 'gestion_pedidos_dev'}
 # --- JWT ---
 JWT_SECRET=${secret}
 JWT_EXPIRES_IN=24h
+CONFIG_ENCRYPTION_KEY=${encKey}
 
 # --- CORS ---
 FRONTEND_URL=${frontend_url || 'http://localhost:3000'}
