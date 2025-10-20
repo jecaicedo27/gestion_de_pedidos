@@ -40,8 +40,8 @@ if (active !== undefined) {
       `SELECT id, username, email, role, full_name, phone, active, created_at, last_login 
        FROM users ${whereClause} 
        ORDER BY created_at DESC 
-       LIMIT ? OFFSET ?`,
-      [...params, limitNum, offsetNum]
+       LIMIT ${limitNum} OFFSET ${offsetNum}`,
+      params
     );
 
     // Obtener total de usuarios para paginación

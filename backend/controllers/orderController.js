@@ -97,8 +97,8 @@ const getOrders = async (req, res) => {
        LEFT JOIN users messenger ON o.assigned_messenger_id = messenger.id
        ${whereClause}
        ORDER BY o.${orderBy} ${order}
-       LIMIT ? OFFSET ?`,
-      [...params, limitNum, offsetNum]
+       LIMIT ${limitNum} OFFSET ${offsetNum}`,
+      params
     );
 
     // Obtener items de cada pedido
