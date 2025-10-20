@@ -14,7 +14,9 @@ const getOrders = async (req, res) => {
       sortOrder = 'DESC'
     } = req.query;
     
-    const offset = (page - 1) * limit;
+    const limitNum = Math.max(1, Math.min(100, parseInt(limit) || 10));
+    const pageNum = Math.max(1, parseInt(page) || 1);
+    const offsetNum = (pageNum - 1) * limitNum;
     const userRole = req.user.role;
     const userId = req.user.id;
 
@@ -96,7 +98,7 @@ const getOrders = async (req, res) => {
        ${whereClause}
        ORDER BY o.${orderBy} ${order}
        LIMIT ? OFFSET ?`,
-      [...params, parseInt(limit), offset]
+      [...params, limitNum, offsetNum]
     );
 
     // Obtener items de cada pedido
@@ -120,10 +122,10 @@ const getOrders = async (req, res) => {
       data: {
         orders,
         pagination: {
-          page: parseInt(page),
-          limit: parseInt(limit),
+          page: pageNum,
+          limit: limitNum,
           total,
-          pages: Math.ceil(total / limit)
+          pages: Math.ceil(total / limitNum)
         }
       }
     });
