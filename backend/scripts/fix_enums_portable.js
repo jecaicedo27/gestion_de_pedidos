@@ -34,6 +34,13 @@ const SYNC_TYPE_ENUM_SUPERSET = [
   'update'
 ];
 
+const SYNC_STATUS_ENUM_SUPERSET = [
+  'success',
+  'error',
+  'pending',
+  'updated'
+];
+
 async function tableExists(table) {
   try {
     const rows = await query(
@@ -131,7 +138,7 @@ async function ensureSiigoSyncLog() {
         siigo_invoice_id VARCHAR(100),
         order_id INT NULL,
         sync_type ENUM('webhook','manual','automatic','update') NOT NULL DEFAULT 'manual',
-        sync_status ENUM('success','error','pending') DEFAULT 'pending',
+        sync_status ENUM('success','error','pending','updated') DEFAULT 'pending',
         error_message TEXT NULL,
         processed_at DATETIME NOT NULL,
         INDEX idx_sync_type (sync_type),
@@ -173,6 +180,30 @@ async function ensureSiigoSyncLog() {
     } else {
       console.log('✅ siigo_sync_log.sync_type already supports required values:', typeStr);
     }
+  }
+
+  // Ensure sync_status includes required values (e.g., 'updated')
+  const statusCol = await columnExists('siigo_sync_log', 'sync_status');
+  if (statusCol) {
+    const descStatus = await query(`SHOW COLUMNS FROM siigo_sync_log LIKE 'sync_status'`);
+    const typeStrStatus = descStatus[0]?.Type || '';
+    const currentStatus = parseEnumValuesFromType(typeStrStatus).map(v => v.toLowerCase());
+    const needStatus = SYNC_STATUS_ENUM_SUPERSET.filter(v => !currentStatus.includes(v));
+    if (needStatus.length > 0) {
+      const enumSQLStatus = buildEnumSQL(
+        Array.from(new Set([...currentStatus, ...SYNC_STATUS_ENUM_SUPERSET]))
+      );
+      console.log('🔧 Altering siigo_sync_log.sync_status to', enumSQLStatus);
+      await query(`
+        ALTER TABLE siigo_sync_log
+        MODIFY sync_status ${enumSQLStatus} DEFAULT 'pending'
+      `);
+      console.log('✅ siigo_sync_log.sync_status updated.');
+    } else {
+      console.log('✅ siigo_sync_log.sync_status already supports required values:', typeStrStatus);
+    }
+  } else {
+    console.log('ℹ️ Column siigo_sync_log.sync_status does not exist (unexpected). Skipping.');
   }
 }
 
