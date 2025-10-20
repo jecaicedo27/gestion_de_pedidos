@@ -8,6 +8,8 @@ const path = require('path');
 const fs = require('fs');
 const http = require('http');
 const { Server } = require('socket.io');
+const { execSync } = require('child_process');
+const mysql = require('mysql2/promise');
 
 // Configurar dotenv según el entorno
 const envFile = process.env.NODE_ENV === 'development' ? '.env.development' : '.env';
@@ -64,6 +66,25 @@ const io = new Server(server, {
 });
 
 const PORT = process.env.PORT || 3001;
+
+// Installer helpers
+function isInstalled() {
+  try {
+    // Consider installed if .env exists and a marker file exists
+    const envExists = fs.existsSync(path.join(__dirname, '.env'));
+    const markerExists = fs.existsSync(path.join(__dirname, '.installed'));
+    return envExists && markerExists;
+  } catch {
+    return false;
+  }
+}
+
+function generateSecret(length = 48) {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  let res = '';
+  for (let i = 0; i < length; i++) res += chars[Math.floor(Math.random() * chars.length)];
+  return res;
+}
 
 // Configurar WebSocket para notificaciones en tiempo real
 io.on('connection', (socket) => {
@@ -154,9 +175,201 @@ if (process.env.NODE_ENV === 'development') {
   app.use(morgan('combined'));
 }
 
-// Middleware para parsing de JSON
+// Middleware para parsing de JSON y formularios (necesario para /install)
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+/**
+ * Installer UI (visual end-to-end)
+ * - GET /install: simple form to collect DB and SIIGO settings
+ * - POST /install: writes .env, optionally creates DB/user, runs migration, writes .installed
+ * - Locked after installation
+ */
+app.get('/install', (req, res) => {
+  if (isInstalled()) {
+    return res.status(409).send('✅ Ya instalado. Si necesitas reinstalar, elimina backend/.installed y backend/.env manualmente.');
+  }
+  const host = req.headers['x-forwarded-host'] || req.headers.host || 'localhost';
+  const defaultFrontend = `http://${host.split(',')[0]}`;
+  res.send(`<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8"/>
+<title>Instalación - Gestión de Pedidos</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<style>
+  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu;max-width:900px;margin:40px auto;padding:0 16px;color:#111}
+  h1{margin-bottom:4px} .muted{color:#666}
+  form{background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:16px}
+  fieldset{border:1px solid #e5e7eb;border-radius:8px;margin:16px 0;padding:12px}
+  legend{padding:0 6px;color:#374151}
+  label{display:block;margin:10px 0 4px}
+  input[type=text],input[type=password],input[type=number]{width:100%;padding:8px;border:1px solid #d1d5db;border-radius:6px}
+  .row{display:flex;gap:12px} .col{flex:1}
+  button{background:#111827;color:#fff;border:0;border-radius:8px;padding:10px 16px;cursor:pointer}
+  .help{font-size:12px;color:#6b7280}
+</style>
+</head>
+<body>
+<h1>Instalación de Gestión de Pedidos</h1>
+<p class="muted">Completa los datos. Este instalador creará el archivo .env, (opcional) la base de datos y dejará todo listo.</p>
+<form method="POST" action="/install">
+  <fieldset>
+    <legend>Servidor</legend>
+    <div class="row">
+      <div class="col">
+        <label>Puerto backend (PORT)</label>
+        <input name="port" type="number" value="${PORT}" required />
+      </div>
+      <div class="col">
+        <label>Frontend URL</label>
+        <input name="frontend_url" type="text" value="${defaultFrontend}" required />
+        <div class="help">Ej: http://IP ó http://dominio</div>
+      </div>
+    </div>
+    <label>JWT Secret</label>
+    <input name="jwt_secret" type="text" placeholder="(opcional, se genera si está vacío)" />
+  </fieldset>
+
+  <fieldset>
+    <legend>Base de Datos</legend>
+    <div class="row">
+      <div class="col"><label>DB Host</label><input name="db_host" type="text" value="127.0.0.1" required /></div>
+      <div class="col"><label>DB Port</label><input name="db_port" type="number" value="3306" required /></div>
+    </div>
+    <div class="row">
+      <div class="col"><label>DB Name</label><input name="db_name" type="text" value="gestion_pedidos_dev" required /></div>
+      <div class="col"><label>DB User</label><input name="db_user" type="text" value="gp_user" required /></div>
+    </div>
+    <label>DB Password</label>
+    <input name="db_password" type="password" placeholder="password de gp_user" />
+    <div class="help">Si el usuario/base aún no existen, completa Admin User/Pass para que el instalador los cree.</div>
+    <div class="row">
+      <div class="col"><label>Admin User (opcional)</label><input name="admin_user" type="text" placeholder="root u otro admin"/></div>
+      <div class="col"><label>Admin Password (opcional)</label><input name="admin_pass" type="password" placeholder="password admin"/></div>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>SIIGO (opcional, puedes dejarlo vacío y configurar luego)</legend>
+    <label>SIIGO Username</label>
+    <input name="siigo_username" type="text" />
+    <label>SIIGO Access Key</label>
+    <input name="siigo_access_key" type="text" />
+    <label>SIIGO Base URL</label>
+    <input name="siigo_base_url" type="text" value="https://api.siigo.com" />
+  </fieldset>
+
+  <button type="submit">Instalar</button>
+</form>
+</body></html>`);
+});
+
+app.post('/install', async (req, res) => {
+  if (isInstalled()) {
+    return res.status(409).send('✅ Ya instalado.');
+  }
+  try {
+    const {
+      port, frontend_url, jwt_secret,
+      db_host, db_port, db_name, db_user, db_password,
+      admin_user, admin_pass,
+      siigo_username, siigo_access_key, siigo_base_url
+    } = req.body || {};
+
+    const resolvedPort = String(port || '') || String(PORT);
+    const secret = jwt_secret && String(jwt_secret).trim() ? jwt_secret.trim() : generateSecret(48);
+
+    // Optionally create DB/user using admin credentials
+    if (admin_user && admin_pass) {
+      try {
+        const conn = await mysql.createConnection({
+          host: db_host || '127.0.0.1',
+          port: Number(db_port || 3306),
+          user: admin_user,
+          password: admin_pass,
+          multipleStatements: true
+        });
+        await conn.query(`CREATE DATABASE IF NOT EXISTS \`${db_name}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;`);
+        // Try create user and grant (best-effort)
+        if (db_user) {
+          try {
+            await conn.query(`CREATE USER IF NOT EXISTS ?@'localhost' IDENTIFIED BY ?`, [db_user, db_password || '']);
+          } catch {}
+          try {
+            await conn.query(`GRANT ALL PRIVILEGES ON \`${db_name}\`.* TO ?@'localhost'`, [db_user]);
+            await conn.query(`FLUSH PRIVILEGES`);
+          } catch {}
+        }
+        await conn.end();
+      } catch (e) {
+        // Non-fatal, continue with env write and migration (user may have created DB manually)
+        console.warn('DB admin operations failed:', e.message);
+      }
+    }
+
+    // Write backend/.env
+    const envContent =
+`# --- Server ---
+PORT=${resolvedPort}
+NODE_ENV=production
+
+# --- DB ---
+DB_HOST=${db_host || '127.0.0.1'}
+DB_PORT=${db_port || 3306}
+DB_USER=${db_user || ''}
+DB_PASSWORD=${db_password || ''}
+DB_NAME=${db_name || 'gestion_pedidos_dev'}
+
+# --- JWT ---
+JWT_SECRET=${secret}
+JWT_EXPIRES_IN=24h
+
+# --- CORS ---
+FRONTEND_URL=${frontend_url || 'http://localhost:3000'}
+
+# --- SIIGO ---
+SIIGO_ENABLED=true
+SIIGO_API_USERNAME=${siigo_username || ''}
+SIIGO_API_ACCESS_KEY=${siigo_access_key || ''}
+SIIGO_API_BASE_URL=${siigo_base_url || 'https://api.siigo.com'}
+SIIGO_PARTNER_ID=siigo
+SIIGO_WEBHOOK_SECRET=secure-webhook-secret
+
+# --- Auto Sync SIIGO ---
+SIIGO_AUTO_SYNC=false
+SIIGO_SYNC_INTERVAL=5
+`;
+    fs.writeFileSync(path.join(__dirname, '.env'), envContent, 'utf8');
+
+    // Run portable migration
+    let migrationOut = '';
+    try {
+      migrationOut = execSync('node scripts/fix_enums_portable.js', { cwd: __dirname, stdio: 'pipe' }).toString();
+    } catch (e) {
+      migrationOut = (e.stdout ? e.stdout.toString() : '') + '\n' + (e.stderr ? e.stderr.toString() : '');
+    }
+
+    // Create installed marker
+    fs.writeFileSync(path.join(__dirname, '.installed'), new Date().toISOString(), 'utf8');
+
+    // Render result
+    res.send(`<!doctype html><html><head><meta charset="utf-8"/><title>Instalación completada</title>
+<style>body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu;max-width:900px;margin:40px auto;padding:0 16px;color:#111}pre{background:#0f172a;color:#e5e7eb;padding:12px;border-radius:8px;overflow:auto}</style>
+</head><body>
+  <h1>✅ Instalación completada</h1>
+  <p>Se creó backend/.env y se ejecutó la migración. Si el backend corre con PM2, reinicia con:</p>
+  <pre>pm2 restart gestion-backend --update-env</pre>
+  <p>Health de la API:</p>
+  <pre>curl -i http://127.0.0.1/api/health</pre>
+  <h3>Salida de migración</h3>
+  <pre>${(migrationOut || '').replace(/</g,'<')}</pre>
+  <p>Ahora puedes abrir el frontend y autenticarte. Si ves algún 502, verifica Nginx y el puerto configurado (${resolvedPort}).</p>
+</body></html>`);
+  } catch (e) {
+    res.status(500).send(`❌ Error en instalación: ${e.message}`);
+  }
+});
 
 // Servir archivos estáticos (uploads)
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
@@ -165,6 +378,9 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
  * Ruta raíz y favicon para evitar 404 al abrir http://localhost:3001
  */
 app.get('/', (req, res) => {
+  if (!isInstalled()) {
+    return res.send('Instalador disponible. Abre <a href="/install">/install</a> para configurar.');
+  }
   res.send('API de Gestión de Pedidos operando. Visita /api/health para estado.');
 });
 app.get('/favicon.ico', (req, res) => res.status(204).end());
@@ -345,10 +561,14 @@ async function isSiigoEnabled() {
 
 const startServer = async () => {
   try {
-    // Probar conexión a la base de datos
-    const dbConnected = await testConnection();
+    // Probar conexión a la base de datos (omitir en modo instalación)
+    const installMode = !isInstalled();
+    let dbConnected = false;
+    if (!installMode) {
+      dbConnected = await testConnection();
+    }
     
-    if (!dbConnected) {
+    if (!installMode && !dbConnected) {
       console.error('❌ No se pudo conectar a la base de datos');
       console.log('💡 Asegúrate de que MySQL esté ejecutándose y la configuración sea correcta');
       process.exit(1);
@@ -376,6 +596,12 @@ const startServer = async () => {
       
       console.log('\n✅ Sistema listo para recibir peticiones\n');
       
+      // Si está en modo instalación, no iniciar servicios y mostrar instrucción
+      if (!dbConnected || !isInstalled()) {
+        console.log('🧩 Modo instalación activo. Abre /install para configurar la base de datos y credenciales.');
+        return;
+      }
+
       // Iniciar servicio de actualización automática de facturas SIIGO (controlado por BD)
       (async () => {
         if (await isSiigoEnabled()) {
