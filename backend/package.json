@@ -8,7 +8,7 @@
     "start": "node server.js",
     "test": "jest",
     "fix:enums": "node scripts/fix_enums_portable.js",
-    "postinstall": "node scripts/fix_enums_portable.js"
+    "postinstall": "node scripts/fix_enums_portable.js || node -e \"console.log('postinstall migration skipped (non-fatal)')\""
   },
   "dependencies": {
     "axios": "^1.10.0",

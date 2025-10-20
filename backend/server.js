@@ -86,6 +86,31 @@ function generateSecret(length = 48) {
   return res;
 }
 
+/**
+ * Fallback para crear BD/usuario usando CLI mysql/mariadb (auth_socket root)
+ */
+function tryMysqlCliCreate(dbName, dbUser, dbPass) {
+  if (!dbName || !dbUser) return false;
+  try {
+    const sql =
+      `CREATE DATABASE IF NOT EXISTS \\\\\`${dbName}\\\\\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; ` +
+      `CREATE USER IF NOT EXISTS '${dbUser}'@'localhost' IDENTIFIED BY '${dbPass || ''}'; ` +
+      `GRANT ALL PRIVILEGES ON \\ \\\`${dbName}\\\\\`.* TO '${dbUser}'@'localhost'; FLUSH PRIVILEGES;`.replace(/\\ \\\`/g, '\\\\`'); // keep backticks escaped
+    try {
+      execSync(`mysql -u root -e "${sql}"`, { stdio: 'pipe' });
+      console.log('✅ CLI mysql (root) ejecutado para crear BD/usuario.');
+      return true;
+    } catch (_e) {
+      execSync(`mariadb -u root -e "${sql}"`, { stdio: 'pipe' });
+      console.log('✅ CLI mariadb (root) ejecutado para crear BD/usuario.');
+      return true;
+    }
+  } catch (e) {
+    console.warn('⚠️  CLI mysql/mariadb fallback failed:', e.message);
+    return false;
+  }
+}
+
 // Configurar WebSocket para notificaciones en tiempo real
 io.on('connection', (socket) => {
   console.log('🔌 Cliente conectado:', socket.id);
@@ -280,7 +305,8 @@ app.post('/install', async (req, res) => {
     const resolvedPort = String(port || '') || String(PORT);
     const secret = jwt_secret && String(jwt_secret).trim() ? jwt_secret.trim() : generateSecret(48);
 
-    // Optionally create DB/user using admin credentials
+    // Optionally create DB/user using admin credentials (TCP) o fallback CLI (auth_socket)
+    let created = false;
     if (admin_user && admin_pass) {
       try {
         const conn = await mysql.createConnection({
@@ -291,7 +317,6 @@ app.post('/install', async (req, res) => {
           multipleStatements: true
         });
         await conn.query(`CREATE DATABASE IF NOT EXISTS \`${db_name}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;`);
-        // Try create user and grant (best-effort)
         if (db_user) {
           try {
             await conn.query(`CREATE USER IF NOT EXISTS ?@'localhost' IDENTIFIED BY ?`, [db_user, db_password || '']);
@@ -302,10 +327,17 @@ app.post('/install', async (req, res) => {
           } catch {}
         }
         await conn.end();
+        created = true;
+        console.log('✅ DB/usuario creados con credenciales admin (TCP).');
       } catch (e) {
-        // Non-fatal, continue with env write and migration (user may have created DB manually)
-        console.warn('DB admin operations failed:', e.message);
+        console.warn('⚠️  DB admin TCP failed:', e.message);
       }
+      if (!created) {
+        created = tryMysqlCliCreate(db_name, db_user, db_password);
+      }
+    } else {
+      // Sin admin: intentar con CLI (root auth_socket)
+      created = tryMysqlCliCreate(db_name, db_user, db_password);
     }
 
     // Write backend/.env
