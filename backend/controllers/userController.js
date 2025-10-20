@@ -4,8 +4,10 @@ const { query } = require('../config/database');
 // Obtener todos los usuarios (admin, facturador, y logistica solo para mensajeros)
 const getUsers = async (req, res) => {
   try {
-    const { page = 1, limit = 10, role, active } = req.query;
-    const offset = (page - 1) * limit;
+const { page = 1, limit = 10, role, active } = req.query;
+const limitNum = Math.max(1, Math.min(100, parseInt(limit) || 10));
+const pageNum = Math.max(1, parseInt(page) || 1);
+const offsetNum = (pageNum - 1) * limitNum;
 
     // Verificar permisos según el rol del usuario autenticado
     if (req.user.role === 'logistica') {
@@ -27,10 +29,11 @@ const getUsers = async (req, res) => {
       params.push(role);
     }
 
-    if (active !== undefined) {
-      whereClause += ' AND active = ?';
-      params.push(active === 'true');
-    }
+if (active !== undefined) {
+  whereClause += ' AND active = ?';
+  const activeVal = (active === 'true' || active === '1' || active === 1);
+  params.push(activeVal ? 1 : 0);
+}
 
     // Obtener usuarios con paginación
     const users = await query(
@@ -38,7 +41,7 @@ const getUsers = async (req, res) => {
        FROM users ${whereClause} 
        ORDER BY created_at DESC 
        LIMIT ? OFFSET ?`,
-      [...params, parseInt(limit), offset]
+      [...params, limitNum, offsetNum]
     );
 
     // Obtener total de usuarios para paginación
@@ -53,10 +56,10 @@ const getUsers = async (req, res) => {
       data: {
         users,
         pagination: {
-          page: parseInt(page),
-          limit: parseInt(limit),
+          page: pageNum,
+          limit: limitNum,
           total,
-          pages: Math.ceil(total / limit)
+          pages: Math.ceil(total / limitNum)
         }
       }
     });
