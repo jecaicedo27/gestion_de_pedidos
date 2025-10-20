@@ -1,0 +1,531 @@
+const axios = require('axios');
+const siigoService = require('./siigoService');
+
+class SiigoInvoiceService {
+  
+  constructor() {
+    // Configuración por defecto aplicando lo aprendido del test exitoso
+    this.defaultConfig = {
+      documentId: 15047, // FV-1 - Factura No Electrónica (CORRECTO del test exitoso)
+      costCenter: 235,
+      seller: 388, // Vendedor 388 (siempre usar este según instrucciones)
+      defaultPaymentMethod: 3467, // Crédito (ID correcto aprendido del análisis)
+      defaultTaxId: null, // Sin IVA por defecto hasta obtener ID correcto
+      dueDays: 30
+    };
+  }
+
+  /**
+   * Prepara los datos de factura para SIIGO según documentación oficial
+   * Ahora es async para obtener precios reales de SIIGO
+   */
+  async prepareInvoiceData(customer, items, notes, originalRequest, options = {}) {
+    // Validar datos de entrada
+    this.validateInputData(customer, items);
+
+    // Configuración final con opciones
+    const config = { ...this.defaultConfig, ...options };
+
+    // Formatear items con precios reales de SIIGO (ahora es async)
+    const formattedItems = await this.formatItems(items, config.defaultTaxId);
+
+    // Calcular totales usando los items formateados (con precios reales)
+    const calculations = this.calculateTotalsFromFormattedItems(formattedItems);
+
+    // Formatear observaciones con límite de caracteres (máximo 4000)
+    const observations = this.formatObservations(notes, originalRequest);
+
+    // Calcular fecha de vencimiento
+    const dueDate = this.calculateDueDate(config.dueDays);
+
+    // Formatear datos del cliente según documentación oficial
+    const customerData = this.formatCustomerData(customer);
+
+    return {
+      document: { 
+        id: config.documentId
+      },
+      date: new Date().toISOString().split('T')[0],
+      customer: customerData,
+      seller: config.seller,
+      observations: observations,
+      items: formattedItems,
+      payments: [{
+        id: config.defaultPaymentMethod,
+        value: calculations.total,
+        due_date: dueDate
+      }]
+    };
+  }
+
+  /**
+   * Valida los datos de entrada antes de procesarlos
+   */
+  validateInputData(customer, items) {
+    const errors = [];
+
+    // Validar cliente
+    if (!customer) {
+      errors.push('Cliente es requerido');
+    } else {
+      if (!customer.identification && !customer.document) {
+        errors.push('Cliente debe tener número de identificación');
+      }
+    }
+
+    // Validar items
+    if (!items || !Array.isArray(items) || items.length === 0) {
+      errors.push('Debe incluir al menos un item');
+    } else {
+      items.forEach((item, index) => {
+        if (!item.code && !item.product_code && !item.siigo_code) {
+          errors.push(`Item ${index + 1} debe tener código de producto`);
+        }
+        if (!item.quantity || item.quantity <= 0) {
+          errors.push(`Item ${index + 1} debe tener cantidad válida`);
+        }
+        if (!item.price && !item.unit_price && !item.suggested_price) {
+          errors.push(`Item ${index + 1} debe tener precio`);
+        }
+      });
+    }
+
+    if (errors.length > 0) {
+      throw new Error(`Errores de validación: ${errors.join(', ')}`);
+    }
+  }
+
+  /**
+   * Calcula totales de la factura
+   */
+  calculateTotals(items) {
+    const subtotal = items.reduce((sum, item) => {
+      const quantity = parseFloat(item.quantity || 1);
+      const price = parseFloat(item.price || item.unit_price || item.suggested_price || 0);
+      return sum + (quantity * price);
+    }, 0);
+
+    const taxRate = 0.19; // 19% IVA
+    const tax = subtotal * taxRate;
+    const total = subtotal + tax;
+
+    return { subtotal, tax, total };
+  }
+
+  /**
+   * Calcula totales usando items ya formateados (con precios reales de SIIGO)
+   */
+  calculateTotalsFromFormattedItems(formattedItems) {
+    const subtotal = formattedItems.reduce((sum, item) => {
+      const quantity = parseFloat(item.quantity || 1);
+      const price = parseFloat(item.price || 0);
+      return sum + (quantity * price);
+    }, 0);
+
+    const taxRate = 0.19; // 19% IVA
+    const tax = subtotal * taxRate;
+    const total = subtotal + tax;
+
+    return { subtotal, tax, total };
+  }
+
+  /**
+   * Formatea las observaciones con límite de 4000 caracteres según documentación
+   */
+  formatObservations(notes, originalRequest) {
+    let observations = '';
+    
+    if (originalRequest) {
+      const truncatedRequest = originalRequest.length > 500 
+        ? originalRequest.substring(0, 500) + '...' 
+        : originalRequest;
+      observations += `Pedido original: ${truncatedRequest}\n\n`;
+    }
+    
+    if (notes) {
+      observations += notes + '\n\n';
+    }
+    
+    observations += 'Factura generada automáticamente desde sistema interno usando ChatGPT.';
+    
+    // Limitar a 4000 caracteres según documentación oficial
+    return observations.length > 4000 ? observations.substring(0, 3997) + '...' : observations;
+  }
+
+  /**
+   * Calcula fecha de vencimiento en formato yyyy-MM-dd
+   */
+  calculateDueDate(dueDays = 30) {
+    const dueDate = new Date();
+    dueDate.setDate(dueDate.getDate() + dueDays);
+    return dueDate.toISOString().split('T')[0];
+  }
+
+  /**
+   * Formatea datos del cliente según documentación oficial de SIIGO
+   * Para clientes existentes solo requiere: identification y branch_office
+   */
+  formatCustomerData(customer) {
+    // Según documentación oficial, para clientes existentes solo se requiere:
+    // - customer.identification (string, obligatorio)
+    // - customer.branch_office (number, opcional, default 0)
+    
+    let customerData = {
+      branch_office: 0 // Valor por defecto según documentación
+    };
+
+    // Obtener identificación del cliente
+    const identification = customer.identification || customer.document;
+    
+    if (!identification) {
+      throw new Error('Cliente debe tener número de identificación para crear factura en SIIGO');
+    }
+
+    // Limpiar identificación (solo números según algunos casos)
+    const cleanIdentification = identification.toString().trim();
+    
+    customerData.identification = cleanIdentification;
+    
+    // Si se especifica sucursal, usarla
+    if (customer.branch_office !== undefined && customer.branch_office !== null) {
+      customerData.branch_office = parseInt(customer.branch_office) || 0;
+    }
+
+    return customerData;
+  }
+
+  /**
+   * Formatea los items según documentación oficial de SIIGO
+   * Ahora obtiene precios reales de SIIGO aplicando lo aprendido del test exitoso
+   */
+  async formatItems(items, defaultTaxId) {
+    const formattedItems = [];
+    
+    for (let index = 0; index < items.length; index++) {
+      const item = items[index];
+      const quantity = parseFloat(item.quantity || 1);
+      
+      // Obtener código del producto (obligatorio según documentación)
+      let productCode = item.code || item.product_code || item.siigo_code;
+      
+      if (!productCode) {
+        // Si no hay código, generar uno temporal pero esto podría fallar en SIIGO
+        const productName = item.product_name || item.description || `Producto ${index + 1}`;
+        productCode = productName
+          .replace(/[^a-zA-Z0-9]/g, '')
+          .substring(0, 10)
+          .toUpperCase() + (index + 1).toString().padStart(2, '0');
+        
+        console.warn(`⚠️ Item ${index + 1} no tiene código, usando temporal: ${productCode}`);
+      }
+
+      // Obtener precio real de SIIGO (aplicando lo aprendido del test exitoso)
+      let price = parseFloat(item.price || item.unit_price || item.suggested_price || 0);
+      
+      try {
+        console.log(`🔍 Obteniendo precio real de SIIGO para producto: ${productCode}`);
+        
+        const token = await siigoService.authenticate();
+        const productResponse = await axios.get(
+          `${siigoService.getBaseUrl()}/v1/products/${productCode}`,
+          {
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/json',
+              'Partner-Id': 'siigo'
+            },
+            timeout: 15000
+          }
+        );
+
+        if (productResponse.data) {
+          // Aplicar la lógica aprendida del test exitoso
+          const siigoPrice = productResponse.data.prices?.[0]?.price_list?.[0]?.value;
+          
+          if (siigoPrice && siigoPrice > 0) {
+            price = parseFloat(siigoPrice);
+            console.log(`✅ Precio real obtenido de SIIGO para ${productCode}: $${price}`);
+          } else {
+            console.log(`⚠️ No se encontró precio en SIIGO para ${productCode}, usando precio proporcionado: $${price}`);
+          }
+        }
+        
+      } catch (error) {
+        console.warn(`⚠️ No se pudo obtener precio de SIIGO para ${productCode}: ${error.message}`);
+        console.log(`📝 Usando precio proporcionado: $${price}`);
+      }
+      
+      // Estructura según documentación oficial
+      const formattedItem = {
+        code: productCode, // Campo obligatorio
+        quantity: quantity, // Campo obligatorio, máximo 2 decimales
+        price: price // Campo obligatorio, máximo 6 decimales - ahora con precio real de SIIGO
+      };
+
+      // Descripción (opcional según documentación)
+      if (item.description || item.product_name) {
+        formattedItem.description = (item.description || item.product_name).substring(0, 100);
+      }
+
+      // Descuento (opcional)
+      if (item.discount && parseFloat(item.discount) > 0) {
+        formattedItem.discount = parseFloat(item.discount);
+      }
+
+      // Impuestos (opcional según documentación)
+      if (defaultTaxId) {
+        formattedItem.taxes = [{
+          id: defaultTaxId
+        }];
+      }
+
+      formattedItems.push(formattedItem);
+    }
+
+    return formattedItems;
+  }
+
+  /**
+   * Crea una factura en SIIGO siguiendo la documentación oficial
+   */
+  async createInvoice(invoiceData) {
+    try {
+      console.log('📋 Creando factura en SIIGO...');
+      console.log('📊 Datos de factura (según documentación oficial):', JSON.stringify(invoiceData, null, 2));
+      
+      const token = await siigoService.authenticate();
+      
+      const response = await axios.post(
+        `${siigoService.getBaseUrl()}/v1/invoices`,
+        invoiceData,
+        {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+            'Partner-Id': 'siigo'
+          },
+          timeout: 30000
+        }
+      );
+
+      console.log('✅ Factura creada exitosamente en SIIGO:', response.data);
+      
+      return {
+        success: true,
+        data: response.data,
+        invoiceNumber: response.data?.number || response.data?.id,
+        siigoId: response.data?.id
+      };
+
+    } catch (error) {
+      console.error('❌ Error creando factura en SIIGO:', error.response?.data || error.message);
+      
+      return this.handleCreateInvoiceError(error);
+    }
+  }
+
+  /**
+   * Maneja errores específicos de creación de factura
+   */
+  handleCreateInvoiceError(error) {
+    if (error.response?.status === 400) {
+      return {
+        success: false,
+        error: 'Error de validación en SIIGO',
+        details: error.response.data,
+        message: 'Los datos enviados no cumplen con el formato requerido por SIIGO',
+        suggestions: this.generateErrorSuggestions(error.response.data)
+      };
+    }
+    
+    if (error.response?.status === 401) {
+      return {
+        success: false,
+        error: 'Error de autenticación',
+        message: 'Token de acceso inválido o expirado'
+      };
+    }
+    
+    if (error.response?.status === 422) {
+      return {
+        success: false,
+        error: 'Error de procesamiento',
+        details: error.response.data,
+        message: 'Error en el procesamiento de los datos por parte de SIIGO'
+      };
+    }
+    
+    return {
+      success: false,
+      error: 'Error inesperado',
+      message: error.message || 'Error desconocido al crear factura'
+    };
+  }
+
+  /**
+   * Genera sugerencias basadas en el tipo de error
+   */
+  generateErrorSuggestions(errorData) {
+    const suggestions = [];
+    
+    if (errorData?.errors) {
+      Object.keys(errorData.errors).forEach(field => {
+        switch (field) {
+          case 'customer':
+          case 'customer.identification':
+            suggestions.push('Verificar que el cliente esté registrado en SIIGO con la identificación correcta');
+            break;
+          case 'items':
+          case 'items.code':
+            suggestions.push('Verificar que los códigos de productos existan en SIIGO y estén activos');
+            break;
+          case 'items.price':
+            suggestions.push('Verificar que los precios sean válidos (máximo 6 decimales)');
+            break;
+          case 'items.quantity':
+            suggestions.push('Verificar que las cantidades sean válidas (máximo 2 decimales)');
+            break;
+          case 'payments':
+            suggestions.push('Verificar método de pago y montos');
+            break;
+          case 'document':
+          case 'document.id':
+            suggestions.push('Verificar que el tipo de documento existe en SIIGO');
+            break;
+          case 'seller':
+            suggestions.push('Verificar que el vendedor existe en SIIGO y está activo');
+            break;
+          default:
+            suggestions.push(`Verificar campo: ${field}`);
+        }
+      });
+    } else {
+      suggestions.push('Revisar que todos los datos requeridos estén presentes');
+      suggestions.push('Verificar que cliente y productos existan en SIIGO');
+    }
+    
+    return suggestions;
+  }
+
+  /**
+   * Valida si los datos del cliente son suficientes para facturar
+   */
+  validateCustomerData(customer) {
+    const errors = [];
+    
+    if (!customer) {
+      errors.push('Cliente es requerido');
+      return { valid: false, errors };
+    }
+    
+    // Validar identificación (obligatoria según documentación)
+    const identification = customer.identification || customer.document;
+    if (!identification) {
+      errors.push('El cliente debe tener número de identificación');
+    } else {
+      const doc = identification.toString().trim();
+      if (doc.length < 6 || doc.length > 15) {
+        errors.push('Identificación debe tener entre 6 y 15 caracteres');
+      }
+    }
+    
+    return {
+      valid: errors.length === 0,
+      errors
+    };
+  }
+
+  /**
+   * Obtiene el detalle de una factura de SIIGO
+   */
+  async getInvoice(invoiceId) {
+    try {
+      console.log(`📋 Obteniendo factura ${invoiceId} de SIIGO...`);
+      
+      const token = await siigoService.authenticate();
+      
+      const response = await axios.get(
+        `${siigoService.getBaseUrl()}/v1/invoices/${invoiceId}`,
+        {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+            'Partner-Id': 'siigo'
+          }
+        }
+      );
+
+      console.log('✅ Factura obtenida exitosamente');
+      return response.data;
+      
+    } catch (error) {
+      console.error('❌ Error obteniendo factura de SIIGO:', error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * Lista facturas con filtros opcionales
+   */
+  async listInvoices(filters = {}) {
+    try {
+      console.log('📋 Listando facturas de SIIGO...');
+      
+      const token = await siigoService.authenticate();
+      
+      const params = new URLSearchParams();
+      if (filters.created_start) params.append('created_start', filters.created_start);
+      if (filters.created_end) params.append('created_end', filters.created_end);
+      if (filters.updated_start) params.append('updated_start', filters.updated_start);
+      if (filters.updated_end) params.append('updated_end', filters.updated_end);
+      
+      const response = await axios.get(
+        `${siigoService.getBaseUrl()}/v1/invoices${params.toString() ? '?' + params.toString() : ''}`,
+        {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+            'Partner-Id': 'siigo'
+          }
+        }
+      );
+
+      console.log(`✅ ${response.data.results?.length || 0} facturas obtenidas`);
+      return response.data;
+      
+    } catch (error) {
+      console.error('❌ Error listando facturas de SIIGO:', error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * Prepara datos para crear cliente desde la factura (según documentación oficial)
+   */
+  prepareCustomerCreationData(customerInfo) {
+    // Esta función prepara la estructura para crear un cliente nuevo desde la factura
+    // según el formato especificado en la documentación oficial
+    
+    const isCompany = customerInfo.person_type === 'company' || customerInfo.person_type === 'Company';
+    
+    return {
+      person_type: isCompany ? 'Company' : 'Person',
+      id_type: customerInfo.id_type || (isCompany ? '31' : '13'), // 31=NIT, 13=CC
+      identification: customerInfo.identification,
+      branch_office: customerInfo.branch_office || 0,
+      name: isCompany ? [customerInfo.name] : customerInfo.name, // Company: array con 1 elemento, Person: array con 2 elementos
+      address: {
+        address: customerInfo.address,
+        city: {
+          country_code: customerInfo.country_code || 'Co',
+          state_code: customerInfo.state_code,
+          city_code: customerInfo.city_code
+        }
+      },
+      phones: customerInfo.phones ? [customerInfo.phones] : [],
+      contacts: customerInfo.contacts ? [customerInfo.contacts] : []
+    };
+  }
+}
+
+module.exports = new SiigoInvoiceService();

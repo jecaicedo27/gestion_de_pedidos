@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Visualizador JSON SIIGO - Estructura de Factura</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            border-radius: 10px;
+            text-align: center;
+            margin-bottom: 30px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        
+        .container {
+            background: white;
+            border-radius: 10px;
+            padding: 30px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        
+        .json-section {
+            margin-bottom: 30px;
+        }
+        
+        .json-section h3 {
+            color: #333;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 10px;
+            margin-bottom: 20px;
+        }
+        
+        textarea {
+            width: 100%;
+            height: 400px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            padding: 15px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            resize: vertical;
+            background-color: #f8f9fa;
+            color: #333;
+            box-sizing: border-box;
+        }
+        
+        textarea:focus {
+            border-color: #667eea;
+            outline: none;
+            box-shadow: 0 0 5px rgba(102, 126, 234, 0.3);
+        }
+        
+        .copy-btn {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin-top: 10px;
+            font-size: 14px;
+            transition: background-color 0.3s;
+        }
+        
+        .copy-btn:hover {
+            background: #5a6fd8;
+        }
+        
+        .info-box {
+            background: #e3f2fd;
+            border: 1px solid #bbdefb;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        
+        .info-box h4 {
+            margin-top: 0;
+            color: #1976d2;
+        }
+        
+        .field-explanation {
+            background: #f5f5f5;
+            padding: 15px;
+            border-radius: 5px;
+            margin-top: 15px;
+            font-size: 13px;
+            color: #666;
+        }
+        
+        .tabs {
+            display: flex;
+            border-bottom: 2px solid #ddd;
+            margin-bottom: 20px;
+        }
+        
+        .tab {
+            padding: 12px 24px;
+            background: #f5f5f5;
+            border: none;
+            cursor: pointer;
+            margin-right: 5px;
+            border-radius: 5px 5px 0 0;
+            font-size: 14px;
+            transition: all 0.3s;
+        }
+        
+        .tab.active {
+            background: #667eea;
+            color: white;
+        }
+        
+        .tab-content {
+            display: none;
+        }
+        
+        .tab-content.active {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🧾 Visualizador JSON SIIGO</h1>
+        <p>Estructura de datos enviada para crear facturas electrónicas</p>
+    </div>
+    
+    <div class="container">
+        <div class="info-box">
+            <h4>📋 Información</h4>
+            <p>Este visualizador muestra el formato JSON exacto que se envía a la API de SIIGO para crear facturas electrónicas. 
+            La estructura está basada en el método <code>prepareInvoiceData</code> del servicio de facturas.</p>
+        </div>
+        
+        <div class="tabs">
+            <button class="tab active" onclick="showTab('estructura')">Estructura Completa</button>
+            <button class="tab" onclick="showTab('ejemplo')">Ejemplo con Datos</button>
+            <button class="tab" onclick="showTab('campos')">Descripción de Campos</button>
+        </div>
+        
+        <!-- Estructura Completa -->
+        <div class="tab-content active" id="estructura">
+            <div class="json-section">
+                <h3>🏗️ Estructura JSON para SIIGO</h3>
+                <textarea id="jsonStructure" readonly>
+{
+  "document": {
+    "id": "DOCUMENT_ID_FROM_CONFIG"
+  },
+  "date": "YYYY-MM-DD",
+  "customer": {
+    "person_type": "Person",
+    "id_type": {
+      "id": "ID_TYPE_ID"
+    },
+    "identification": "CUSTOMER_IDENTIFICATION",
+    "name": ["CUSTOMER_NAME"],
+    "commercial_name": "CUSTOMER_COMMERCIAL_NAME",
+    "address": {
+      "address": "CUSTOMER_ADDRESS",
+      "city": {
+        "country_code": "Co",
+        "state_code": "STATE_CODE",
+        "city_code": "CITY_CODE"
+      }
+    },
+    "phones": [
+      {
+        "number": "PHONE_NUMBER"
+      }
+    ],
+    "contacts": [
+      {
+        "first_name": "CONTACT_FIRST_NAME",
+        "last_name": "CONTACT_LAST_NAME",
+        "email": "CONTACT_EMAIL",
+        "phone": {
+          "number": "CONTACT_PHONE"
+        }
+      }
+    ]
+  },
+  "cost_center": "COST_CENTER_ID_FROM_CONFIG",
+  "seller": "SELLER_ID_FROM_CONFIG",
+  "observations": "OBSERVACIONES_Y_NOTAS_ADICIONALES",
+  "items": [
+    {
+      "code": "PRODUCT_CODE",
+      "description": "PRODUCT_DESCRIPTION",
+      "quantity": QUANTITY_NUMBER,
+      "price": UNIT_PRICE_NUMBER,
+      "discount": DISCOUNT_PERCENTAGE,
+      "taxes": [
+        {
+          "id": "TAX_ID_FROM_CONFIG",
+          "value": TAX_VALUE_NUMBER
+        }
+      ]
+    }
+  ],
+  "payments": [
+    {
+      "id": "PAYMENT_METHOD_ID_FROM_CONFIG",
+      "value": TOTAL_AMOUNT_NUMBER,
+      "due_date": "YYYY-MM-DD"
+    }
+  ]
+}
+                </textarea>
+                <button class="copy-btn" onclick="copyToClipboard('jsonStructure')">📋 Copiar Estructura</button>
+            </div>
+        </div>
+        
+        <!-- Ejemplo with Datos -->
+        <div class="tab-content" id="ejemplo">
+            <div class="json-section">
+                <h3>📝 Ejemplo con Datos Reales</h3>
+                <textarea id="jsonExample" readonly>
+{
+  "document": {
+    "id": "b3252439-df30-4ffd-8a0e-86cfa32cd7d3"
+  },
+  "date": "2025-08-20",
+  "customer": {
+    "person_type": "Person",
+    "id_type": {
+      "id": "13"
+    },
+    "identification": "1098738140",
+    "name": ["JOHN EDISSON CAICEDO BENAVIDES"],
+    "commercial_name": "JOHN EDISSON CAICEDO BENAVIDES",
+    "address": {
+      "address": "CARRERA 10 # 15-25",
+      "city": {
+        "country_code": "Co",
+        "state_code": "05",
+        "city_code": "05001"
+      }
+    },
+    "phones": [
+      {
+        "number": "3001234567"
+      }
+    ],
+    "contacts": [
+      {
+        "first_name": "JOHN EDISSON",
+        "last_name": "CAICEDO BENAVIDES",
+        "email": "john@example.com",
+        "phone": {
+          "number": "3001234567"
+        }
+      }
+    ]
+  },
+  "cost_center": "7890",
+  "seller": "f7836c2b-99d4-4856-846a-e74c2be92f04",
+  "observations": "Procesado por ChatGPT Assistant:\n\n1 - Liquipop Fresa x2 - $5,000\n2 - Bombón Chocolate x1 - $3,000\n\nTotal: $8,000\n\nNotas adicionales: Entregar antes de las 5 PM",
+  "items": [
+    {
+      "code": "LIQUIPP01",
+      "description": "Liquipop Fresa",
+      "quantity": 2,
+      "price": 2500,
+      "discount": 0,
+      "taxes": [
+        {
+          "id": "2e99b0c7-a288-4dc5-bb2d-75b13eb26f7e",
+          "value": 475
+        }
+      ]
+    },
+    {
+      "code": "BOMB001",
+      "description": "Bombón Chocolate",
+      "quantity": 1,
+      "price": 3000,
+      "discount": 0,
+      "taxes": [
+        {
+          "id": "2e99b0c7-a288-4dc5-bb2d-75b13eb26f7e",
+          "value": 570
+        }
+      ]
+    }
+  ],
+  "payments": [
+    {
+      "id": "de92d8c7-89ba-4fa9-bc4e-1e0c70a2b78d",
+      "value": 8000,
+      "due_date": "2025-08-20"
+    }
+  ]
+}
+                </textarea>
+                <button class="copy-btn" onclick="copyToClipboard('jsonExample')">📋 Copiar Ejemplo</button>
+            </div>
+        </div>
+        
+        <!-- Descripción de Campos -->
+        <div class="tab-content" id="campos">
+            <div class="json-section">
+                <h3>📚 Descripción de Campos</h3>
+                <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; font-family: monospace; line-height: 1.6;">
+                    <strong>document.id:</strong> ID del tipo de documento configurado en SIIGO<br/>
+                    <strong>date:</strong> Fecha de la factura en formato YYYY-MM-DD<br/>
+                    <strong>customer:</strong> Información completa del cliente<br/>
+                    <strong>customer.person_type:</strong> Tipo de persona (Person/Company)<br/>
+                    <strong>customer.id_type.id:</strong> ID del tipo de identificación<br/>
+                    <strong>customer.identification:</strong> Número de identificación<br/>
+                    <strong>customer.name:</strong> Array con el nombre del cliente<br/>
+                    <strong>customer.address:</strong> Dirección con códigos de ciudad/estado<br/>
+                    <strong>cost_center:</strong> Centro de costos de la configuración<br/>
+                    <strong>seller:</strong> ID del vendedor configurado<br/>
+                    <strong>observations:</strong> Notas y observaciones de la factura<br/>
+                    <strong>items:</strong> Array de productos/servicios facturados<br/>
+                    <strong>items[].code:</strong> Código del producto<br/>
+                    <strong>items[].description:</strong> Descripción del producto<br/>
+                    <strong>items[].quantity:</strong> Cantidad<br/>
+                    <strong>items[].price:</strong> Precio unitario<br/>
+                    <strong>items[].taxes:</strong> Impuestos aplicables<br/>
+                    <strong>payments:</strong> Información de pago<br/>
+                    <strong>payments[].id:</strong> ID del método de pago<br/>
+                    <strong>payments[].value:</strong> Valor total a pagar<br/>
+                    <strong>payments[].due_date:</strong> Fecha de vencimiento<br/>
+                </div>
+            </div>
+        </div>
+        
+        <div class="field-explanation">
+            <strong>💡 Nota Técnica:</strong> Esta estructura JSON es generada por el método <code>prepareInvoiceData()</code> 
+            en <code>backend/services/siigoInvoiceService.js</code> y enviada a la API de SIIGO para crear facturas electrónicas. 
+            Los valores de configuración (IDs de documentos, vendedores, etc.) son obtenidos desde la base de datos del sistema.
+        </div>
+    </div>
+    
+    <script>
+        function showTab(tabName) {
+            // Ocultar todas las tabs
+            const tabContents = document.querySelectorAll('.tab-content');
+            const tabs = document.querySelectorAll('.tab');
+            
+            tabContents.forEach(content => content.classList.remove('active'));
+            tabs.forEach(tab => tab.classList.remove('active'));
+            
+            // Mostrar la tab seleccionada
+            document.getElementById(tabName).classList.add('active');
+            event.target.classList.add('active');
+        }
+        
+        function copyToClipboard(elementId) {
+            const textarea = document.getElementById(elementId);
+            textarea.select();
+            textarea.setSelectionRange(0, 99999);
+            
+            try {
+                document.execCommand('copy');
+                const btn = event.target;
+                const originalText = btn.textContent;
+                btn.textContent = '✅ Copiado!';
+                btn.style.background = '#28a745';
+                
+                setTimeout(() => {
+                    btn.textContent = originalText;
+                    btn.style.background = '#667eea';
+                }, 2000);
+            } catch (err) {
+                console.error('Error al copiar:', err);
+                alert('No se pudo copiar al portapapeles');
+            }
+        }
+        
+        // Hacer los textareas auto-expandibles
+        document.addEventListener('DOMContentLoaded', function() {
+            const textareas = document.querySelectorAll('textarea');
+            textareas.forEach(textarea => {
+                // Formato JSON con indentación
+                try {
+                    const jsonContent = textarea.value;
+                    if (jsonContent.trim().startsWith('{')) {
+                        const formatted = JSON.stringify(JSON.parse(jsonContent), null, 2);
+                        textarea.value = formatted;
+                    }
+                } catch (e) {
+                    // Si no es JSON válido, mantener el contenido original
+                }
+            });
+        });
+    </script>
+</body>
+</html>

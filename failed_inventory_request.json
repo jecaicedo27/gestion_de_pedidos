@@ -1,0 +1,24 @@
+{
+  "payload": {
+    "customer_id": 85,
+    "items": [
+      {
+        "code": "IMPLE04",
+        "product_code": "IMPLE04",
+        "product_name": "Implemento de Prueba Inventario",
+        "quantity": 1,
+        "price": 106,
+        "unit_price": 106,
+        "siigo_code": "IMPLE04"
+      }
+    ],
+    "document_type": "FV-1",
+    "notes": "Factura de prueba desde inventario",
+    "natural_language_order": "Test desde inventario - reproduciendo error 422"
+  },
+  "response": {
+    "success": false,
+    "message": "Error creando factura",
+    "error": "Errores de validación: Cliente debe tener número de identificación"
+  }
+}
