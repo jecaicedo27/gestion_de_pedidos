@@ -67,15 +67,17 @@ const productController = {
         const isActive = req.query.is_active; // Nuevo parámetro específico para filtrar por estado
         
         const offset = (page - 1) * pageSize;
+        const limitOffset = `LIMIT ${Number(pageSize)} OFFSET ${Number(offset)}`;
         
         // CORREGIDO: Manejar filtro de estado activo/inactivo
         let searchCondition = 'WHERE 1=1';
         let queryParams = [];
         
-        // Si se especifica is_active, filtrar por ese valor específico
+        // Si se especifica is_active, filtrar por ese valor específico (acepta 1/0/true/false)
         if (isActive !== undefined) {
+            const activeVal = (isActive === true || isActive === 1 || isActive === '1' || String(isActive).toLowerCase() === 'true') ? 1 : 0;
             searchCondition += ` AND pb.is_active = ?`;
-            queryParams.push(parseInt(isActive));
+            queryParams.push(activeVal);
         } else if (!includeInactive) {
             // Si no se especifica is_active pero includeInactive es false, solo mostrar activos
             searchCondition += ` AND pb.is_active = 1`;
@@ -92,14 +94,29 @@ const productController = {
             queryParams.push(searchTerm, searchTerm, searchTerm, searchTerm);
         }
         
-        // Filtro por múltiples categorías
-        if (categories.trim()) {
-            const categoryList = categories.split(',').map(cat => cat.trim()).filter(cat => cat);
-            if (categoryList.length > 0) {
-                const placeholders = categoryList.map(() => '?').join(',');
-                searchCondition += ` AND pb.category IN (${placeholders})`;
-                queryParams.push(...categoryList);
+        // Filtro por múltiples categorías (soporta string, array o JSON string)
+        let categoryList = [];
+        if (Array.isArray(categories)) {
+            categoryList = categories.map(c => String(c).trim()).filter(Boolean);
+        } else if (typeof categories === 'string') {
+            const trimmed = categories.trim();
+            if (trimmed) {
+                try {
+                    const parsed = JSON.parse(trimmed);
+                    if (Array.isArray(parsed)) {
+                        categoryList = parsed.map(c => String(c).trim()).filter(Boolean);
+                    } else {
+                        categoryList = trimmed.split(',').map(c => c.trim()).filter(Boolean);
+                    }
+                } catch {
+                    categoryList = trimmed.split(',').map(c => c.trim()).filter(Boolean);
+                }
             }
+        }
+        if (categoryList.length > 0) {
+            const placeholders = categoryList.map(() => '?').join(',');
+            searchCondition += ` AND pb.category IN (${placeholders})`;
+            queryParams.push(...categoryList);
         }
             
             // Query para obtener el total de productos
@@ -109,38 +126,162 @@ const productController = {
                 ${searchCondition}
             `;
             
-            const [countResult] = await pool.execute(countQuery, queryParams);
-            const total = countResult[0].total;
+            let total = 0;
+            try {
+                const [countResult] = await pool.execute(countQuery, queryParams);
+                total = countResult[0].total;
+            } catch (eCount) {
+                if (eCount.code === 'ER_BAD_FIELD_ERROR' || eCount.code === 'ER_NO_SUCH_TABLE') {
+                    // Fallback: quitar filtro por is_active si la columna no existe en este esquema
+                    let fallbackCondition = 'WHERE 1=1';
+                    const fallbackParams = [];
+                    
+                    if (search.trim()) {
+                        fallbackCondition += ` AND (
+                            pb.product_name LIKE ? OR 
+                            pb.barcode LIKE ? OR 
+                            pb.internal_code LIKE ? OR 
+                            pb.category LIKE ?
+                        )`;
+                        const searchTerm = `%${search.trim()}%`;
+                        fallbackParams.push(searchTerm, searchTerm, searchTerm, searchTerm);
+                    }
+                    
+                    if (categoryList.length > 0) {
+                        const placeholders = categoryList.map(() => '?').join(',');
+                        fallbackCondition += ` AND pb.category IN (${placeholders})`;
+                        fallbackParams.push(...categoryList);
+                    }
+                    
+                    const [countResult2] = await pool.execute(`
+                        SELECT COUNT(DISTINCT pb.id) as total
+                        FROM products pb
+                        ${fallbackCondition}
+                    `, fallbackParams);
+                    total = (countResult2[0] && countResult2[0].total) || 0;
+                } else {
+                    throw eCount;
+                }
+            }
             
             // Query para obtener los productos con paginación
-            const query = `
-                SELECT 
-                    pb.id,
-                    pb.product_name,
-                    pb.barcode,
-                    pb.internal_code,
-                    pb.siigo_product_id,
-                    pb.category,
-                    pb.category as brand,
-                    pb.description,
-                    pb.standard_price as unit_weight,
-                    pb.standard_price,
-                    pb.available_quantity,
-                    pb.stock,
-                    pb.is_active,
-                    pb.created_at,
-                    pb.updated_at,
-                    COUNT(pv.id) as variant_count
-                FROM products pb
-                LEFT JOIN product_variants pv ON pb.id = pv.product_barcode_id AND pv.is_active = TRUE
-                ${searchCondition}
-                GROUP BY pb.id
-                ORDER BY pb.product_name ASC
-                LIMIT ? OFFSET ?
-            `;
-            
-            const paginationParams = [...queryParams, pageSize, offset];
-            const [products] = await pool.execute(query, paginationParams);
+            let products = [];
+            try {
+                const query = `
+                    SELECT 
+                        pb.id,
+                        pb.product_name,
+                        pb.barcode,
+                        pb.internal_code,
+                        pb.siigo_product_id,
+                        pb.category,
+                        pb.category as brand,
+                        pb.description,
+                        pb.standard_price as unit_weight,
+                        pb.standard_price,
+                        pb.available_quantity,
+                        pb.stock,
+                        pb.is_active,
+                        pb.created_at,
+                        pb.updated_at,
+                        (
+                            SELECT COUNT(*)
+                            FROM product_variants pv
+                            WHERE (pv.product_barcode_id = pb.id OR pv.product_id = pb.id)
+                              AND (pv.is_active = 1 OR pv.is_active IS NULL)
+                        ) as variant_count
+                    FROM products pb
+                    ${searchCondition}
+                    ORDER BY pb.product_name ASC
+                    ${limitOffset}
+                `;
+                
+                const [rows] = await pool.execute(query, queryParams);
+                products = rows;
+            } catch (e) {
+                // Si no existe la tabla o alguna columna, hacemos fallback sin contar variantes
+                if (e.code === 'ER_NO_SUCH_TABLE' || e.code === 'ER_BAD_FIELD_ERROR') {
+                    try {
+                        const queryNoVariants = `
+                            SELECT 
+                                pb.id,
+                                pb.product_name,
+                                pb.barcode,
+                                pb.internal_code,
+                                pb.siigo_product_id,
+                                pb.category,
+                                pb.category as brand,
+                                pb.description,
+                                pb.standard_price as unit_weight,
+                                pb.standard_price,
+                                pb.available_quantity,
+                                pb.stock,
+                                pb.is_active,
+                                pb.created_at,
+                                pb.updated_at,
+                                0 as variant_count
+                            FROM products pb
+                            ${searchCondition}
+                            ORDER BY pb.product_name ASC
+                            ${limitOffset}
+                        `;
+                        const [rows] = await pool.execute(queryNoVariants, queryParams);
+                        products = rows;
+                    } catch (e2) {
+                        // Fallback mínimo: columnas ausentes (is_active/stock/available_quantity) o filtros por is_active en esquemas antiguos
+                        if (e2.code === 'ER_BAD_FIELD_ERROR') {
+                            // Reconstruir condición SIN referencias a is_active
+                            let conditionNoActive = 'WHERE 1=1';
+                            const paramsNoActive = [];
+                            
+                            if (search.trim()) {
+                                conditionNoActive += ` AND (
+                                    pb.product_name LIKE ? OR 
+                                    pb.barcode LIKE ? OR 
+                                    pb.internal_code LIKE ? OR 
+                                    pb.category LIKE ?
+                                )`;
+                                const searchTerm = `%${search.trim()}%`;
+                                paramsNoActive.push(searchTerm, searchTerm, searchTerm, searchTerm);
+                            }
+                            
+                            if (categoryList.length > 0) {
+                                const placeholders = categoryList.map(() => '?').join(',');
+                                conditionNoActive += ` AND pb.category IN (${placeholders})`;
+                                paramsNoActive.push(...categoryList);
+                            }
+                            
+                            const queryMinimal = `
+                                SELECT 
+                                    pb.id,
+                                    pb.product_name,
+                                    pb.barcode,
+                                    pb.internal_code,
+                                    pb.siigo_product_id,
+                                    pb.category,
+                                    pb.category as brand,
+                                    pb.description,
+                                    pb.standard_price as unit_weight,
+                                    pb.standard_price,
+                                    1 as is_active,
+                                    pb.created_at,
+                                    pb.updated_at,
+                                    0 as variant_count
+                                FROM products pb
+                                ${conditionNoActive}
+                                ORDER BY pb.product_name ASC
+                                ${limitOffset}
+                            `;
+                            const [rows2] = await pool.execute(queryMinimal, paramsNoActive);
+                            products = rows2;
+                        } else {
+                            throw e2;
+                        }
+                    }
+                } else {
+                    throw e;
+                }
+            }
             
             // Calcular información de paginación
             const totalPages = Math.ceil(total / pageSize);
@@ -384,18 +525,27 @@ const productController = {
                 FROM products
             `);
 
-            const [variantStats] = await pool.execute(`
-                SELECT COUNT(*) as total_variants
-                FROM product_variants pv
-                JOIN products pb ON pv.product_barcode_id = pb.id
-                WHERE pv.is_active = TRUE AND pb.is_active = TRUE
-            `);
+            let total_variants = 0;
+            try {
+                const [variantStats] = await pool.execute(`
+                    SELECT COUNT(*) as total_variants
+                    FROM product_variants pv
+                    JOIN products pb ON (pv.product_barcode_id = pb.id OR pv.product_id = pb.id)
+                    WHERE (pv.is_active = TRUE OR pv.is_active IS NULL) AND pb.is_active = TRUE
+                `);
+                total_variants = (variantStats[0] && variantStats[0].total_variants) || 0;
+            } catch (e) {
+                // Si no existe la tabla/columna, devolvemos 0 variantes
+                if (e.code !== 'ER_NO_SUCH_TABLE' && e.code !== 'ER_BAD_FIELD_ERROR') {
+                    throw e;
+                }
+            }
 
             res.json({
                 success: true,
                 data: {
                     ...stats[0],
-                    total_variants: variantStats[0].total_variants
+                    total_variants
                 }
             });
 
