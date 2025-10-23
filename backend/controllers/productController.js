@@ -67,6 +67,7 @@ const productController = {
         const isActive = req.query.is_active; // Nuevo parámetro específico para filtrar por estado
         
         const offset = (page - 1) * pageSize;
+        const limitOffset = `LIMIT ${Number(pageSize)} OFFSET ${Number(offset)}`;
         
         // CORREGIDO: Manejar filtro de estado activo/inactivo
         let searchCondition = 'WHERE 1=1';
@@ -136,11 +137,10 @@ const productController = {
                 ${searchCondition}
                 GROUP BY pb.id
                 ORDER BY pb.product_name ASC
-                LIMIT ? OFFSET ?
+                ${limitOffset}
             `;
             
-            const paginationParams = [...queryParams, pageSize, offset];
-            const [products] = await pool.execute(query, paginationParams);
+            const [products] = await pool.execute(query, queryParams);
             
             // Calcular información de paginación
             const totalPages = Math.ceil(total / pageSize);
