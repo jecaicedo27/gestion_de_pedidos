@@ -11,6 +11,7 @@ const { Server } = require('socket.io');
 const { execSync } = require('child_process');
 const mysql = require('mysql2/promise');
 
+// Dev-only: trigger nodemon restart
 // Configurar dotenv según el entorno
 const envFile = process.env.NODE_ENV === 'development' ? '.env.development' : '.env';
 require('dotenv').config({ path: path.join(__dirname, envFile) });
@@ -59,6 +60,8 @@ const io = new Server(server, {
       'http://localhost:3002', // Puerto alternativo para desarrollo
       'http://localhost:3001',  // Por si el frontend corre en otro puerto
       'http://localhost:3050',  // Nuevo puerto de frontend
+      'http://localhost:3051',  // Servido alternativo local
+      'http://localhost:3052',  // Servido alternativo local 2
       'http://46.202.93.54'
     ],
     methods: ['GET', 'POST']
@@ -165,6 +168,8 @@ const corsOptions = {
     'http://localhost:3002', // Puerto alternativo para desarrollo
     'http://localhost:3001',  // Por si el frontend corre en otro puerto
     'http://localhost:3050',  // Nuevo puerto de frontend
+    'http://localhost:3051',  // Servido alternativo local
+    'http://localhost:3052',  // Servido alternativo local 2
     'http://46.202.93.54'
   ],
   credentials: true,
@@ -590,6 +595,8 @@ app.use((error, req, res, next) => {
 
 // Función para iniciar el servidor
 async function isSiigoEnabled() {
+  // Override por .env: si SIIGO_ENABLED es 'false', deshabilitar SIIGO sin importar BD
+  if (String(process.env.SIIGO_ENABLED).toLowerCase() === 'false') return false;
   try {
     const [rows] = await pool.execute(
       'SELECT is_enabled FROM siigo_credentials WHERE company_id = ? ORDER BY updated_at DESC, created_at DESC LIMIT 1',
@@ -655,11 +662,17 @@ const startServer = async () => {
         }
       })();
       
-      // Inicializar sistema de importación automática
-      initializeAutoImport();
-      
-      // Inicializar sistema de sincronización automática de productos
-      autoSyncService.init();
+(async () => {
+  if (await isSiigoEnabled()) {
+    // Inicializar sistema de importación automática (SIIGO)
+    initializeAutoImport();
+
+    // Inicializar sistema de sincronización automática de productos (SIIGO)
+    autoSyncService.init();
+  } else {
+    console.log('⏸️ SIIGO deshabilitado. Auto import y AutoSync no iniciados.');
+  }
+})();
       
       // Inicializar sistema de sincronización de stock con webhooks (controlado por BD)
       (async () => {

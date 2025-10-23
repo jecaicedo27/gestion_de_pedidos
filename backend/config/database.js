@@ -1,5 +1,7 @@
 const mysql = require('mysql2/promise');
-require('dotenv').config();
+const path = require('path');
+const dotenvPath = process.env.DOTENV_PATH || path.join(__dirname, '../.env');
+require('dotenv').config({ path: dotenvPath });
 
 const dbConfig = {
   host: process.env.DB_HOST || '127.0.0.1',
@@ -14,6 +16,17 @@ const dbConfig = {
   connectTimeout: 60000
 };
 
+if (process.env.DEBUG_DB) {
+  const masked = {
+    host: dbConfig.host,
+    port: dbConfig.port,
+    user: dbConfig.user,
+    database: dbConfig.database,
+    hasPass: !!dbConfig.password,
+    passLen: (dbConfig.password || '').length
+  };
+  console.log('DEBUG_DB mysql config:', masked);
+}
 // Crear pool de conexiones
 const pool = mysql.createPool(dbConfig);
 

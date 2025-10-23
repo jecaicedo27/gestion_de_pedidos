@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import authService from '../services/authService';
 import { io } from 'socket.io-client';
+import api from '../services/api';
 
 // Coordenadas aproximadas de las principales ciudades de Colombia
 const COLOMBIA_CITIES_COORDINATES = {
@@ -71,10 +72,11 @@ const ColombiaHeatMap = ({ height = '700px', showControls = true }) => {
   useEffect(() => {
     // Suscribirse a actualizaciones en tiempo real de pedidos
     const token = authService.getToken && authService.getToken();
-    const backendUrl = process.env.REACT_APP_API_URL || 'http://localhost:3001';
+    const apiBase = (process.env.REACT_APP_API_URL || '/api');
+    const socketUrl = apiBase.replace(/\/api\/?$/, '');
 
     if (!socketRef.current) {
-      const socket = io({ path: '/socket.io', transports: ['websocket'], withCredentials: true, auth: token ? { token } : undefined });
+      const socket = io(socketUrl, { path: '/socket.io', transports: ['websocket'], withCredentials: true, auth: token ? { token } : undefined });
 
       socketRef.current = socket;
 
@@ -134,23 +136,7 @@ const ColombiaHeatMap = ({ height = '700px', showControls = true }) => {
         throw new Error('No hay token de autenticación');
       }
 
-      const response = await fetch(`/api/heatmap/colombia-sales`, {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        }
-      });
-
-      if (!response.ok) {
-        if (response.status === 401) {
-          authService.logout();
-          throw new Error('Sesión expirada. Por favor, inicia sesión nuevamente.');
-        }
-        throw new Error(`Error ${response.status}: ${response.statusText}`);
-      }
-
-      const data = await response.json();
+      const { data } = await api.get('/heatmap/colombia-sales');
       
       if (!data.success) {
         throw new Error(data.message || 'Error al obtener datos del mapa de calor');

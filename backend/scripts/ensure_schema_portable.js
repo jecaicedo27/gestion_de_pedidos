@@ -144,6 +144,31 @@ async function ensureOrdersColumns() {
     console.log('✅ orders.assigned_to already exists');
   }
 
+  // created_by INT NULL (creator user used in joins)
+  if (!(await columnExists('orders', 'created_by'))) {
+    console.log('📝 Adding orders.created_by (INT NULL) with index...');
+    await query(`
+      ALTER TABLE orders
+      ADD COLUMN created_by INT NULL AFTER notes,
+      ADD INDEX idx_orders_created_by (created_by)
+    `);
+    console.log('✅ orders.created_by added.');
+  } else {
+    console.log('✅ orders.created_by already exists');
+  }
+
+  // invoice_code VARCHAR(100) NULL (used on createOrder)
+  if (!(await columnExists('orders', 'invoice_code'))) {
+    console.log('📝 Adding orders.invoice_code (VARCHAR(100) NULL)...');
+    await query(`
+      ALTER TABLE orders
+      ADD COLUMN invoice_code VARCHAR(100) NULL AFTER order_number
+    `);
+    console.log('✅ orders.invoice_code added.');
+  } else {
+    console.log('✅ orders.invoice_code already exists');
+  }
+
   // messenger_status ENUM
   const desiredMessengerStatus = [
     'pending_assignment', // pendiente de asignación

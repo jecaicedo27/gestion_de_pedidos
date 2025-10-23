@@ -16,6 +16,7 @@ import {
   DollarSign
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import api from '../services/api';
 
 const ProductsPage = () => {
   const [products, setProducts] = useState([]);
@@ -71,14 +72,7 @@ const ProductsPage = () => {
         params.append('is_active', '0');
       }
 
-      const response = await fetch(`/api/products?${params}`, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        }
-      });
-
-      const data = await response.json();
+      const { data } = await api.get('/products', { params: Object.fromEntries(params) });
       if (data.success) {
         setProducts(data.data);
         setPagination(data.pagination || {
@@ -106,14 +100,7 @@ const ProductsPage = () => {
   const loadCategories = async () => {
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch('/api/products/categories', {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        }
-      });
-
-      const data = await response.json();
+      const { data } = await api.get('/products/categories');
       if (data.success) {
         setCategories(data.data);
       }
@@ -144,14 +131,7 @@ const ProductsPage = () => {
   const loadStats = async () => {
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch('/api/products/stats', {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        }
-      });
-
-      const data = await response.json();
+      const { data } = await api.get('/products/stats');
       if (data.success) {
         setStats(data.data);
       }
@@ -165,15 +145,7 @@ const ProductsPage = () => {
     setLoadingSiigo(true);
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch('/api/products/load-from-siigo', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        }
-      });
-
-      const data = await response.json();
+      const { data } = await api.post('/products/load-from-siigo');
       if (data.success) {
         toast.success(`
           Productos cargados exitosamente desde SIIGO:
@@ -204,14 +176,7 @@ const ProductsPage = () => {
 
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch(`/api/products/barcode/${scannedBarcode}`, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        }
-      });
-
-      const data = await response.json();
+      const { data } = await api.get(`/products/barcode/${scannedBarcode}`);
       if (data.success) {
         setBarcodeResult(data.data);
         toast.success('Producto encontrado');
