@@ -907,9 +907,9 @@ const markDeliveredToCarrier = async (req, res) => {
   try {
     const { orderId, status, delivery_notes } = req.body;
 
-    // Verificar que el pedido existe
+    // Verificar que el pedido existe (incluir delivery_method para validaciones)
     const order = await query(
-      'SELECT id, status, order_number FROM orders WHERE id = ?',
+      'SELECT id, status, order_number, delivery_method FROM orders WHERE id = ?',
       [orderId]
     );
 
