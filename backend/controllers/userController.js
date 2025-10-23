@@ -6,6 +6,7 @@ const getUsers = async (req, res) => {
   try {
     const { page = 1, limit = 10, role, active } = req.query;
     const offset = (page - 1) * limit;
+    const limitOffset = `LIMIT ${Number(limit)} OFFSET ${Number(offset)}`;
 
     // Verificar permisos según el rol del usuario autenticado
     if (req.user.role === 'logistica') {
@@ -37,8 +38,8 @@ const getUsers = async (req, res) => {
       `SELECT id, username, email, role, full_name, phone, active, created_at, last_login 
        FROM users ${whereClause} 
        ORDER BY created_at DESC 
-       LIMIT ? OFFSET ?`,
-      [...params, parseInt(limit), offset]
+       ${limitOffset}`,
+      params
     );
 
     // Obtener total de usuarios para paginación

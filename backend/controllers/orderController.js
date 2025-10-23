@@ -15,6 +15,7 @@ const getOrders = async (req, res) => {
     } = req.query;
     
     const offset = (page - 1) * limit;
+    const limitOffset = `LIMIT ${Number(limit)} OFFSET ${Number(offset)}`;
     const userRole = req.user.role;
     const userId = req.user.id;
 
@@ -95,8 +96,8 @@ const getOrders = async (req, res) => {
        LEFT JOIN users messenger ON o.assigned_messenger_id = messenger.id
        ${whereClause}
        ORDER BY o.${orderBy} ${order}
-       LIMIT ? OFFSET ?`,
-      [...params, parseInt(limit), offset]
+       ${limitOffset}`,
+      params
     );
 
     // Obtener items de cada pedido
