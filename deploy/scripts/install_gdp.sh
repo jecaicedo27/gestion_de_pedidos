@@ -55,8 +55,8 @@ GP_FRONTEND_ROOT="${GP_FRONTEND_ROOT:-/var/www/gestion-frontend}"
 GP_DB_HOST="${GP_DB_HOST:-127.0.0.1}"
 GP_DB_PORT="${GP_DB_PORT:-3306}"
 GP_DB_NAME="${GP_DB_NAME:-gestion_pedidos_dev}"
-GP_DB_USER="${GP_DB_USER:-gp_user}"
-GP_DB_PASS="${GP_DB_PASS:-gp_pass_123}"
+GP_DB_USER="${GP_DB_USER:-userapp}"
+GP_DB_PASS="${GP_DB_PASS:-userapp1987*-*}"
 GP_DB_ROOT_PASS="${GP_DB_ROOT_PASS:-}"
 
 GP_JWT_SECRET="${GP_JWT_SECRET:-$(gen_jwt_secret)}"
@@ -126,7 +126,9 @@ log "Creating database/user if not present..."
 SQL_CREATE="
 CREATE DATABASE IF NOT EXISTS \`${GP_DB_NAME}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 CREATE USER IF NOT EXISTS '${GP_DB_USER}'@'localhost' IDENTIFIED BY '${GP_DB_PASS}';
+CREATE USER IF NOT EXISTS '${GP_DB_USER}'@'127.0.0.1' IDENTIFIED BY '${GP_DB_PASS}';
 GRANT ALL PRIVILEGES ON \`${GP_DB_NAME}\`.* TO '${GP_DB_USER}'@'localhost';
+GRANT ALL PRIVILEGES ON \`${GP_DB_NAME}\`.* TO '${GP_DB_USER}'@'127.0.0.1';
 FLUSH PRIVILEGES;
 "
 
