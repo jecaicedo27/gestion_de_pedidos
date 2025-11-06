@@ -62,6 +62,10 @@ GP_DB_ROOT_PASS="${GP_DB_ROOT_PASS:-}"
 GP_JWT_SECRET="${GP_JWT_SECRET:-$(gen_jwt_secret)}"
 GP_CONFIG_ENCRYPTION_KEY="${GP_CONFIG_ENCRYPTION_KEY:-$(gen_hex_64)}"
 
+# Optional DB import from SQL dump packaged with the repo
+GP_IMPORT_SQL="${GP_IMPORT_SQL:-0}"   # 1 to auto-import an SQL dump after DB creation
+GP_SQL_PATH="${GP_SQL_PATH:-}"        # optional: absolute path to .sql; if empty, autodetect in repo
+
 # Optional features
 GP_WITH_PHPMYADMIN="${GP_WITH_PHPMYADMIN:-0}"         # 1 to install phpMyAdmin
 GP_PHPMYADMIN_BASICAUTH="${GP_PHPMYADMIN_BASICAUTH:-0}" # 1 to protect /phpmyadmin with BasicAuth
@@ -155,6 +159,38 @@ else
   warn "Branch ${GP_BRANCH} not found; falling back to main."
   git checkout -B main origin/main
   GP_BRANCH="main"
+fi
+
+# -------- Optional DB import from repo dump --------
+if [[ "${GP_IMPORT_SQL}" == "1" ]]; then
+  # Autodetect SQL path if not explicitly provided
+  if [[ -z "${GP_SQL_PATH}" ]]; then
+    if [[ -f "${GP_REPO_PATH}/gestion_pedidos_dev.sql" ]]; then
+      GP_SQL_PATH="${GP_REPO_PATH}/gestion_pedidos_dev.sql"
+    elif [[ -f "${GP_REPO_PATH}/database/MIGRACION_COMPLETA.sql" ]]; then
+      GP_SQL_PATH="${GP_REPO_PATH}/database/MIGRACION_COMPLETA.sql"
+    fi
+  fi
+
+  if [[ -n "${GP_SQL_PATH}" && -f "${GP_SQL_PATH}" ]]; then
+    log "Importing SQL dump into ${GP_DB_NAME} from ${GP_SQL_PATH} ..."
+    set +e
+    mysql -h 127.0.0.1 -u"${GP_DB_USER}" -p"${GP_DB_PASS}" "${GP_DB_NAME}" < "${GP_SQL_PATH}"
+    IMP_RC=$?
+    set -e
+    if [[ "${IMP_RC}" -ne 0 ]]; then
+      warn "mysql CLI import failed; trying mariadb client..."
+      set +e
+      mariadb -h 127.0.0.1 -u"${GP_DB_USER}" -p"${GP_DB_PASS}" "${GP_DB_NAME}" < "${GP_SQL_PATH}"
+      IMP_RC=$?
+      set -e
+      if [[ "${IMP_RC}" -ne 0 ]]; then
+        warn "Could not import SQL dump automatically (exit ${IMP_RC}). Continue without dump."
+      fi
+    fi
+  else
+    warn "GP_IMPORT_SQL=1 but no SQL file found. Provide GP_SQL_PATH or place gestion_pedidos_dev.sql at repo root."
+  fi
 fi
 
 # -------- Backend install --------
