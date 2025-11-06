@@ -248,6 +248,13 @@ if [[ -f scripts/fix_enums_portable.js ]]; then
   node scripts/fix_enums_portable.js || true
 fi
 
+# Run main DB migration to create required tables and seed users (admin/admin123, etc.)
+log "Running DB migration (database/migrate.js)..."
+(
+  cd "${GP_REPO_PATH}"
+  node database/migrate.js
+) || warn "DB migration failed (continuing). You can re-run: node ${GP_REPO_PATH}/database/migrate.js"
+
 log "Starting backend via PM2..."
 if pm2 ls | grep -q gestion-backend; then
   pm2 restart gestion-backend --update-env
