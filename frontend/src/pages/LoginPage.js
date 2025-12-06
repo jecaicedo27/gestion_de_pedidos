@@ -173,34 +173,36 @@ const LoginPage = () => {
             </button>
           </form>
 
-          {/* Información de usuarios de prueba */}
-          <div className="mt-8 pt-6 border-t border-gray-200">
-            <h3 className="text-sm font-medium text-gray-700 mb-3">
-              Usuarios de prueba:
-            </h3>
-            <div className="space-y-2 text-xs text-gray-600">
-              <div className="flex justify-between">
-                <span className="font-medium">admin</span>
-                <span>admin123</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="font-medium">facturador1</span>
-                <span>facturador123</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="font-medium">cartera1</span>
-                <span>cartera123</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="font-medium">logistica1</span>
-                <span>logistica123</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="font-medium">mensajero1</span>
-                <span>mensajero123</span>
+          {process.env.NODE_ENV !== 'production' && (
+            <div className="mt-8 pt-6 border-t border-gray-200">
+              {/* Información de usuarios de prueba (solo desarrollo) */}
+              <h3 className="text-sm font-medium text-gray-700 mb-3">
+                Usuarios de prueba:
+              </h3>
+              <div className="space-y-2 text-xs text-gray-600">
+                <div className="flex justify-between">
+                  <span className="font-medium">admin</span>
+                  <span>admin123</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="font-medium">facturador1</span>
+                  <span>facturador123</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="font-medium">cartera1</span>
+                  <span>cartera123</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="font-medium">logistica1</span>
+                  <span>logistica123</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="font-medium">mensajero1</span>
+                  <span>mensajero123</span>
+                </div>
               </div>
             </div>
-          </div>
+          )}
         </div>
 
         {/* Footer */}

@@ -8,10 +8,14 @@ router.use(auth.authenticateToken);
 
 // Rutas específicas para actualización desde SIIGO
 router.post('/update-all-from-siigo', customerController.updateAllCustomers);
+router.get('/full-sync', customerController.fullSyncAllCustomers);
+router.post('/full-sync', customerController.fullSyncAllCustomers);
 router.post('/update-single/:siigoCustomerId', customerController.updateSingleCustomer);
 
 // Obtener estadísticas de clientes
 router.get('/stats', customerController.getCustomerStats);
+// Búsqueda rápida para autocompletar (NIT/nombre)
+router.get('/search', customerController.searchCustomersQuick);
 
 // CRUD básico para clientes
 router.get('/', customerController.getCustomers);

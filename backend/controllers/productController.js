@@ -2,6 +2,19 @@ const { pool } = require('../config/database');
 const siigoService = require('../services/siigoService');
 const { validationResult } = require('express-validator');
 
+// Normaliza códigos escaneados y almacenados para evitar problemas por decimales o espacios
+function normalizeBarcode(input) {
+  if (input === null || input === undefined) return null;
+  let s = String(input).trim();
+  s = s.replace(/,/g, '.').replace(/\s+/g, '');
+  if (/^\d+(?:\.\d+)?$/.test(s)) {
+    return s.split('.')[0];
+  }
+  return s;
+}
+
+
+
 const productController = {
     // Función auxiliar para extraer precio de la estructura de SIIGO
     extractPriceFromSiigo(product) {
@@ -295,6 +308,7 @@ const productController = {
         try {
             const { barcode, order_id } = req.body;
             const user_id = req.user.id;
+            const normalizedBarcode = normalizeBarcode(barcode);
 
             if (!barcode || !order_id) {
                 return res.status(400).json({
@@ -323,7 +337,7 @@ const productController = {
                 FROM products pb
                 JOIN product_variants pv ON pb.id = pv.product_barcode_id
                 WHERE pv.variant_barcode = ? AND pv.is_active = TRUE AND pb.is_active = TRUE
-            `, [barcode, barcode]);
+            `, [normalizedBarcode, normalizedBarcode]);
 
             const product_found = products.length > 0;
             let scan_result = 'not_found';
@@ -350,7 +364,7 @@ const productController = {
                 INSERT INTO barcode_scan_logs 
                 (order_id, barcode, product_found, product_barcode_id, scan_result, user_id)
                 VALUES (?, ?, ?, ?, ?, ?)
-            `, [order_id, barcode, product_found, product_barcode_id, scan_result, user_id]);
+            `, [order_id, normalizedBarcode, product_found, product_barcode_id, scan_result, user_id]);
 
             res.json({
                 success: true,

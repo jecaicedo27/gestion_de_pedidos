@@ -39,6 +39,24 @@ const formatNumber = (value) => {
   return new Intl.NumberFormat('es-CO').format(value || 0);
 };
 
+// Helper: formatear correctamente fechas 'YYYY-MM-DD' como fecha local (evita desfase de zona horaria)
+const formatYMDLabelES = (s) => {
+  try {
+    if (!s) return '';
+    const str = String(s);
+    // tomar solo la parte de fecha si viene con hora
+    const ymd = str.includes('T') ? str.split('T')[0] : (str.includes(' ') ? str.split(' ')[0] : str);
+    const [y, m, d] = ymd.split('-').map(Number);
+    if (!y || !m || !d) {
+      return new Date(str).toLocaleDateString('es-CO', { month: 'short', day: 'numeric' });
+    }
+    const dt = new Date(y, m - 1, d);
+    return dt.toLocaleDateString('es-CO', { month: 'short', day: 'numeric' });
+  } catch {
+    return String(s);
+  }
+};
+
 // Componente: Gráfico de envíos diarios
 export const DailyShipmentsChart = ({ data, loading }) => {
   if (loading) {
@@ -60,19 +78,16 @@ export const DailyShipmentsChart = ({ data, loading }) => {
   return (
     <div className="h-80">
       <ResponsiveContainer width="100%" height="100%">
-        <ComposedChart data={data.chartData.reverse()}>
+        <ComposedChart data={[...data.chartData].reverse()}>
           <CartesianGrid strokeDasharray="3 3" />
           <XAxis 
             dataKey="date" 
-            tickFormatter={(value) => new Date(value).toLocaleDateString('es-CO', { 
-              month: 'short', 
-              day: 'numeric' 
-            })}
+            tickFormatter={(value) => formatYMDLabelES(value)}
           />
           <YAxis yAxisId="left" />
           <YAxis yAxisId="right" orientation="right" tickFormatter={formatCurrency} />
           <Tooltip 
-            labelFormatter={(value) => new Date(value).toLocaleDateString('es-CO')}
+            labelFormatter={(value) => formatYMDLabelES(value)}
             formatter={(value, name) => [
               name === 'revenue' ? formatCurrency(value) : formatNumber(value),
               name === 'shipments' ? 'Envíos' : 
@@ -222,7 +237,7 @@ export const TopCustomersTable = ({ data, loading }) => {
                 {formatCurrency(customer.avgOrderValue)}
               </td>
               <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                {new Date(customer.lastOrderDate).toLocaleDateString('es-CO')}
+                {formatYMDLabelES(String(customer.lastOrderDate || '').slice(0, 10))}
                 <div className="text-xs text-gray-400">
                   hace {customer.daysSinceLastOrder} días
                 </div>
@@ -318,18 +333,15 @@ export const NewCustomersDailyChart = ({ data, loading }) => {
   return (
     <div className="h-80">
       <ResponsiveContainer width="100%" height="100%">
-        <AreaChart data={data.chartData.reverse()}>
+        <AreaChart data={[...data.chartData].reverse()}>
           <CartesianGrid strokeDasharray="3 3" />
           <XAxis 
             dataKey="date" 
-            tickFormatter={(value) => new Date(value).toLocaleDateString('es-CO', { 
-              month: 'short', 
-              day: 'numeric' 
-            })}
+            tickFormatter={(value) => formatYMDLabelES(value)}
           />
           <YAxis />
           <Tooltip 
-            labelFormatter={(value) => new Date(value).toLocaleDateString('es-CO')}
+            labelFormatter={(value) => formatYMDLabelES(value)}
             formatter={(value) => [formatNumber(value), 'Nuevos Clientes']}
           />
           <Area 
@@ -461,15 +473,12 @@ export const SalesTrendsChart = ({ data, loading }) => {
           <CartesianGrid strokeDasharray="3 3" />
           <XAxis 
             dataKey="weekStart" 
-            tickFormatter={(value) => new Date(value).toLocaleDateString('es-CO', { 
-              month: 'short', 
-              day: 'numeric' 
-            })}
+            tickFormatter={(value) => formatYMDLabelES(value)}
           />
           <YAxis yAxisId="left" />
           <YAxis yAxisId="right" orientation="right" tickFormatter={formatCurrency} />
           <Tooltip 
-            labelFormatter={(value) => `Semana del ${new Date(value).toLocaleDateString('es-CO')}`}
+            labelFormatter={(value) => `Semana del ${formatYMDLabelES(value)}`}
             formatter={(value, name) => [
               name === 'totalRevenue' ? formatCurrency(value) : formatNumber(value),
               name === 'orderCount' ? 'Pedidos' : 

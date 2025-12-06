@@ -3,6 +3,13 @@ import * as Icons from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useAuth } from '../context/AuthContext';
 
+// Normaliza método de pago a 'credito' cuando corresponda
+const normalizePaymentMethod = (pm) => {
+  const v = (pm || '').toLowerCase();
+  if (['cliente_credito','credito_cliente','cliente-credito','credito'].includes(v)) return 'credito';
+  return v || '';
+};
+
 // Componente CustomDropdown para reemplazar select nativo
 const CustomDropdown = ({ value, onChange, options, placeholder, required }) => {
   const [isOpen, setIsOpen] = useState(false);
@@ -139,7 +146,9 @@ const OrderReviewModal = ({ isOpen, onClose, order, onConfirm }) => {
     { value: 'transferencia', label: 'Transferencia' },
     { value: 'cliente_credito', label: 'Cliente a Crédito' },
     { value: 'pago_electronico', label: 'Pago Electrónico' },
-    { value: 'contraentrega', label: 'Contraentrega (Solo Medellín)' }
+    { value: 'contraentrega', label: 'Contraentrega (Solo Medellín)' },
+    { value: 'publicidad', label: 'Publicidad (sin validación)' },
+    { value: 'reposicion', label: 'Reposición (sin validación)' }
   ];
 
   // Helper para detectar "Recoge en Bodega"
@@ -206,6 +215,40 @@ const OrderReviewModal = ({ isOpen, onClose, order, onConfirm }) => {
       return;
     }
 
+    // Si es Publicidad o Reposición, pasa directo a Logística (sin validación de Cartera)
+    if (['publicidad','reposicion'].includes(formData.payment_method)) {
+      if (!formData.delivery_method) {
+        toast.error('Para Publicidad/Reposición debe seleccionar un método de envío para enviarlo a Logística');
+        return;
+      }
+      if (!formData.shipping_date) {
+        toast.error('Debe seleccionar una fecha de envío');
+        return;
+      }
+
+      setLoading(true);
+      try {
+        const dataToSend = {
+          orderId: order.id,
+          payment_method: formData.payment_method,
+          delivery_method: formData.delivery_method,
+          shipping_date: formData.shipping_date,
+          notes: formData.notes,
+          action: 'send_to_logistics'
+        };
+
+        await onConfirm(dataToSend);
+        onClose();
+        toast.success('Pedido enviado a Logística (Publicidad/Reposición).');
+      } catch (error) {
+        console.error('Error enviando publicidad/reposición a logística:', error);
+        toast.error('Error enviando pedido a logística');
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
     // Si es contraentrega, pasa directo a Logística (no a Cartera)
     if (formData.payment_method === 'contraentrega') {
       if (!formData.delivery_method) {
@@ -261,7 +304,7 @@ const OrderReviewModal = ({ isOpen, onClose, order, onConfirm }) => {
     try {
       const dataToSend = {
         orderId: order.id,
-        payment_method: formData.payment_method,
+        payment_method: normalizePaymentMethod(formData.payment_method),
         electronic_payment_type: formData.electronic_payment_type,
         electronic_payment_notes: formData.electronic_payment_notes,
         shipping_date: formData.shipping_date,
@@ -296,8 +339,12 @@ const OrderReviewModal = ({ isOpen, onClose, order, onConfirm }) => {
     }
 
     // Reglas de negocio
-    if (formData.payment_method === 'transferencia' || formData.payment_method === 'pago_electronico') {
-      toast.error('Los pagos por transferencia/electrónicos deben ir a Cartera primero para verificar el abono.');
+    const pmNorm = normalizePaymentMethod(formData.payment_method);
+    if (pmNorm === 'transferencia' || pmNorm === 'pago_electronico' || pmNorm === 'credito') {
+      toast.error(pmNorm === 'credito'
+        ? 'Los pedidos a crédito deben ir a Cartera para validación del cupo.'
+        : 'Los pagos por transferencia/electrónicos deben ir a Cartera primero para verificar el abono.'
+      );
       return;
     }
 
@@ -305,7 +352,7 @@ const OrderReviewModal = ({ isOpen, onClose, order, onConfirm }) => {
     try {
       const dataToSend = {
         orderId: order.id,
-        payment_method: formData.payment_method,
+        payment_method: normalizePaymentMethod(formData.payment_method),
         delivery_method: formData.delivery_method,
         shipping_date: formData.shipping_date,
         notes: formData.notes,
@@ -354,21 +401,26 @@ const OrderReviewModal = ({ isOpen, onClose, order, onConfirm }) => {
     setLoading(true);
     try {
       // REGLAS DE NEGOCIO AUTOMÁTICAS
+      const pmNorm = normalizePaymentMethod(formData.payment_method);
       let actionType = '';
       let successMessage = '';
 
-      if (formData.payment_method === 'contraentrega') {
-        // Contraentrega => directo a Logística; el mensajero cobra y entrega a Cartera
+      if (pmNorm === 'contraentrega' || pmNorm === 'publicidad' || pmNorm === 'reposicion') {
+        // Contraentrega y Publicidad/Reposición => directo a Logística
         actionType = 'send_to_logistics';
-        successMessage = 'Pedido contraentrega enviado a Logística. El mensajero recibe el dinero y lo entrega a Cartera.';
-      } else if (formData.payment_method === 'efectivo' && (isPickupDelivery(formData.delivery_method) || isLocalDelivery(formData.delivery_method))) {
+        successMessage = pmNorm === 'contraentrega'
+          ? 'Pedido contraentrega enviado a Logística. El mensajero recibe el dinero y lo entrega a Cartera.'
+          : 'Pedido (Publicidad/Reposición) enviado a Logística.';
+      } else if (pmNorm === 'efectivo' && (isPickupDelivery(formData.delivery_method) || isLocalDelivery(formData.delivery_method))) {
         // Efectivo + Recoge en Bodega ó Domicilio/Mensajería local => Logística/Mensajero cobra y luego concilia con Cartera
         actionType = 'send_to_logistics';
         successMessage = 'Pedido con pago en efectivo enviado a Logística. El mensajero recibe el dinero y lo entrega a Cartera.';
-      } else if (formData.payment_method === 'transferencia' || formData.payment_method === 'pago_electronico') {
-        // Transferencia o electrónicos => Cartera valida primero
+      } else if (pmNorm === 'transferencia' || pmNorm === 'pago_electronico' || pmNorm === 'credito') {
+        // Transferencia, electrónicos o crédito => Cartera valida primero
         actionType = 'send_to_wallet';
-        successMessage = `Pedido procesado y enviado a Cartera para validación (${getPaymentMethodLabel(formData.payment_method)})`;
+        successMessage = pmNorm === 'credito'
+          ? 'Pedido enviado a Cartera para validación de cupo de crédito.'
+          : `Pedido procesado y enviado a Cartera para validación (${getPaymentMethodLabel(pmNorm)})`;
       } else {
         // Otros casos => Cartera
         actionType = 'send_to_wallet';
@@ -377,7 +429,7 @@ const OrderReviewModal = ({ isOpen, onClose, order, onConfirm }) => {
 
       const dataToSend = {
         orderId: order.id,
-        payment_method: formData.payment_method,
+        payment_method: pmNorm,
         delivery_method: formData.delivery_method,
         electronic_payment_type: formData.electronic_payment_type,
         electronic_payment_notes: formData.electronic_payment_notes,
@@ -410,8 +462,11 @@ const OrderReviewModal = ({ isOpen, onClose, order, onConfirm }) => {
       'efectivo': 'Efectivo',
       'transferencia': 'Transferencia',
       'cliente_credito': 'Cliente a Crédito',
+      'credito': 'Cliente a Crédito',
       'pago_electronico': 'Pago Electrónico',
-      'contraentrega': 'Contraentrega'
+      'contraentrega': 'Contraentrega',
+      'publicidad': 'Publicidad',
+      'reposicion': 'Reposición'
     };
     return labels[method] || method;
   };
@@ -422,10 +477,12 @@ const OrderReviewModal = ({ isOpen, onClose, order, onConfirm }) => {
     }
 
     // Recomendación basada en reglas de negocio actualizadas
-    if (formData.payment_method === 'contraentrega') {
+    if (formData.payment_method === 'contraentrega' || ['publicidad','reposicion'].includes(formData.payment_method)) {
       return {
         action: 'logistics',
-        reason: 'Pago contraentrega: pasa directo a Logística. El mensajero recibe el dinero y lo entrega a Cartera.'
+        reason: formData.payment_method === 'contraentrega'
+          ? 'Pago contraentrega: pasa directo a Logística. El mensajero recibe el dinero y lo entrega a Cartera.'
+          : 'Pedido de Publicidad/Reposición: pasa directo a Logística, no requiere validación de Cartera.'
       };
     } else if (formData.payment_method === 'efectivo' && (isPickupDelivery(formData.delivery_method) || isLocalDelivery(formData.delivery_method))) {
       return {
@@ -446,6 +503,23 @@ const OrderReviewModal = ({ isOpen, onClose, order, onConfirm }) => {
   };
 
   const recommendation = getRecommendedAction();
+
+  // Evitar duplicado de observaciones/notas cuando traen el mismo contenido
+  const normalizeSection = (txt) => {
+    if (!txt) return '';
+    return String(txt)
+      .replace(/(OBSERVACIONES SIIGO:|NOTAS SIIGO:|OBSERVACIONES:|NOTAS:)/gi, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toLowerCase();
+  };
+  const normalizedObs = normalizeSection(order?.siigo_observations);
+  const normalizedNotes = normalizeSection(order?.notes);
+  const notesAreDuplicate = normalizedObs && normalizedNotes && (
+    normalizedObs === normalizedNotes ||
+    normalizedObs.includes(normalizedNotes) ||
+    normalizedNotes.includes(normalizedObs)
+  );
 
   if (!isOpen || !order) return null;
 
@@ -572,20 +646,20 @@ const OrderReviewModal = ({ isOpen, onClose, order, onConfirm }) => {
             </div>
           )}
 
-          {/* Observaciones de SIIGO - Solo visible para roles que no sean logistica ni admin */}
-          {order.siigo_observations && !['logistica', 'admin'].includes(user?.role) && (
-            <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-4">
-              <h3 className="font-medium text-amber-900 mb-3 flex items-center">
-                <Icons.FileText className="w-4 h-4 mr-2" />
-                Observaciones de SIIGO
+          {/* Notas/Observaciones SIIGO (unificadas, sin duplicados) */}
+          {(order.siigo_observations || order.notes) && (
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+              <h3 className="font-medium text-blue-900 mb-3 flex items-center">
+                <Icons.StickyNote className="w-4 h-4 mr-2" />
+                Notas de la Factura SIIGO
               </h3>
-              <div className="bg-white border border-amber-200 rounded p-4">
+              <div className="bg-white border border-blue-200 rounded p-4">
                 <pre className="text-sm text-gray-700 whitespace-pre-wrap font-sans leading-relaxed">
                   {(() => {
-                    // Algoritmo simple y directo para formatear observaciones de SIIGO
-                    let formattedText = order.siigo_observations;
+                    // Priorizar observaciones SIIGO si existen, de lo contrario usar notes
+                    let textToFormat = order.siigo_observations || order.notes || '';
 
-                    // Lista de campos específicos a identificar y separar
+                    // Lista de campos a identificar y separar (mejora legibilidad)
                     const fieldsToSeparate = [
                       'ESTADO DE PAGO:',
                       'MEDIO DE PAGO:',
@@ -599,47 +673,27 @@ const OrderReviewModal = ({ isOpen, onClose, order, onConfirm }) => {
                       'NOTA:'
                     ];
 
-                    // Separar cada campo específico con un salto de línea
                     fieldsToSeparate.forEach(field => {
-                      // Crear un patrón que busque el campo precedido por cualquier caracter que no sea salto de línea
-                      const pattern = new RegExp(`([^\\n])${field.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&')}`, 'g');
-                      formattedText = formattedText.replace(pattern, `$1\n${field}`);
+                      const pattern = new RegExp(`([^\\n])${field.replace(/[.*+?^${}()|[\]\\\\]/g, '\\$&')}`, 'g');
+                      textToFormat = textToFormat.replace(pattern, `$1\n${field}`);
                     });
 
-                    // Normalizar saltos de línea y espacios
-                    formattedText = formattedText
-                      .replace(/\r\n/g, '\n')          // Normalizar CRLF a LF
-                      .replace(/\r/g, '\n')            // Normalizar CR a LF
-                      .replace(/\n+/g, '\n')           // Eliminar saltos múltiples
+                    textToFormat = textToFormat
+                      .replace(/\r\n/g, '\n')
+                      .replace(/\r/g, '\n')
+                      .replace(/\n+/g, '\n')
                       .split('\n')
-                      .map(line => line.replace(/\s+/g, ' ').trim())  // Limpiar espacios en cada línea
-                      .filter(line => line.length > 0)               // Eliminar líneas vacías
+                      .map(line => line.replace(/\s+/g, ' ').trim())
+                      .filter(line => line.length > 0)
                       .join('\n');
 
-                    return formattedText;
+                    // Si hay ambos campos y son duplicados, mostrar solo uno (ya priorizamos observaciones)
+                    return textToFormat;
                   })()}
                 </pre>
               </div>
-              <p className="text-xs text-amber-700 mt-2">
-                Estas observaciones fueron extraídas automáticamente de la factura de SIIGO
-              </p>
-            </div>
-          )}
-
-          {/* Notas de la Factura SIIGO - Campo notes existente */}
-          {order.notes && order.notes.trim() !== '' && (
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
-              <h3 className="font-medium text-blue-900 mb-3 flex items-center">
-                <Icons.StickyNote className="w-4 h-4 mr-2" />
-                Notas de la Factura SIIGO
-              </h3>
-              <div className="bg-white border border-blue-200 rounded p-4">
-                <pre className="text-sm text-gray-700 whitespace-pre-wrap font-sans leading-relaxed">
-                  {order.notes}
-                </pre>
-              </div>
               <p className="text-xs text-blue-700 mt-2">
-                Información importante acordada con el cliente
+                Estas notas provienen de la factura de SIIGO
               </p>
             </div>
           )}

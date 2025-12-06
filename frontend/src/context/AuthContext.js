@@ -226,21 +226,23 @@ export const AuthProvider = ({ children }) => {
     dispatch({ type: AUTH_ACTIONS.CLEAR_ERROR });
   };
 
-  // Función para verificar permisos
+  // Función para verificar permisos (soporta multi-rol del perfil)
   const hasPermission = (requiredRole) => {
     if (!state.user) return false;
-    
-    const userRole = state.user.role;
-    
-    // Admin tiene acceso a todo
-    if (userRole === 'admin') return true;
-    
-    // Verificar rol específico
-    if (Array.isArray(requiredRole)) {
-      return requiredRole.includes(userRole);
-    }
-    
-    return userRole === requiredRole;
+
+    // Unificar roles posibles: rol base + roles avanzados del perfil
+    const profileRoles = Array.isArray(state.user?.roles) ? state.user.roles.map(r => String(r.role_name || '').toLowerCase()) : [];
+    const baseRole = String(state.user.role || '').toLowerCase();
+    const roleNames = Array.from(new Set([baseRole, ...profileRoles].filter(Boolean)));
+
+    // Admin/superadmin tienen acceso a todo
+    if (roleNames.includes('admin') || state.user?.isSuperAdmin) return true;
+
+    // Normalizar requiredRole a array y comparar
+    const required = Array.isArray(requiredRole) ? requiredRole : [requiredRole];
+    const requiredNormalized = required.map(r => String(r || '').toLowerCase());
+
+    return requiredNormalized.some(r => roleNames.includes(r));
   };
 
   // Función para verificar si es admin

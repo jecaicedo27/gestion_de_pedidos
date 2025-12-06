@@ -1,0 +1,874 @@
+[06:56:44] Nueva wallet_validation: {
+  id: 25,
+  order_id: 43,
+  order_number: 'FV-2-15081',
+  payment_method: 'transferencia',
+  payment_type: 'single',
+  transferred_amount: null,
+  cash_amount: null,
+  validation_status: 'approved',
+  validated_at: 2025-11-19T00:32:17.000Z,
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  order_payment_method: 'transferencia',
+  status: 'en_logistica'
+}
+[06:56:48] Orden actualizada: {
+  id: 58,
+  order_number: 'FV-2-15058',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'transferencia',
+  status: 'revision_cartera',
+  updated_at: 2025-11-19T06:56:48.000Z
+}
+[06:57:06] Orden actualizada: {
+  id: 41,
+  order_number: 'FV-2-15079',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'efectivo',
+  status: 'en_logistica',
+  updated_at: 2025-11-19T06:57:06.000Z
+}
+[06:57:06] Orden actualizada: {
+  id: 42,
+  order_number: 'FV-2-15080',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'efectivo',
+  status: 'en_logistica',
+  updated_at: 2025-11-19T06:57:05.000Z
+}
+[06:57:06] Orden actualizada: {
+  id: 43,
+  order_number: 'FV-2-15081',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'transferencia',
+  status: 'en_logistica',
+  updated_at: 2025-11-19T06:57:05.000Z
+}
+[06:57:08] Orden actualizada: {
+  id: 39,
+  order_number: 'FV-2-15077',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'transferencia',
+  status: 'en_logistica',
+  updated_at: 2025-11-19T06:57:08.000Z
+}
+[06:57:08] Orden actualizada: {
+  id: 40,
+  order_number: 'FV-2-15078',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'transferencia',
+  status: 'en_logistica',
+  updated_at: 2025-11-19T06:57:07.000Z
+}
+[06:57:10] Orden actualizada: {
+  id: 37,
+  order_number: 'FV-2-15075',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'transferencia',
+  status: 'en_logistica',
+  updated_at: 2025-11-19T06:57:10.000Z
+}
+[06:57:10] Orden actualizada: {
+  id: 38,
+  order_number: 'FV-2-15076',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'transferencia',
+  status: 'en_logistica',
+  updated_at: 2025-11-19T06:57:09.000Z
+}
+[06:57:12] Orden actualizada: {
+  id: 35,
+  order_number: 'FV-2-15074',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'transferencia',
+  status: 'en_logistica',
+  updated_at: 2025-11-19T06:57:12.000Z
+}
+[06:57:12] Orden actualizada: {
+  id: 36,
+  order_number: 'FV-2-15052',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'reposicion',
+  status: 'en_logistica',
+  updated_at: 2025-11-19T06:57:12.000Z
+}
+[06:57:16] Orden actualizada: {
+  id: 31,
+  order_number: 'FV-2-15072',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'efectivo',
+  status: 'en_logistica',
+  updated_at: 2025-11-19T06:57:16.000Z
+}
+[06:57:16] Orden actualizada: {
+  id: 32,
+  order_number: 'FV-2-15073',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'transferencia',
+  status: 'en_logistica',
+  updated_at: 2025-11-19T06:57:15.000Z
+}
+[06:57:18] Orden actualizada: {
+  id: 29,
+  order_number: 'FV-2-15070',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'transferencia',
+  status: 'en_logistica',
+  updated_at: 2025-11-19T06:57:18.000Z
+}
+[06:57:18] Orden actualizada: {
+  id: 30,
+  order_number: 'FV-2-15071',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'efectivo',
+  status: 'en_logistica',
+  updated_at: 2025-11-19T06:57:17.000Z
+}
+[06:57:20] Orden actualizada: {
+  id: 27,
+  order_number: 'FV-2-15068',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'efectivo',
+  status: 'en_empaque',
+  updated_at: 2025-11-19T06:57:20.000Z
+}
+[06:57:20] Orden actualizada: {
+  id: 28,
+  order_number: 'FV-2-15069',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'cliente_credito',
+  status: 'en_logistica',
+  updated_at: 2025-11-19T06:57:19.000Z
+}
+[06:57:22] Orden actualizada: {
+  id: 26,
+  order_number: 'FV-2-15067',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'efectivo',
+  status: 'en_logistica',
+  updated_at: 2025-11-19T06:57:22.000Z
+}
+[06:57:22] Orden actualizada: {
+  id: 25,
+  order_number: 'FV-2-15066',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'cliente_credito',
+  status: 'en_preparacion',
+  updated_at: 2025-11-19T06:57:21.000Z
+}
+[06:57:24] Orden actualizada: {
+  id: 13,
+  order_number: 'FV-2-15056',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'cliente_credito',
+  status: 'en_logistica',
+  updated_at: 2025-11-19T06:57:24.000Z
+}
+[06:57:24] Orden actualizada: {
+  id: 25,
+  order_number: 'FV-2-15066',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'cliente_credito',
+  status: 'en_preparacion',
+  updated_at: 2025-11-19T06:57:24.000Z
+}
+[06:57:26] Orden actualizada: {
+  id: 1,
+  order_number: 'FV-2-15049',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'cliente_credito',
+  status: 'en_logistica',
+  updated_at: 2025-11-19T06:57:26.000Z
+}
+[06:57:28] Orden actualizada: {
+  id: 23,
+  order_number: 'FV-2-15064',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'cliente_credito',
+  status: 'en_logistica',
+  updated_at: 2025-11-19T06:57:28.000Z
+}
+[06:57:28] Orden actualizada: {
+  id: 24,
+  order_number: 'FV-2-15061',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'cliente_credito',
+  status: 'en_logistica',
+  updated_at: 2025-11-19T06:57:27.000Z
+}
+[06:57:30] Orden actualizada: {
+  id: 22,
+  order_number: 'FV-2-15065',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'pago_electronico',
+  status: 'en_logistica',
+  updated_at: 2025-11-19T06:57:29.000Z
+}
+[06:57:32] Orden actualizada: {
+  id: 19,
+  order_number: 'FV-2-15062',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'transferencia',
+  status: 'en_logistica',
+  updated_at: 2025-11-19T06:57:32.000Z
+}
+[06:57:32] Orden actualizada: {
+  id: 20,
+  order_number: 'FV-2-15063',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'transferencia',
+  status: 'en_logistica',
+  updated_at: 2025-11-19T06:57:31.000Z
+}
+[06:57:34] Orden actualizada: {
+  id: 17,
+  order_number: 'FV-2-15060',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'efectivo',
+  status: 'en_preparacion',
+  updated_at: 2025-11-19T06:57:34.000Z
+}
+[06:57:36] Orden actualizada: {
+  id: 16,
+  order_number: 'FV-2-15059',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'cliente_credito',
+  status: 'en_logistica',
+  updated_at: 2025-11-19T06:57:35.000Z
+}
+[06:57:38] Orden actualizada: {
+  id: 13,
+  order_number: 'FV-2-15056',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'cliente_credito',
+  status: 'en_logistica',
+  updated_at: 2025-11-19T06:57:38.000Z
+}
+[06:57:38] Orden actualizada: {
+  id: 14,
+  order_number: 'FV-2-15057',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'cliente_credito',
+  status: 'en_logistica',
+  updated_at: 2025-11-19T06:57:37.000Z
+}
+[06:57:40] Orden actualizada: {
+  id: 11,
+  order_number: 'FV-2-15055',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'efectivo',
+  status: 'en_logistica',
+  updated_at: 2025-11-19T06:57:40.000Z
+}
+[06:57:40] Orden actualizada: {
+  id: 12,
+  order_number: 'FV-2-15054',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'cliente_credito',
+  status: 'en_logistica',
+  updated_at: 2025-11-19T06:57:39.000Z
+}
+[06:57:44] Orden actualizada: {
+  id: 7,
+  order_number: 'FV-2-15053',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'transferencia',
+  status: 'en_logistica',
+  updated_at: 2025-11-19T06:57:44.000Z
+}
+[06:57:48] Orden actualizada: {
+  id: 4,
+  order_number: 'FV-2-15051',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'transferencia',
+  status: 'en_logistica',
+  updated_at: 2025-11-19T06:57:47.000Z
+}
+[06:57:50] Orden actualizada: {
+  id: 1,
+  order_number: 'FV-2-15049',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'cliente_credito',
+  status: 'en_logistica',
+  updated_at: 2025-11-19T06:57:50.000Z
+}
+[06:57:50] Orden actualizada: {
+  id: 2,
+  order_number: 'FV-2-15050',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'pago_electronico',
+  status: 'en_logistica',
+  updated_at: 2025-11-19T06:57:50.000Z
+}
+[07:01:48] Nueva wallet_validation: {
+  id: 40,
+  order_id: 58,
+  order_number: 'FV-2-15058',
+  payment_method: 'transferencia',
+  payment_type: 'mixed',
+  transferred_amount: '60000.00',
+  cash_amount: '10000.00',
+  validation_status: 'approved',
+  validated_at: 2025-11-19T07:01:47.000Z,
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  order_payment_method: 'transferencia',
+  status: 'en_logistica'
+}
+[07:01:48] Consistencia mixto FAIL {
+  orderId: 58,
+  order_number: 'FV-2-15058',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  expected_cash: 10000,
+  expected_transferred: 60000,
+  status: 'en_logistica'
+}
+[07:01:48] Orden actualizada: {
+  id: 58,
+  order_number: 'FV-2-15058',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'transferencia',
+  status: 'en_logistica',
+  updated_at: 2025-11-19T07:01:47.000Z
+}
+[07:02:27] Orden actualizada: {
+  id: 58,
+  order_number: 'FV-2-15058',
+  requires_payment: 1,
+  payment_amount: '10000.00',
+  paid_amount: '60000.00',
+  payment_method: 'transferencia',
+  status: 'en_logistica',
+  updated_at: 2025-11-19T07:02:26.000Z
+}
+[07:04:01] Orden actualizada: {
+  id: 58,
+  order_number: 'FV-2-15058',
+  requires_payment: 1,
+  payment_amount: '10000.00',
+  paid_amount: '60000.00',
+  payment_method: 'transferencia',
+  status: 'en_empaque',
+  updated_at: 2025-11-19T07:03:59.000Z
+}
+[07:04:07] Orden actualizada: {
+  id: 58,
+  order_number: 'FV-2-15058',
+  requires_payment: 1,
+  payment_amount: '10000.00',
+  paid_amount: '60000.00',
+  payment_method: 'transferencia',
+  status: 'en_preparacion',
+  updated_at: 2025-11-19T07:04:06.000Z
+}
+[07:04:13] Orden actualizada: {
+  id: 58,
+  order_number: 'FV-2-15058',
+  requires_payment: 1,
+  payment_amount: '10000.00',
+  paid_amount: '60000.00',
+  payment_method: 'transferencia',
+  status: 'listo_para_entrega',
+  updated_at: 2025-11-19T07:04:11.000Z
+}
+[07:04:15] Orden actualizada: {
+  id: 58,
+  order_number: 'FV-2-15058',
+  requires_payment: 1,
+  payment_amount: '10000.00',
+  paid_amount: '60000.00',
+  payment_method: 'transferencia',
+  status: 'listo_para_entrega',
+  updated_at: 2025-11-19T07:04:14.000Z
+}
+[07:04:25] Orden actualizada: {
+  id: 58,
+  order_number: 'FV-2-15058',
+  requires_payment: 1,
+  payment_amount: '10000.00',
+  paid_amount: '60000.00',
+  payment_method: 'transferencia',
+  status: 'listo_para_entrega',
+  updated_at: 2025-11-19T07:04:24.000Z
+}
+[07:04:35] Orden actualizada: {
+  id: 58,
+  order_number: 'FV-2-15058',
+  requires_payment: 1,
+  payment_amount: '10000.00',
+  paid_amount: '60000.00',
+  payment_method: 'transferencia',
+  status: 'listo_para_entrega',
+  updated_at: 2025-11-19T07:04:33.000Z
+}
+[07:04:41] Orden actualizada: {
+  id: 58,
+  order_number: 'FV-2-15058',
+  requires_payment: 1,
+  payment_amount: '10000.00',
+  paid_amount: '60000.00',
+  payment_method: 'transferencia',
+  status: 'listo_para_entrega',
+  updated_at: 2025-11-19T07:04:39.000Z
+}
+[07:05:51] Orden actualizada: {
+  id: 58,
+  order_number: 'FV-2-15058',
+  requires_payment: 1,
+  payment_amount: '10000.00',
+  paid_amount: '60000.00',
+  payment_method: 'efectivo',
+  status: 'entregado',
+  updated_at: 2025-11-19T07:05:49.000Z
+}
+[07:06:49] Orden actualizada: {
+  id: 58,
+  order_number: 'FV-2-15058',
+  requires_payment: 1,
+  payment_amount: '10000.00',
+  paid_amount: '60000.00',
+  payment_method: 'efectivo',
+  status: 'entregado',
+  updated_at: 2025-11-19T07:06:48.000Z
+}
+[07:07:05] Orden actualizada: {
+  id: 42,
+  order_number: 'FV-2-15080',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'efectivo',
+  status: 'en_logistica',
+  updated_at: 2025-11-19T07:07:05.000Z
+}
+[07:07:05] Orden actualizada: {
+  id: 43,
+  order_number: 'FV-2-15081',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'transferencia',
+  status: 'en_logistica',
+  updated_at: 2025-11-19T07:07:04.000Z
+}
+[07:07:07] Orden actualizada: {
+  id: 41,
+  order_number: 'FV-2-15079',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'efectivo',
+  status: 'en_logistica',
+  updated_at: 2025-11-19T07:07:07.000Z
+}
+[07:07:09] Orden actualizada: {
+  id: 39,
+  order_number: 'FV-2-15077',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'transferencia',
+  status: 'en_logistica',
+  updated_at: 2025-11-19T07:07:09.000Z
+}
+[07:07:09] Orden actualizada: {
+  id: 40,
+  order_number: 'FV-2-15078',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'transferencia',
+  status: 'en_logistica',
+  updated_at: 2025-11-19T07:07:08.000Z
+}
+[07:07:11] Orden actualizada: {
+  id: 37,
+  order_number: 'FV-2-15075',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'transferencia',
+  status: 'en_logistica',
+  updated_at: 2025-11-19T07:07:11.000Z
+}
+[07:07:11] Orden actualizada: {
+  id: 38,
+  order_number: 'FV-2-15076',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'transferencia',
+  status: 'en_logistica',
+  updated_at: 2025-11-19T07:07:10.000Z
+}
+[07:07:13] Orden actualizada: {
+  id: 35,
+  order_number: 'FV-2-15074',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'transferencia',
+  status: 'en_logistica',
+  updated_at: 2025-11-19T07:07:13.000Z
+}
+[07:07:13] Orden actualizada: {
+  id: 36,
+  order_number: 'FV-2-15052',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'reposicion',
+  status: 'en_logistica',
+  updated_at: 2025-11-19T07:07:12.000Z
+}
+[07:07:17] Orden actualizada: {
+  id: 31,
+  order_number: 'FV-2-15072',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'efectivo',
+  status: 'en_logistica',
+  updated_at: 2025-11-19T07:07:17.000Z
+}
+[07:07:17] Orden actualizada: {
+  id: 32,
+  order_number: 'FV-2-15073',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'transferencia',
+  status: 'en_logistica',
+  updated_at: 2025-11-19T07:07:16.000Z
+}
+[07:07:19] Orden actualizada: {
+  id: 29,
+  order_number: 'FV-2-15070',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'transferencia',
+  status: 'en_logistica',
+  updated_at: 2025-11-19T07:07:19.000Z
+}
+[07:07:19] Orden actualizada: {
+  id: 30,
+  order_number: 'FV-2-15071',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'efectivo',
+  status: 'en_logistica',
+  updated_at: 2025-11-19T07:07:18.000Z
+}
+[07:07:21] Orden actualizada: {
+  id: 28,
+  order_number: 'FV-2-15069',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'cliente_credito',
+  status: 'en_logistica',
+  updated_at: 2025-11-19T07:07:20.000Z
+}
+[07:07:23] Orden actualizada: {
+  id: 26,
+  order_number: 'FV-2-15067',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'efectivo',
+  status: 'en_logistica',
+  updated_at: 2025-11-19T07:07:23.000Z
+}
+[07:07:23] Orden actualizada: {
+  id: 25,
+  order_number: 'FV-2-15066',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'cliente_credito',
+  status: 'en_preparacion',
+  updated_at: 2025-11-19T07:07:22.000Z
+}
+[07:07:23] Orden actualizada: {
+  id: 27,
+  order_number: 'FV-2-15068',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'efectivo',
+  status: 'en_empaque',
+  updated_at: 2025-11-19T07:07:21.000Z
+}
+[07:07:25] Orden actualizada: {
+  id: 25,
+  order_number: 'FV-2-15066',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'cliente_credito',
+  status: 'en_preparacion',
+  updated_at: 2025-11-19T07:07:25.000Z
+}
+[07:07:25] Orden actualizada: {
+  id: 13,
+  order_number: 'FV-2-15056',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'cliente_credito',
+  status: 'en_logistica',
+  updated_at: 2025-11-19T07:07:24.000Z
+}
+[07:07:27] Orden actualizada: {
+  id: 1,
+  order_number: 'FV-2-15049',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'cliente_credito',
+  status: 'en_logistica',
+  updated_at: 2025-11-19T07:07:26.000Z
+}
+[07:07:29] Orden actualizada: {
+  id: 23,
+  order_number: 'FV-2-15064',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'cliente_credito',
+  status: 'en_logistica',
+  updated_at: 2025-11-19T07:07:29.000Z
+}
+[07:07:29] Orden actualizada: {
+  id: 24,
+  order_number: 'FV-2-15061',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'cliente_credito',
+  status: 'en_logistica',
+  updated_at: 2025-11-19T07:07:28.000Z
+}
+[07:07:29] Orden actualizada: {
+  id: 1,
+  order_number: 'FV-2-15049',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'cliente_credito',
+  status: 'en_logistica',
+  updated_at: 2025-11-19T07:07:27.000Z
+}
+[07:07:31] Orden actualizada: {
+  id: 22,
+  order_number: 'FV-2-15065',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'pago_electronico',
+  status: 'en_logistica',
+  updated_at: 2025-11-19T07:07:30.000Z
+}
+[07:07:33] Orden actualizada: {
+  id: 19,
+  order_number: 'FV-2-15062',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'transferencia',
+  status: 'en_logistica',
+  updated_at: 2025-11-19T07:07:33.000Z
+}
+[07:07:33] Orden actualizada: {
+  id: 20,
+  order_number: 'FV-2-15063',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'transferencia',
+  status: 'en_logistica',
+  updated_at: 2025-11-19T07:07:32.000Z
+}
+[07:07:35] Orden actualizada: {
+  id: 17,
+  order_number: 'FV-2-15060',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'efectivo',
+  status: 'en_preparacion',
+  updated_at: 2025-11-19T07:07:35.000Z
+}
+[07:07:37] Orden actualizada: {
+  id: 16,
+  order_number: 'FV-2-15059',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'cliente_credito',
+  status: 'en_logistica',
+  updated_at: 2025-11-19T07:07:36.000Z
+}
+[07:07:39] Orden actualizada: {
+  id: 13,
+  order_number: 'FV-2-15056',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'cliente_credito',
+  status: 'en_logistica',
+  updated_at: 2025-11-19T07:07:39.000Z
+}
+[07:07:39] Orden actualizada: {
+  id: 14,
+  order_number: 'FV-2-15057',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'cliente_credito',
+  status: 'en_logistica',
+  updated_at: 2025-11-19T07:07:38.000Z
+}
+[07:07:41] Orden actualizada: {
+  id: 12,
+  order_number: 'FV-2-15054',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'cliente_credito',
+  status: 'en_logistica',
+  updated_at: 2025-11-19T07:07:40.000Z
+}
+[07:07:43] Orden actualizada: {
+  id: 11,
+  order_number: 'FV-2-15055',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'efectivo',
+  status: 'en_logistica',
+  updated_at: 2025-11-19T07:07:42.000Z
+}
+[07:07:47] Orden actualizada: {
+  id: 7,
+  order_number: 'FV-2-15053',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'transferencia',
+  status: 'en_logistica',
+  updated_at: 2025-11-19T07:07:45.000Z
+}
+[07:07:49] Orden actualizada: {
+  id: 4,
+  order_number: 'FV-2-15051',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'transferencia',
+  status: 'en_logistica',
+  updated_at: 2025-11-19T07:07:48.000Z
+}
+[07:07:51] Orden actualizada: {
+  id: 2,
+  order_number: 'FV-2-15050',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'pago_electronico',
+  status: 'en_logistica',
+  updated_at: 2025-11-19T07:07:50.000Z
+}
+[07:07:53] Orden actualizada: {
+  id: 1,
+  order_number: 'FV-2-15049',
+  requires_payment: 0,
+  payment_amount: '0.00',
+  paid_amount: '0.00',
+  payment_method: 'cliente_credito',
+  status: 'en_logistica',
+  updated_at: 2025-11-19T07:07:51.000Z
+}
+✅ Pool de conexiones MySQL cerrado correctamente
+Monitoreo finalizado.

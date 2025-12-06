@@ -20,6 +20,7 @@ const ShippingGuideModal = ({ isOpen, onClose, order, onSuccess }) => {
   });
   const [guideImage, setGuideImage] = useState(null);
   const [imagePreview, setImagePreview] = useState(null);
+  const [isZoomed, setIsZoomed] = useState(false);
   const [validationError, setValidationError] = useState('');
   const [selectedCompany, setSelectedCompany] = useState(null);
 
@@ -42,15 +43,15 @@ const ShippingGuideModal = ({ isOpen, onClose, order, onSuccess }) => {
   const loadInitialData = async () => {
     try {
       setLoading(true);
-      
+
       // Cargar transportadoras activas
       const companiesResponse = await api.get('/shipping/companies/active');
       setCompanies(companiesResponse.data.data);
-      
+
       // Cargar configuración del remitente
       const senderResponse = await api.get('/company-config/shipping-info');
       const companyData = senderResponse.data.data;
-      
+
       // Mapear los campos para que coincidan con lo que espera el frontend
       const mappedData = {
         ...companyData,
@@ -58,9 +59,9 @@ const ShippingGuideModal = ({ isOpen, onClose, order, onSuccess }) => {
         phone: companyData.whatsapp,
         address_line1: companyData.address
       };
-      
+
       setSenderConfig(mappedData);
-      
+
     } catch (error) {
       console.error('Error cargando datos iniciales:', error);
     } finally {
@@ -102,7 +103,7 @@ const ShippingGuideModal = ({ isOpen, onClose, order, onSuccess }) => {
       ...prev,
       guide_number: value
     }));
-    
+
     // Validar después de un pequeño delay
     setTimeout(() => validateGuideNumber(value), 500);
   };
@@ -124,7 +125,7 @@ const ShippingGuideModal = ({ isOpen, onClose, order, onSuccess }) => {
       }
 
       setGuideImage(file);
-      
+
       // Crear preview para imágenes
       if (file.type.startsWith('image/')) {
         const reader = new FileReader();
@@ -148,7 +149,7 @@ const ShippingGuideModal = ({ isOpen, onClose, order, onSuccess }) => {
           'Content-Type': 'multipart/form-data'
         }
       });
-      
+
       return response.data.data.url;
     } catch (error) {
       console.error('Error subiendo imagen:', error);
@@ -158,7 +159,7 @@ const ShippingGuideModal = ({ isOpen, onClose, order, onSuccess }) => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    
+
     if (validationError) {
       alert('Por favor corrige los errores antes de continuar');
       return;
@@ -212,6 +213,7 @@ const ShippingGuideModal = ({ isOpen, onClose, order, onSuccess }) => {
     });
     setGuideImage(null);
     setImagePreview(null);
+    setIsZoomed(false);
     setValidationError('');
     setSelectedCompany(null);
     onClose();
@@ -355,7 +357,7 @@ const ShippingGuideModal = ({ isOpen, onClose, order, onSuccess }) => {
               {/* Información de la Guía */}
               <div className="space-y-4">
                 <h3 className="text-lg font-semibold text-gray-900">Información de la Guía</h3>
-                
+
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm font-medium text-gray-700">
@@ -386,9 +388,8 @@ const ShippingGuideModal = ({ isOpen, onClose, order, onSuccess }) => {
                       onChange={(e) => handleGuideNumberChange(e.target.value)}
                       required
                       placeholder={selectedCompany ? `Formato: ${selectedCompany.guide_format_pattern}` : 'Selecciona una transportadora'}
-                      className={`mt-1 block w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-primary-500 focus:border-primary-500 ${
-                        validationError ? 'border-red-500' : 'border-gray-300'
-                      }`}
+                      className={`mt-1 block w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-primary-500 focus:border-primary-500 ${validationError ? 'border-red-500' : 'border-gray-300'
+                        }`}
                     />
                     {validationError && (
                       <p className="mt-1 text-sm text-red-600">{validationError}</p>
@@ -528,17 +529,27 @@ const ShippingGuideModal = ({ isOpen, onClose, order, onSuccess }) => {
                       />
                     </div>
                   </div>
-                  
+
                   {imagePreview && (
-                    <div className="mt-4">
+                    <div className={`mt-4 relative ${isZoomed ? 'fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-90 p-4' : ''}`} onClick={() => setIsZoomed(!isZoomed)}>
                       <img
                         src={imagePreview}
                         alt="Preview"
-                        className="mx-auto max-h-48 rounded-lg"
+                        className={`${isZoomed ? 'max-h-screen max-w-full object-contain cursor-zoom-out' : 'mx-auto max-h-48 rounded-lg cursor-zoom-in'}`}
                       />
+                      {isZoomed && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setIsZoomed(false); }}
+                          className="absolute top-4 right-4 text-white hover:text-gray-300"
+                        >
+                          <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        </button>
+                      )}
                     </div>
                   )}
-                  
+
                   {guideImage && (
                     <div className="mt-4 text-center">
                       <p className="text-sm text-gray-600">

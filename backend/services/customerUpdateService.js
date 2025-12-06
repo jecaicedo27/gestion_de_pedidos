@@ -131,6 +131,26 @@ class CustomerUpdateService {
   // Extraer datos completos del cliente desde SIIGO
   extractCompleteCustomerData(customerData) {
     console.log('🔍 Extrayendo datos completos del cliente...');
+
+    // Normalizar tipo de documento a códigos cortos para evitar overflow en DB
+    const normalizeIdType = (idTypeObj) => {
+      try {
+        const name = (idTypeObj && (idTypeObj.name || idTypeObj.code || idTypeObj)) || '';
+        const s = String(name).toLowerCase();
+        if (s.includes('nit')) return 'NIT';
+        if (s.includes('cédula de ciudadanía') || s.includes('cedula de ciudadania') || s === 'cc' || s.includes('c.c')) return 'CC';
+        if (s.includes('cédula de extran') || s.includes('cedula de extran') || s === 'ce') return 'CE';
+        if (s.includes('tarjeta de identidad') || s === 'ti') return 'TI';
+        if (s.includes('pasaporte') || s === 'pp' || s === 'ppn') return 'PP';
+        if (s.includes('dni')) return 'DNI';
+        if (s.includes('rut')) return 'RUT';
+        if (typeof idTypeObj === 'string' && idTypeObj.length <= 10) return idTypeObj;
+        if (idTypeObj && idTypeObj.code && String(idTypeObj.code).length <= 10) return String(idTypeObj.code);
+        return 'OTRO';
+      } catch (_) {
+        return 'OTRO';
+      }
+    };
     
     // Extraer commercial_name con lógica mejorada
     const extractCommercialName = (customer) => {
@@ -184,7 +204,7 @@ class CustomerUpdateService {
       commercial_name: extractCommercialName(customerData),
       customer_name: extractCustomerName(customerData),
       customer_identification: customerData.identification || null,
-      customer_id_type: customerData.id_type?.name || customerData.id_type?.code || null,
+      customer_id_type: normalizeIdType(customerData.id_type) || null,
       customer_person_type: customerData.person_type || null,
       customer_email: null,
       customer_phone: customerData.phones?.[0]?.number || customerData.person?.phones?.[0]?.number || customerData.company?.phones?.[0]?.number || null,

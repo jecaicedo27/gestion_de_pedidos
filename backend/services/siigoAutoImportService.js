@@ -28,16 +28,24 @@ class SiigoAutoImportService {
   async loadExistingInvoices() {
     try {
       console.log('📂 Cargando facturas existentes...');
-      const response = await axios.get('http://localhost:3001/api/siigo/invoices', {
+      const response = await axios.get('http://localhost:3001/api/siigo/invoices?page_size=100&enrich=false', {
         timeout: 30000
       });
       
       if (response.data.success && response.data.data && response.data.data.results) {
-        response.data.data.results.forEach(invoice => {
-          this.knownInvoices.add(invoice.id);
-        });
-        
-        console.log(`✅ ${this.knownInvoices.size} facturas existentes cargadas`);
+        const results = response.data.data.results;
+        // Registrar todas como conocidas para evitar duplicados
+        results.forEach(inv => this.knownInvoices.add(inv.id));
+        // Encolar TODAS las disponibles (no importadas) para importación
+        let enqueued = 0;
+        for (const invoice of results) {
+          const isImported = invoice.is_imported || invoice.import_status === 'imported';
+          if (!isImported) {
+            this.importQueue.push({ invoice, attempts: 0, timestamp: new Date() });
+            enqueued++;
+          }
+        }
+        console.log(`✅ ${this.knownInvoices.size} facturas conocidas | 🧾 Encoladas disponibles: ${enqueued}`);
       }
     } catch (error) {
       console.error('❌ Error cargando facturas existentes:', error.message);
@@ -60,10 +68,10 @@ class SiigoAutoImportService {
 
   async checkForNewInvoices() {
     try {
-      console.log('🔍 Verificando nuevas facturas...');
+      console.log('🔍 Verificando nuevas/pending facturas...');
       this.lastCheck = new Date();
       
-      const response = await axios.get('http://localhost:3001/api/siigo/invoices', {
+      const response = await axios.get('http://localhost:3001/api/siigo/invoices?page_size=100&enrich=false', {
         timeout: 30000
       });
       
@@ -71,25 +79,23 @@ class SiigoAutoImportService {
         return;
       }
 
-      const newInvoices = response.data.data.results.filter(invoice => {
-        return !this.knownInvoices.has(invoice.id);
-      });
+      const results = response.data.data.results;
+      const isQueued = (id) => this.importQueue.some(item => item.invoice?.id === id);
 
-      if (newInvoices.length > 0) {
-        console.log(`🆕 ${newInvoices.length} nuevas facturas detectadas!`);
-        
-        // Agregar a la cola de importación
-        newInvoices.forEach(invoice => {
+      let added = 0;
+      for (const invoice of results) {
+        const imported = invoice.is_imported || invoice.import_status === 'imported';
+        if (!imported && !isQueued(invoice.id)) {
+          // Asegurar conocido y encolar
           this.knownInvoices.add(invoice.id);
-          this.importQueue.push({
-            invoice,
-            attempts: 0,
-            timestamp: new Date()
-          });
-        });
+          this.importQueue.push({ invoice, attempts: 0, timestamp: new Date() });
+          added++;
+        }
+      }
 
-        // Enviar notificación
-        await this.sendNewInvoiceNotification(newInvoices);
+      if (added > 0) {
+        console.log(`🆕 Encoladas ${added} facturas pendientes para importación`);
+        await this.sendNewInvoiceNotification(results.filter(inv => !inv.is_imported));
       }
     } catch (error) {
       console.error('❌ Error verificando nuevas facturas:', error.message);
@@ -101,16 +107,22 @@ class SiigoAutoImportService {
 
     console.log(`📋 Procesando ${this.importQueue.length} facturas en cola...`);
 
-    // Procesar hasta 3 facturas a la vez para no sobrecargar
-    const toProcess = this.importQueue.splice(0, 3);
+    // Procesar hasta N facturas a la vez (configurable) para no sobrecargar
+    const batchSize = parseInt(process.env.SIIGO_AUTO_IMPORT_BATCH || '3', 10);
+    const toProcess = this.importQueue.splice(0, batchSize);
 
-    for (const item of toProcess) {
-      try {
+    const results = await Promise.allSettled(
+      toProcess.map(async (item) => {
         await this.importInvoiceAutomatically(item);
-      } catch (error) {
-        console.error(`❌ Error importando factura ${item.invoice.id}:`, error.message);
-        
-        // Reintentar si no se han agotado los intentos
+        return item;
+      })
+    );
+
+    for (let i = 0; i < results.length; i++) {
+      const result = results[i];
+      const item = toProcess[i];
+      if (result.status === 'rejected') {
+        console.error(`❌ Error importando factura ${item.invoice.id}:`, result.reason?.message || result.reason);
         if (item.attempts < this.maxRetries) {
           item.attempts++;
           this.importQueue.push(item);
@@ -131,8 +143,8 @@ class SiigoAutoImportService {
     try {
       // Usar el endpoint de importación existente
       const importResponse = await axios.post('http://localhost:3001/api/siigo/import', {
-        invoiceId: invoice.id,
-        autoImport: true // Flag para indicar que es importación automática
+        invoice_ids: [invoice.id],
+        autoImport: true
       }, {
         timeout: 60000 // 1 minuto de timeout
       });

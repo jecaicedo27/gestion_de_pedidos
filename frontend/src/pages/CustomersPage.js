@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import * as Icons from 'lucide-react';
 import toast from 'react-hot-toast';
 import authService from '../services/authService';
+import SendMessageModal from '../components/SendMessageModal';
 
 const CustomersPage = () => {
   // Estados principales
@@ -9,6 +10,7 @@ const CustomersPage = () => {
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [updateLoading, setUpdateLoading] = useState(false);
+  const [fullSyncLoading, setFullSyncLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(25);
@@ -17,6 +19,8 @@ const CustomersPage = () => {
   // Estados de diálogos
   const [updateDialog, setUpdateDialog] = useState(false);
   const [updateResult, setUpdateResult] = useState(null);
+  const [messageModalOpen, setMessageModalOpen] = useState(false);
+  const [selectedCustomer, setSelectedCustomer] = useState(null);
 
   // Cargar datos iniciales
   useEffect(() => {
@@ -49,7 +53,7 @@ const CustomersPage = () => {
     try {
       setLoading(true);
       const token = authService.getToken();
-      
+
       const queryParams = new URLSearchParams({
         page: page + 1,
         limit: rowsPerPage,
@@ -81,7 +85,7 @@ const CustomersPage = () => {
     try {
       setUpdateLoading(true);
       setUpdateDialog(false);
-      
+
       const token = authService.getToken();
       const response = await fetch('/api/customers/update-all-from-siigo', {
         method: 'POST',
@@ -92,13 +96,13 @@ const CustomersPage = () => {
       });
 
       const data = await response.json();
-      
+
       if (response.ok) {
         setUpdateResult(data);
         toast.success(
           `Actualización completada: ${data.data.updatedCount} pedidos actualizados`
         );
-        
+
         // Recargar datos
         await loadCustomerStats();
         await loadCustomers();
@@ -120,6 +124,36 @@ const CustomersPage = () => {
       });
     } finally {
       setUpdateLoading(false);
+    }
+  };
+
+  // Sincronización completa desde SIIGO (trae TODAS las páginas)
+  const handleFullSyncCustomers = async () => {
+    try {
+      setFullSyncLoading(true);
+      const token = authService.getToken();
+      const maxPages = 300; // ajustar si se requiere
+      const response = await fetch(`/api/customers/full-sync?max_pages=${maxPages}&async=true`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      const data = await response.json();
+      if (response.ok && data.success) {
+        setUpdateResult(data);
+        toast.success(`Sincronización completa: procesados ${data.data.processed}, nuevos ${data.data.created}`);
+        await loadCustomerStats();
+        await loadCustomers();
+      } else {
+        toast.error(data.message || 'Error en sincronización completa');
+      }
+    } catch (e) {
+      console.error('Error en full sync:', e);
+      toast.error('Error conectando con el servidor');
+    } finally {
+      setFullSyncLoading(false);
     }
   };
 
@@ -166,16 +200,16 @@ const CustomersPage = () => {
             Actualizar Vista
           </button>
           <button
-            onClick={() => setUpdateDialog(true)}
-            disabled={loading || updateLoading}
+            onClick={handleFullSyncCustomers}
+            disabled={loading || fullSyncLoading}
             className="btn btn-primary flex items-center"
           >
-            {updateLoading ? (
+            {fullSyncLoading ? (
               <Icons.Loader2 className="w-4 h-4 mr-2 animate-spin" />
             ) : (
               <Icons.RefreshCcw className="w-4 h-4 mr-2" />
             )}
-            {updateLoading ? 'Actualizando...' : 'Actualizar desde SIIGO'}
+            {fullSyncLoading ? 'Extrayendo clientes...' : 'Actualizar desde SIIGO'}
           </button>
         </div>
       </div>
@@ -187,25 +221,9 @@ const CustomersPage = () => {
             <div className="card-content p-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-gray-600">Pedidos con SIIGO ID</p>
+                  <p className="text-sm text-gray-600">Clientes con Nombre Comercial</p>
                   <p className="text-3xl font-bold text-gray-900">
-                    {formatNumber(stats.totalOrdersWithSiigoId)}
-                  </p>
-                </div>
-                <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
-                  <Icons.BarChart3 className="w-6 h-6 text-blue-600" />
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="card">
-            <div className="card-content p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-gray-600">Con Nombre Comercial</p>
-                  <p className="text-3xl font-bold text-gray-900">
-                    {formatNumber(stats.ordersWithCommercialName)}
+                    {formatNumber(stats.customersWithCommercialName)}
                   </p>
                   <div className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium mt-2 ${getCompletionColor(stats.completionPercentage)}`}>
                     {stats.completionPercentage}%
@@ -224,7 +242,7 @@ const CustomersPage = () => {
                 <div>
                   <p className="text-sm text-gray-600">Sin Nombre Comercial</p>
                   <p className="text-3xl font-bold text-gray-900">
-                    {formatNumber(stats.ordersWithoutCommercialName)}
+                    {formatNumber(stats.customersWithoutCommercialName)}
                   </p>
                 </div>
                 <div className="w-12 h-12 bg-yellow-100 rounded-lg flex items-center justify-center">
@@ -238,13 +256,13 @@ const CustomersPage = () => {
             <div className="card-content p-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-gray-600">Clientes Únicos</p>
+                  <p className="text-sm text-gray-600">Clientes (BD)</p>
                   <p className="text-3xl font-bold text-gray-900">
-                    {formatNumber(stats.uniqueSiigoCustomers)}
+                    {formatNumber(stats.customersInTable)}
                   </p>
                 </div>
                 <div className="w-12 h-12 bg-purple-100 rounded-lg flex items-center justify-center">
-                  <Icons.Building className="w-6 h-6 text-purple-600" />
+                  <Icons.Users className="w-6 h-6 text-purple-600" />
                 </div>
               </div>
             </div>
@@ -332,13 +350,18 @@ const CustomersPage = () => {
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Teléfono</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Email</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Ciudad</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Departamento</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Fecha de Creación</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Pedidos</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Total Compras</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Estado</th>
+                  <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Acciones</th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
                 {loading ? (
                   <tr>
-                    <td colSpan="8" className="px-6 py-8 text-center">
+                    <td colSpan="12" className="px-6 py-8 text-center">
                       <div className="flex items-center justify-center">
                         <Icons.Loader2 className="w-6 h-6 animate-spin text-gray-400" />
                         <span className="ml-2 text-gray-500">Cargando clientes...</span>
@@ -347,7 +370,7 @@ const CustomersPage = () => {
                   </tr>
                 ) : customers.length === 0 ? (
                   <tr>
-                    <td colSpan="8" className="px-6 py-8 text-center">
+                    <td colSpan="12" className="px-6 py-8 text-center">
                       <div className="flex flex-col items-center">
                         <Icons.Users className="w-12 h-12 text-gray-400 mb-2" />
                         <p className="text-gray-500">No se encontraron clientes</p>
@@ -391,12 +414,35 @@ const CustomersPage = () => {
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                         {customer.city || 'N/A'}
                       </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        {customer.department || customer.state || 'N/A'}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        {customer.created_at ? new Date(customer.created_at).toLocaleDateString('es-CO') : 'N/A'}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        {formatNumber(customer.orders_count || 0)}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        {new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 }).format(customer.lifetime_total || 0)}
+                      </td>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                          customer.active ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'
-                        }`}>
+                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${customer.active ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'
+                          }`}>
                           {customer.active ? 'Activo' : 'Inactivo'}
                         </span>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                        <button
+                          onClick={() => {
+                            setSelectedCustomer(customer);
+                            setMessageModalOpen(true);
+                          }}
+                          className="text-green-600 hover:text-green-900"
+                          title="Enviar WhatsApp"
+                        >
+                          <Icons.MessageSquare className="w-5 h-5" />
+                        </button>
                       </td>
                     </tr>
                   ))
@@ -420,12 +466,12 @@ const CustomersPage = () => {
                   <option value={100}>100 por página</option>
                 </select>
               </div>
-              
+
               <div className="flex items-center space-x-2">
                 <span className="text-sm text-gray-700">
                   {`${page * rowsPerPage + 1}-${Math.min((page + 1) * rowsPerPage, totalCount)} de ${totalCount}`}
                 </span>
-                
+
                 <div className="flex items-center space-x-1">
                   <button
                     onClick={() => handleChangePage(page - 1)}
@@ -459,13 +505,13 @@ const CustomersPage = () => {
                 </div>
                 <h3 className="text-lg font-medium text-gray-900">Actualizar Clientes desde SIIGO</h3>
               </div>
-              
+
               <div className="mb-4">
                 <p className="text-gray-600 mb-4">
-                  Esta acción actualizará todos los clientes que tienen datos incompletos 
+                  Esta acción actualizará todos los clientes que tienen datos incompletos
                   (como nombres comerciales faltantes) desde SIIGO.
                 </p>
-                
+
                 {stats && (
                   <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
                     <p className="text-sm text-blue-800">
@@ -475,13 +521,13 @@ const CustomersPage = () => {
                       • <strong>{formatNumber(stats.uniqueSiigoCustomers)}</strong> clientes únicos a procesar
                     </p>
                     <p className="text-sm text-blue-800 mt-2">
-                      <strong>Nota:</strong> Este proceso puede tomar varios minutos dependiendo 
+                      <strong>Nota:</strong> Este proceso puede tomar varios minutos dependiendo
                       de la cantidad de clientes a actualizar.
                     </p>
                   </div>
                 )}
               </div>
-              
+
               <div className="flex justify-end space-x-3">
                 <button
                   onClick={() => setUpdateDialog(false)}
@@ -501,6 +547,15 @@ const CustomersPage = () => {
           </div>
         </div>
       )}
+
+      <SendMessageModal
+        isOpen={messageModalOpen}
+        onClose={() => {
+          setMessageModalOpen(false);
+          setSelectedCustomer(null);
+        }}
+        customer={selectedCustomer}
+      />
     </div>
   );
 };

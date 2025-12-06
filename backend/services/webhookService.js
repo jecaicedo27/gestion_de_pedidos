@@ -1,6 +1,7 @@
 const mysql = require('mysql2/promise');
 const axios = require('axios');
 const siigoService = require('./siigoService');
+const customerService = require('./customerService');
 require('dotenv').config();
 
 class WebhookService {
@@ -73,8 +74,11 @@ class WebhookService {
             console.log(`🔔 Suscribiendo a webhook: ${topic}`);
 
             const headers = await siigoService.getHeaders();
-            const response = await axios.post(`${siigoService.getBaseUrl()}/v1/webhooks`, subscriptionData, {
-                headers
+            const response = await siigoService.makeRequestWithRetry(async () => {
+                return await axios.post(`${siigoService.getBaseUrl()}/v1/webhooks`, subscriptionData, {
+                    headers,
+                    timeout: 30000
+                });
             });
 
             const subscription = response.data;
@@ -100,7 +104,16 @@ class WebhookService {
             return subscription;
 
         } catch (error) {
-            console.error(`❌ Error suscribiendo a webhook ${topic}:`, error.message);
+            const status = error.response?.status;
+            const data = error.response?.data;
+            console.error(`❌ Error suscribiendo a webhook ${topic}:`, error.message, status ? `status=${status}` : '');
+            if (data) {
+                try {
+                    console.error('📦 Respuesta de error SIIGO (webhook):', JSON.stringify(data));
+                } catch (_e) {
+                    console.error('📦 Respuesta de error SIIGO (webhook):', data);
+                }
+            }
             throw error;
         } finally {
             await connection.end();
@@ -111,6 +124,12 @@ class WebhookService {
         try {
             console.log('🚀 Configurando webhooks de stock...');
             
+            // Validar URL del webhook (SIIGO requiere URL pública HTTPS)
+            if (!this.webhookBaseUrl || !/^https:\/\/.+/i.test(this.webhookBaseUrl)) {
+                console.warn(`⚠️ URL de webhook no segura o inválida (${this.webhookBaseUrl}). Salteando suscripciones. Configure WEBHOOK_BASE_URL con HTTPS público.`);
+                return [];
+            }
+
             const topics = [
                 'public.siigoapi.products.create',
                 'public.siigoapi.products.update',
@@ -124,8 +143,12 @@ class WebhookService {
                     const subscription = await this.subscribeToWebhook(topic);
                     subscriptions.push(subscription);
                     
-                    // Rate limiting
-                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    // Pausa adaptativa tras suscripción para evitar 429
+                    const baseDelay = Math.min(Math.max(siigoService.rateLimitDelay || 1000, 1000), 5000);
+                    const jitter = Math.floor(Math.random() * 500);
+                    const pause = baseDelay + jitter;
+                    console.log(`⏱️ Pausa entre suscripciones: ${pause}ms`);
+                    await new Promise(resolve => setTimeout(resolve, pause));
                 } catch (error) {
                     console.error(`❌ Error configurando webhook ${topic}:`, error.message);
                 }
@@ -136,6 +159,46 @@ class WebhookService {
 
         } catch (error) {
             console.error('❌ Error configurando webhooks de stock:', error);
+            throw error;
+        }
+    }
+
+    async setupCustomerWebhooks() {
+        try {
+            console.log('🚀 Configurando webhooks de clientes...');
+            
+            if (!this.webhookBaseUrl || !/^https:\/\/.+/i.test(this.webhookBaseUrl)) {
+                console.warn(`⚠️ URL de webhook no segura o inválida (${this.webhookBaseUrl}). Salteando suscripciones de clientes. Configure WEBHOOK_BASE_URL con HTTPS público.`);
+                return [];
+            }
+
+            const topics = [
+                'public.siigoapi.customers.create',
+                'public.siigoapi.customers.update'
+            ];
+
+            const subscriptions = [];
+
+            for (const topic of topics) {
+                try {
+                    const subscription = await this.subscribeToWebhook(topic);
+                    subscriptions.push(subscription);
+
+                    const baseDelay = Math.min(Math.max(siigoService.rateLimitDelay || 1000, 1000), 5000);
+                    const jitter = Math.floor(Math.random() * 500);
+                    const pause = baseDelay + jitter;
+                    console.log(`⏱️ Pausa entre suscripciones (clientes): ${pause}ms`);
+                    await new Promise(resolve => setTimeout(resolve, pause));
+                } catch (error) {
+                    console.error(`❌ Error configurando webhook ${topic}:`, error.message);
+                }
+            }
+
+            console.log(`✅ Webhooks de clientes configurados: ${subscriptions.length}/${topics.length}`);
+            return subscriptions;
+
+        } catch (error) {
+            console.error('❌ Error configurando webhooks de clientes:', error);
             throw error;
         }
     }
@@ -177,6 +240,12 @@ class WebhookService {
                     case 'public.siigoapi.products.create':
                         processed = await this.processProductCreate(connection, payload);
                         break;
+                    case 'public.siigoapi.customers.create':
+                        processed = await this.processCustomerCreate(connection, payload);
+                        break;
+                    case 'public.siigoapi.customers.update':
+                        processed = await this.processCustomerUpdate(connection, payload);
+                        break;
                     default:
                         console.log(`⚠️  Evento no manejado: ${payload.topic}`);
                         processed = false;
@@ -197,7 +266,7 @@ class WebhookService {
             return processed;
 
         } catch (error) {
-            console.error('❌ Error procesando webhook:', error);
+            console.error('❌ Error procesando webhook payload:', error.message);
             throw error;
         } finally {
             await connection.end();
@@ -206,52 +275,80 @@ class WebhookService {
 
     async processStockUpdate(connection, payload) {
         try {
-            // Buscar el producto en la base de datos local
-            const [products] = await connection.execute(`
-                SELECT id, product_name, available_quantity 
-                FROM products 
-                WHERE siigo_id = ? 
-                AND is_active = 1
-            `, [payload.id]);
+            const siigoId = payload.id;
+            const siigoCode = payload.code;
+            const newStock = typeof payload.available_quantity === 'number'
+                ? payload.available_quantity
+                : (typeof payload.new_stock === 'number' ? payload.new_stock : 0);
 
-            if (products.length === 0) {
-                console.log(`⚠️  Producto ${payload.id} no encontrado en base de datos local`);
+            // Intentar múltiples estrategias de emparejamiento para soportar filas con siigo_id=UUID o siigo_id=code
+            let productRow = null;
+
+            // 1) siigo_id = UUID (payload.id)
+            const [byUuid] = await connection.execute(`
+                SELECT id, product_name, available_quantity, siigo_id, internal_code 
+                FROM products 
+                WHERE siigo_id = ? AND is_active = 1
+            `, [siigoId]);
+            if (byUuid.length > 0) productRow = byUuid[0];
+
+            // 2) siigo_id = code (algunas filas guardan el code en siigo_id)
+            if (!productRow && siigoCode) {
+                const [bySiigoCode] = await connection.execute(`
+                    SELECT id, product_name, available_quantity, siigo_id, internal_code 
+                    FROM products 
+                    WHERE siigo_id = ? AND is_active = 1
+                `, [siigoCode]);
+                if (bySiigoCode.length > 0) productRow = bySiigoCode[0];
+            }
+
+            // 3) internal_code = code (fallback adicional)
+            if (!productRow && siigoCode) {
+                const [byInternal] = await connection.execute(`
+                    SELECT id, product_name, available_quantity, siigo_id, internal_code 
+                    FROM products 
+                    WHERE internal_code = ? AND is_active = 1
+                `, [siigoCode]);
+                if (byInternal.length > 0) productRow = byInternal[0];
+            }
+
+            if (!productRow) {
+                console.log(`⚠️  Producto no encontrado por siigo_id=${siigoId} ni code=${siigoCode}`);
                 return false;
             }
 
-            const product = products[0];
-            const newStock = payload.available_quantity || 0;
-            const oldStock = product.available_quantity || 0;
+            const oldStock = productRow.available_quantity || 0;
 
             // Solo actualizar si hay cambio real
             if (newStock !== oldStock) {
                 await connection.execute(`
                     UPDATE products 
                     SET available_quantity = ?,
+                        stock_updated_at = NOW(),
                         updated_at = NOW()
-                    WHERE siigo_id = ?
-                `, [newStock, payload.id]);
+                    WHERE id = ?
+                `, [newStock, productRow.id]);
 
-                // Actualizar log con información de stock
+                // Actualizar log con información de stock (indexado por siigo_product_id=UUID del webhook)
                 await connection.execute(`
                     UPDATE webhook_logs 
                     SET old_stock = ?, new_stock = ?
                     WHERE siigo_product_id = ? 
-                    AND topic = 'public.siigoapi.products.stock.update'
+                      AND topic = 'public.siigoapi.products.stock.update'
                     ORDER BY created_at DESC 
                     LIMIT 1
-                `, [oldStock, newStock, payload.id]);
+                `, [oldStock, newStock, siigoId]);
 
-                console.log(`📊 Stock actualizado vía webhook para ${product.product_name}: ${oldStock} → ${newStock}`);
+                console.log(`📊 Stock actualizado vía webhook para ${productRow.product_name}: ${oldStock} → ${newStock}`);
 
                 // Emitir evento WebSocket si está disponible
                 if (global.io) {
                     global.io.emit('stock_updated', {
-                        productId: product.id,
-                        siigoProductId: payload.id,
-                        productName: product.product_name,
-                        oldStock: oldStock,
-                        newStock: newStock,
+                        productId: productRow.id,
+                        siigoProductId: siigoId,
+                        productName: productRow.product_name,
+                        oldStock,
+                        newStock,
                         source: 'webhook',
                         timestamp: new Date().toISOString()
                     });
@@ -259,7 +356,7 @@ class WebhookService {
 
                 return true;
             } else {
-                console.log(`📊 Sin cambios de stock para producto ${payload.id}`);
+                console.log(`📊 Sin cambios de stock para producto id=${productRow.id} siigo_id=${siigoId}`);
                 return true;
             }
 
@@ -271,33 +368,122 @@ class WebhookService {
 
     async processProductUpdate(connection, payload) {
         try {
-            // Verificar si el producto existe
-            const [products] = await connection.execute(`
-                SELECT id FROM products WHERE siigo_id = ? AND is_active = 1
-            `, [payload.id]);
+            const siigoId = payload.id;
+            const siigoCode = payload.code;
 
-            if (products.length > 0) {
-                // Actualizar información del producto
-                await connection.execute(`
-                    UPDATE products 
-                    SET product_name = ?, 
-                        is_active = ?,
-                        available_quantity = ?,
-                        updated_at = NOW()
-                    WHERE siigo_id = ?
-                `, [
-                    payload.name,
-                    payload.active ? 1 : 0,
-                    payload.available_quantity || 0,
-                    payload.id
-                ]);
+            // 1) Buscar el producto local soportando las 3 variantes (igual que stock.update)
+            let current = null;
 
-                console.log(`📝 Producto actualizado vía webhook: ${payload.name}`);
-                return true;
-            } else {
-                console.log(`⚠️  Producto ${payload.id} no encontrado para actualizar`);
+            // a) siigo_id = UUID
+            const [byUuid] = await connection.execute(`
+                SELECT id, product_name, available_quantity, is_active, siigo_id 
+                FROM products 
+                WHERE siigo_id = ? 
+                LIMIT 1
+            `, [siigoId]);
+            if (byUuid.length > 0) current = byUuid[0];
+
+            // b) siigo_id = code
+            if (!current && siigoCode) {
+                const [bySiigoCode] = await connection.execute(`
+                    SELECT id, product_name, available_quantity, is_active, siigo_id 
+                    FROM products 
+                    WHERE siigo_id = ? 
+                    LIMIT 1
+                `, [siigoCode]);
+                if (bySiigoCode.length > 0) current = bySiigoCode[0];
+            }
+
+            // c) internal_code = code
+            if (!current && siigoCode) {
+                const [byInternal] = await connection.execute(`
+                    SELECT id, product_name, available_quantity, is_active, siigo_id 
+                    FROM products 
+                    WHERE internal_code = ? 
+                    LIMIT 1
+                `, [siigoCode]);
+                if (byInternal.length > 0) current = byInternal[0];
+            }
+
+            if (!current) {
+                console.log(`⚠️  Producto no encontrado (product.update) por siigo_id=${siigoId} ni code=${siigoCode}`);
                 return false;
             }
+
+            const oldStock = Number(current.available_quantity || 0);
+            const newName = payload.name || current.product_name;
+            const newActive = payload.active ? 1 : 0;
+
+            // 2) Determinar nuevo stock del payload; si no viene, consultar SIIGO (fallback global)
+            let newStock = null;
+            if (typeof payload.available_quantity === 'number') newStock = Number(payload.available_quantity);
+            else if (typeof payload.new_stock === 'number') newStock = Number(payload.new_stock);
+            else if (typeof payload.stock === 'number') newStock = Number(payload.stock);
+
+            // Fallback: fetch directo a SIIGO cuando el webhook no trae stock
+            if (newStock === null) {
+                try {
+                    const headers = await siigoService.getHeaders();
+                    let resp;
+                    const isUuid = typeof siigoId === 'string' && /^[0-9a-fA-F-]{36}$/.test(siigoId);
+                    if (isUuid) {
+                        resp = await siigoService.makeRequestWithRetry(async () =>
+                            axios.get(`${siigoService.getBaseUrl()}/v1/products/${siigoId}`, { headers, timeout: 30000 })
+                        );
+                    } else if (siigoCode) {
+                        resp = await siigoService.makeRequestWithRetry(async () =>
+                            axios.get(`${siigoService.getBaseUrl()}/v1/products`, { headers, params: { code: siigoCode }, timeout: 30000 })
+                        );
+                    }
+                    const d = resp?.data;
+                    const prod = Array.isArray(d?.results) ? d.results[0] : d;
+                    if (prod && typeof prod.available_quantity === 'number') {
+                        newStock = Number(prod.available_quantity);
+                    } else {
+                        newStock = oldStock; // dejar igual si no se pudo obtener
+                    }
+                } catch (e) {
+                    console.warn('⚠️ Fallback SIIGO en product.update falló:', e?.message || e);
+                    newStock = oldStock;
+                }
+            }
+
+            // 3) Actualizar en BD (marcando stock_updated_at y last_sync_at si cambió)
+            await connection.execute(`
+                UPDATE products
+                SET product_name = ?,
+                    is_active = ?,
+                    available_quantity = ?,
+                    stock_updated_at = IF(available_quantity <> ?, NOW(), stock_updated_at),
+                    last_sync_at = NOW(),
+                    updated_at = NOW()
+                WHERE id = ?
+            `, [newName, newActive, newStock, newStock, current.id]);
+
+            const stockChanged = newStock !== oldStock;
+
+            console.log(`📝 Producto actualizado vía webhook (products.update): ${newName}` + (stockChanged ? ` | Stock: ${oldStock} → ${newStock}` : ''));
+
+            // 4) Emitir evento en tiempo real si cambió el stock
+            if (stockChanged && global.io) {
+                try {
+                    const eventPayload = {
+                        productId: current.id,
+                        siigoProductId: siigoId,
+                        productName: newName,
+                        oldStock,
+                        newStock,
+                        source: 'webhook_product_update',
+                        timestamp: new Date().toISOString()
+                    };
+                    global.io.emit('stock_updated', eventPayload);
+                    global.io.to('siigo-updates').emit('stock_updated', eventPayload);
+                } catch (e) {
+                    console.warn('⚠️ Error emitiendo evento WS stock_updated (product.update):', e?.message || e);
+                }
+            }
+
+            return true;
 
         } catch (error) {
             console.error('❌ Error procesando actualización de producto:', error);
@@ -324,6 +510,53 @@ class WebhookService {
 
         } catch (error) {
             console.error('❌ Error procesando creación de producto:', error);
+            throw error;
+        }
+    }
+
+    async processCustomerCreate(connection, payload) {
+        try {
+            const customerId = payload.id;
+            if (!customerId) {
+                console.log('⚠️  Webhook de cliente sin id');
+                return false;
+            }
+
+            // Obtener datos completos del cliente y guardar/actualizar en BD local
+            const details = await siigoService.getCustomer(String(customerId));
+            if (details && details.id) {
+                await customerService.saveCustomer(details);
+                console.log(`👤 Cliente creado sincronizado: ${details.id}`);
+                return true;
+            }
+
+            console.log(`⚠️  No se pudo obtener detalles para cliente ${customerId}`);
+            return false;
+        } catch (error) {
+            console.error('❌ Error procesando creación de cliente:', error);
+            throw error;
+        }
+    }
+
+    async processCustomerUpdate(connection, payload) {
+        try {
+            const customerId = payload.id;
+            if (!customerId) {
+                console.log('⚠️  Webhook de cliente (update) sin id');
+                return false;
+            }
+
+            const details = await siigoService.getCustomer(String(customerId));
+            if (details && details.id) {
+                await customerService.saveCustomer(details);
+                console.log(`👤 Cliente actualizado sincronizado: ${details.id}`);
+                return true;
+            }
+
+            console.log(`⚠️  No se pudo obtener detalles para cliente ${customerId} (update)`);
+            return false;
+        } catch (error) {
+            console.error('❌ Error procesando actualización de cliente:', error);
             throw error;
         }
     }

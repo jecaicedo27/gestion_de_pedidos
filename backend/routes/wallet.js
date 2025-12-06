@@ -14,7 +14,7 @@ router.get('/customer-credit/:customerName',
 
 // Validar pago y enviar a logística
 router.post('/validate-payment', 
-  verifyRole(['cartera', 'admin']), 
+  verifyRole(['cartera', 'admin', 'facturador']), 
   walletController.validatePayment
 );
 

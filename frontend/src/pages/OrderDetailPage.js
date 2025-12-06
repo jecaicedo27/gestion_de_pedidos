@@ -1,19 +1,35 @@
-import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import React, { useState, useEffect, useRef } from 'react';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { orderService } from '../services/api';
+import { orderService, packagingProgressService, carteraService } from '../services/api';
 import * as Icons from 'lucide-react';
+import ReasonModal from '../components/ReasonModal';
 import toast from 'react-hot-toast';
 import { format } from 'date-fns';
-import { es } from 'date-fns/locale';
+import es from 'date-fns/locale/es';
 
 const OrderDetailPage = () => {
   const { id } = useParams();
   const navigate = useNavigate();
   const { user } = useAuth();
+  const [searchParams] = useSearchParams();
+  const from = searchParams.get('from');
+  const focus = searchParams.get('focus');
+  const itemsRef = useRef(null);
+  const [highlightPacking, setHighlightPacking] = useState(false);
   
   const [order, setOrder] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [packSnap, setPackSnap] = useState(null);
+  const [packLoading, setPackLoading] = useState(false);
+  const [packError, setPackError] = useState(null);
+
+  // Devolver a Facturación (Cartera/Admin)
+  const [showReturnModal, setShowReturnModal] = useState(false);
+  const [returnLoading, setReturnLoading] = useState(false);
+  // Cancelación por cliente
+  const [showCancelModal, setShowCancelModal] = useState(false);
+  const [cancelLoading, setCancelLoading] = useState(false);
 
   // Cargar detalles del pedido
   useEffect(() => {
@@ -35,6 +51,44 @@ const OrderDetailPage = () => {
       loadOrderDetails();
     }
   }, [id, navigate]);
+
+  // Cargar snapshot de empaque (solo lectura) si el pedido está en empaque
+  useEffect(() => {
+    const fetchSnapshot = async () => {
+      if (!order || loading) return;
+      const status = String(order.status || '').toLowerCase();
+      if (status !== 'en_empaque' && status !== 'en_preparacion') {
+        setPackSnap(null);
+        return;
+      }
+      try {
+        setPackLoading(true);
+        setPackError(null);
+        const resp = await packagingProgressService.getSnapshot(order.id);
+        // backend responde { success, data }
+        const snap = resp?.data ?? resp ?? null;
+        setPackSnap(snap);
+      } catch (e) {
+        // Silencioso si 403 (rol sin permiso) u otros
+        setPackError(e?.response?.data?.message || null);
+      } finally {
+        setPackLoading(false);
+      }
+    };
+    fetchSnapshot();
+  }, [order, loading]);
+
+  // Enfocar sección de empaque (items) cuando se llega desde /packaging-progress
+  useEffect(() => {
+    if (!loading && order && String(focus || '').toLowerCase() === 'packing' && itemsRef.current) {
+      try {
+        itemsRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      } catch {}
+      setHighlightPacking(true);
+      const t = setTimeout(() => setHighlightPacking(false), 2000);
+      return () => clearTimeout(t);
+    }
+  }, [loading, order, focus]);
 
   // Obtener color del estado
   const getStatusColor = (status) => {
@@ -88,9 +142,22 @@ const OrderDetailPage = () => {
       transferencia: 'Transferencia Bancaria',
       tarjeta: 'Tarjeta de Crédito/Débito',
       contraentrega: 'Contraentrega',
-      credito: 'Crédito'
+      credito: 'Crédito',
+      publicidad: 'Publicidad',
+      reposicion: 'Reposición'
     };
     return labels[method] || method || 'No especificado';
+  };
+
+  // Barra de progreso compacta para empaque
+  const SmallProgressBar = ({ percent }) => {
+    const pct = Math.max(0, Math.min(100, Number.isFinite(percent) ? percent : 0));
+    const color = pct >= 100 ? 'bg-green-500' : pct >= 50 ? 'bg-blue-500' : 'bg-yellow-500';
+    return (
+      <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
+        <div className={`h-2 ${color}`} style={{ width: `${pct}%`, transition: 'width 300ms ease' }} />
+      </div>
+    );
   };
 
   if (loading) {
@@ -128,7 +195,7 @@ const OrderDetailPage = () => {
       <div className="mb-8 flex items-center justify-between">
         <div className="flex items-center space-x-4">
           <button
-            onClick={() => navigate(-1)}
+            onClick={() => { if (from === 'packaging-progress') navigate('/packaging-progress'); else navigate(-1); }}
             className="flex items-center text-gray-600 hover:text-gray-900"
           >
             <Icons.ArrowLeft className="w-5 h-5 mr-2" />
@@ -171,6 +238,51 @@ const OrderDetailPage = () => {
             >
               <Icons.Edit className="w-4 h-4 mr-2" />
               Editar
+            </button>
+          )}
+
+          {/* Cliente canceló pedido (Admin/Facturación) */}
+          {(user?.role === 'facturador' || user?.role === 'admin') && ['en_preparacion','en_empaque','empacado','listo','listo_para_entrega','listo_para_recoger','en_logistica','en_reparto'].includes(String(order.status || '').toLowerCase()) && (
+            <button
+              onClick={() => setShowCancelModal(true)}
+              className="inline-flex items-center px-3 py-2 rounded-md bg-red-600 hover:bg-red-700 text-white"
+              title="Marcar pedido como cancelado por cliente"
+              disabled={cancelLoading}
+            >
+              <Icons.XCircle className="w-4 h-4 mr-2" />
+              Cliente canceló pedido
+            </button>
+          )}
+
+          {/* Enterado (Logística) para cancelación */}
+          {user?.role === 'logistica' && String(order.status || '').toLowerCase() === 'cancelado' && !order.cancellation_logistics_ack_at && (
+            <button
+              onClick={async () => {
+                try {
+                  const resp = await orderService.logisticsAckCancel(order.id);
+                  toast.success(resp?.message || 'Enterado registrado');
+                  setOrder(prev => ({ ...prev, cancellation_logistics_ack_at: new Date().toISOString() }));
+                } catch (e) {
+                  toast.error(e?.response?.data?.message || 'No se pudo registrar el enterado');
+                }
+              }}
+              className="inline-flex items-center px-3 py-2 rounded-md bg-gray-700 hover:bg-gray-800 text-white"
+              title="Marcar enterado de cancelación"
+            >
+              <Icons.Check className="w-4 h-4 mr-2" />
+              Enterado
+            </button>
+          )}
+
+          {/* Devolver a Facturación (solo Cartera/Admin cuando está en revisión de cartera) */}
+          {(user?.role === 'cartera' || user?.role === 'admin') && String(order.status || '').toLowerCase() === 'revision_cartera' && (
+            <button
+              onClick={() => setShowReturnModal(true)}
+              className="inline-flex items-center px-3 py-2 rounded-md bg-blue-600 hover:bg-blue-700 text-white"
+              title="Devolver pedido a Facturación para corrección"
+            >
+              <Icons.RotateCcw className="w-4 h-4 mr-2" />
+              Devolver a Facturación
             </button>
           )}
         </div>
@@ -277,8 +389,66 @@ const OrderDetailPage = () => {
         )}
       </div>
 
+      {/* Detalle de Empaque (solo lectura) */}
+      {(packLoading || packSnap) && (
+        <div className="card mt-6">
+          <div className="card-header">
+            <h3 className="text-lg font-semibold flex items-center">
+              <Icons.Package className="w-5 h-5 mr-2" />
+              Detalle de Empaque
+            </h3>
+          </div>
+          <div className="card-content">
+            {packLoading ? (
+              <div className="text-sm text-gray-500">Cargando progreso de empaque…</div>
+            ) : packSnap ? (
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div>
+                  <div className="text-xs text-gray-500">Estado</div>
+                  <div className="text-sm font-medium">
+                    {String(order.status || '').replaceAll('_', ' ')}
+                  </div>
+                  {packSnap.packaging_status && (
+                    <div className="text-xs text-gray-500">
+                      Packaging: {String(packSnap.packaging_status).replaceAll('_', ' ')}
+                    </div>
+                  )}
+                </div>
+                <div className="md:col-span-2">
+                  <div className="text-xs text-gray-500 mb-1">Progreso</div>
+                  <div className="flex items-center gap-2">
+                    <SmallProgressBar percent={packSnap.progress_pct} />
+                    <div className="w-12 text-right tabular-nums text-sm">{packSnap.progress_pct}%</div>
+                  </div>
+                  <div className="text-xs text-gray-500 mt-1">
+                    Verificados: <span className="font-medium">{packSnap.verified_items}</span> / {packSnap.total_items}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs text-gray-500">Bloqueo</div>
+                  {packSnap.packaging_lock_user_id ? (
+                    <div className="text-sm text-red-600 inline-flex items-center">
+                      <Icons.Lock className="w-4 h-4 mr-1" />
+                      {packSnap.packaging_locked_by || 'Bloqueado'}
+                    </div>
+                  ) : (
+                    <div className="text-sm text-gray-600 inline-flex items-center">
+                      <Icons.Unlock className="w-4 h-4 mr-1" />
+                      Libre
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="text-sm text-gray-500">Sin información de empaque.</div>
+            )}
+            {packError && <div className="text-xs text-red-600 mt-2">{packError}</div>}
+          </div>
+        </div>
+      )}
+
       {/* Items del Pedido */}
-      <div className="card mt-6">
+      <div ref={itemsRef} className={`card mt-6 ${highlightPacking ? 'ring-2 ring-blue-400' : ''}`}>
         <div className="card-header">
           <h3 className="text-lg font-semibold flex items-center">
             <Icons.ShoppingCart className="w-5 h-5 mr-2" />
@@ -367,39 +537,27 @@ const OrderDetailPage = () => {
         </div>
       </div>
 
-      {/* Notas y Observaciones */}
-      {(order.notes || order.delivery_notes || order.siigo_observations) && (
-        <div className="card mt-6">
-          <div className="card-header">
-            <h3 className="text-lg font-semibold flex items-center">
-              <Icons.FileText className="w-5 h-5 mr-2" />
-              Notas y Observaciones
-            </h3>
-          </div>
-          <div className="card-content">
-            <div className="space-y-4">
-              {order.notes && (
-                <div>
-                  <label className="text-sm font-medium text-gray-500">Notas del Pedido</label>
-                  <p className="text-gray-900 mt-1">{order.notes}</p>
-                </div>
-              )}
-              {order.delivery_notes && (
-                <div>
-                  <label className="text-sm font-medium text-gray-500">Notas de Entrega</label>
-                  <p className="text-gray-900 mt-1">{order.delivery_notes}</p>
-                </div>
-              )}
-              {order.siigo_observations && (
-                <div>
-                  <label className="text-sm font-medium text-gray-500">Observaciones SIIGO</label>
-                  <p className="text-gray-900 mt-1">{order.siigo_observations}</p>
-                </div>
-              )}
+      {/* Observaciones (unificadas, sin duplicados) */}
+      {(() => {
+        const s1 = (order.siigo_observations || '').toString().trim();
+        const s2 = (order.notes || '').toString().trim();
+        const s3 = (order.delivery_notes || '').toString().trim();
+        const primary = s1 || s2 || s3;
+        if (!primary) return null;
+        return (
+          <div className="card mt-6">
+            <div className="card-header">
+              <h3 className="text-lg font-semibold flex items-center">
+                <Icons.FileText className="w-5 h-5 mr-2" />
+                Observaciones
+              </h3>
+            </div>
+            <div className="card-content">
+              <p className="text-gray-900 whitespace-pre-line">{primary}</p>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Historial de Estados (si está disponible) */}
       {order.status_history && order.status_history.length > 0 && (
@@ -447,6 +605,60 @@ const OrderDetailPage = () => {
           </div>
         </div>
       )}
+      {/* Reason Modal: Devolver a Facturación */}
+      <ReasonModal
+        isOpen={showReturnModal}
+        onClose={() => !returnLoading && setShowReturnModal(false)}
+        order={order}
+        mode="return"
+        loading={returnLoading}
+        onConfirm={async ({ reason }) => {
+          try {
+            setReturnLoading(true);
+            const resp = await carteraService.returnToBilling(order.id, reason);
+            if (resp?.success) {
+              toast.success('Pedido devuelto a Facturación');
+            } else {
+              toast.success('Pedido devuelto a Facturación');
+            }
+            // Volver a la vista anterior (el pedido saldrá de la vista de Cartera)
+            navigate(-1);
+          } catch (e) {
+            // El interceptor ya muestra toast de error; agregar uno defensivo
+            toast.error(e?.response?.data?.message || 'No se pudo devolver el pedido');
+          } finally {
+            setReturnLoading(false);
+            setShowReturnModal(false);
+          }
+        }}
+      />
+
+      {/* Reason Modal: Cliente canceló pedido */}
+      <ReasonModal
+        isOpen={showCancelModal}
+        onClose={() => !cancelLoading && setShowCancelModal(false)}
+        order={order}
+        mode="reason"
+        loading={cancelLoading}
+        onConfirm={async ({ reason }) => {
+          try {
+            setCancelLoading(true);
+            const resp = await orderService.cancelByCustomer(order.id, { reason });
+            if (resp?.success) {
+              toast.success('Pedido cancelado por cliente');
+            } else {
+              toast.success('Pedido cancelado');
+            }
+            // Salir a la vista anterior; el pedido ya no debe estar en colas operativas
+            navigate(-1);
+          } catch (e) {
+            toast.error(e?.response?.data?.message || 'No se pudo cancelar el pedido');
+          } finally {
+            setCancelLoading(false);
+            setShowCancelModal(false);
+          }
+        }}
+      />
     </div>
   );
 };

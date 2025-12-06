@@ -16,7 +16,7 @@ const SiigoInvoicesPage = () => {
   const [socketConnected, setSocketConnected] = useState(false);
   const [pagination, setPagination] = useState({});
   const [currentPage, setCurrentPage] = useState(1);
-  const [perPage] = useState(10); // Items por página
+  const [perPage, setPerPage] = useState(20); // Items por página (ajustable, menor para evitar timeouts)
   const [siigoStartDate, setSiigoStartDate] = useState(null);
   const socketRef = useRef(null);
   
@@ -25,13 +25,23 @@ const SiigoInvoicesPage = () => {
   const lastConnectionCheck = useRef(0);
   const requestQueue = useRef([]);
   const isRequestInProgress = useRef(false);
+  const hasRetriedRef = useRef(false);
   const RATE_LIMIT_DELAY = 3000; // 3 segundos entre requests
   const CONNECTION_CHECK_INTERVAL = 60000; // 1 minuto entre verificaciones de conexión
 
   // Configurar WebSocket para notificaciones en tiempo real
   useEffect(() => {
     // Conectar a WebSocket
-    socketRef.current = io(process.env.REACT_APP_API_URL || 'http://localhost:3001');
+    const apiBase = process.env.REACT_APP_API_URL || 'http://localhost:3001';
+    const socketBase = (typeof apiBase === 'string' && !apiBase.startsWith('http'))
+      ? window.location.origin
+      : apiBase;
+    // Alinear configuración de Socket.IO con otras páginas (path + transports)
+    socketRef.current = io(socketBase, {
+      path: '/socket.io',
+      withCredentials: true,
+      transports: ['websocket', 'polling']
+    });
     
     socketRef.current.on('connect', () => {
       console.log('🔌 Conectado a WebSocket');
@@ -43,6 +53,22 @@ const SiigoInvoicesPage = () => {
     socketRef.current.on('disconnect', () => {
       console.log('🔌 Desconectado de WebSocket');
       setSocketConnected(false);
+    });
+
+    // Manejar errores de conexión y reintentos
+    socketRef.current.on('connect_error', (err) => {
+      console.warn('⚠️ Error de conexión Socket.IO en SiigoInvoicesPage:', err?.message || err);
+      setSocketConnected(false);
+    });
+
+    socketRef.current.on('reconnect', () => {
+      console.log('🔌 Re-conectado a WebSocket');
+      setSocketConnected(true);
+      try {
+        socketRef.current.emit('join-siigo-updates');
+      } catch {}
+      // Forzar refresco tras reconexión
+      setTimeout(() => loadInvoices(), 500);
     });
     
     // Escuchar notificaciones de nuevas facturas
@@ -130,7 +156,31 @@ const SiigoInvoicesPage = () => {
       console.log('🔄 Cargando facturas SIIGO... (esto puede tomar hasta 2 minutos)');
       
       // Timeout específico para SIIGO (más largo que el global)
+      // Restringir ventana temporal solicitada para evitar timeouts: usar fecha de inicio del sistema, pero si es muy antigua, recortar a últimos 2-14 días
+      const prefStartDate = (() => {
+        try {
+          const today = new Date();
+          const twoDaysAgo = new Date(today.getTime() - 2 * 24 * 60 * 60 * 1000);
+          if (siigoStartDate) {
+            const cfg = new Date(siigoStartDate);
+            if (!isNaN(cfg.getTime())) {
+              const fourteenDaysAgo = new Date(today.getTime() - 14 * 24 * 60 * 60 * 1000);
+              const chosen = (cfg < fourteenDaysAgo) ? twoDaysAgo : cfg;
+              return chosen.toISOString().split('T')[0];
+            }
+          }
+          return twoDaysAgo.toISOString().split('T')[0];
+        } catch {
+          return undefined;
+        }
+      })();
+
       const response = await api.get('/siigo/invoices', {
+        params: {
+          page: currentPage,
+          page_size: perPage || 20,
+          start_date: prefStartDate
+        },
         timeout: 180000 // 3 minutos específicamente para SIIGO
       });
       
@@ -200,6 +250,21 @@ const SiigoInvoicesPage = () => {
       }
     } catch (error) {
       console.error('❌ Error cargando facturas:', error);
+      // Reintento único con backoff cuando hay timeout o 429 (respetando Retry-After)
+      try {
+        if ((error?.code === 'ECONNABORTED' || error?.response?.status === 429) && !hasRetriedRef.current) {
+          hasRetriedRef.current = true;
+          const retryAfter = parseInt(error?.response?.headers?.['retry-after'] || '5', 10);
+          const delayMs = Number.isNaN(retryAfter) ? 5000 : Math.max(3000, retryAfter * 1000);
+          const nextPer = Math.max(10, Math.floor((perPage || 20) / 2));
+          console.warn(`⏳ Reintentando carga de facturas en ${delayMs}ms con page_size=${nextPer}`);
+          setPerPage(nextPer);
+          setTimeout(() => {
+            loadInvoices();
+          }, delayMs);
+          return;
+        }
+      } catch (_) {}
       console.error('❌ Error stack:', error.stack);
       
       // Manejo específico de errores SIIGO
@@ -304,7 +369,17 @@ const SiigoInvoicesPage = () => {
 
   const formatDate = (dateString) => {
     if (!dateString) return 'N/A';
-    return new Date(dateString).toLocaleDateString('es-CO');
+    // Evitar desfase por zona horaria: si comienza con YYYY-MM-DD, usar la porción de fecha directamente
+    if (typeof dateString === 'string' && /^\d{4}-\d{2}-\d{2}/.test(dateString)) {
+      const ymd = dateString.slice(0, 10);
+      const [y, m, d] = ymd.split('-');
+      return `${d}/${m}/${y}`;
+    }
+    try {
+      const d = new Date(dateString);
+      if (!isNaN(d.getTime())) return d.toLocaleDateString('es-CO');
+    } catch (_) {}
+    return String(dateString);
   };
 
   const formatCurrency = (amount) => {
@@ -434,6 +509,21 @@ const SiigoInvoicesPage = () => {
             }
           </div>
           
+          {/* Selector de items por página */}
+          <div className="flex items-center space-x-2 bg-gray-100 rounded-md px-2 py-1">
+            <span className="text-sm text-gray-700">Por página:</span>
+            <select
+              className="text-sm border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+              value={perPage}
+              onChange={(e) => setPerPage(parseInt(e.target.value) || 10)}
+            >
+              <option value={10}>10</option>
+              <option value={20}>20</option>
+              <option value={50}>50</option>
+              <option value={100}>100</option>
+            </select>
+          </div>
+
           <button
             onClick={loadInvoices}
             disabled={loading}

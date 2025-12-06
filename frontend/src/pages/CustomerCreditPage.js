@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import LoadingSpinner from '../components/LoadingSpinner';
+import { customerService } from '../services/api';
 
 const CustomerCreditPage = () => {
     const { user } = useAuth();
@@ -26,6 +27,11 @@ const CustomerCreditPage = () => {
         notes: '',
         status: 'active'
     });
+
+    // Autocompletar desde clientes SIIGO sincronizados
+    const [nitQuery, setNitQuery] = useState('');
+    const [customerSuggestions, setCustomerSuggestions] = useState([]);
+    const [nitSelected, setNitSelected] = useState(false);
 
     useEffect(() => {
         if (user?.role === 'admin') {
@@ -165,6 +171,9 @@ const CustomerCreditPage = () => {
             notes: '',
             status: 'active'
         });
+        setNitQuery('');
+        setCustomerSuggestions([]);
+        setNitSelected(false);
         setEditingCustomer(null);
     };
 
@@ -401,16 +410,65 @@ const CustomerCreditPage = () => {
                                 {editingCustomer ? 'Editar Cliente' : 'Nuevo Cliente de Crédito'}
                             </h3>
                             <form onSubmit={handleSubmit} className="space-y-4">
-                                <div>
+                                <div className="relative">
                                     <label className="block text-sm font-medium text-gray-700">NIT</label>
                                     <input
                                         type="text"
                                         required
                                         value={formData.customer_nit}
-                                        onChange={(e) => setFormData({ ...formData, customer_nit: e.target.value })}
+                                        onChange={async (e) => {
+                                            const value = e.target.value;
+                                            setFormData({ ...formData, customer_nit: value });
+                                            setNitQuery(value);
+                                            setNitSelected(false);
+                                            setFormData(prev => ({ ...prev, customer_name: prev.customer_name }));
+                                            if (value && value.trim().length >= 2) {
+                                                try {
+                                                    const resp = await customerService.searchCustomers(value.trim());
+                                                    if (resp && resp.success) {
+                                                        setCustomerSuggestions(resp.customers || resp.data || []);
+                                                    } else {
+                                                        setCustomerSuggestions([]);
+                                                    }
+                                                } catch (err) {
+                                                    setCustomerSuggestions([]);
+                                                }
+                                            } else {
+                                                setCustomerSuggestions([]);
+                                            }
+                                        }}
                                         disabled={editingCustomer}
+                                        placeholder="Escribe NIT o nombre y selecciona de la lista"
                                         className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100"
                                     />
+                                    {customerSuggestions && customerSuggestions.length > 0 && !nitSelected && (
+                                        <div className="absolute z-50 mt-1 w-full bg-white border border-gray-200 rounded-md shadow-lg max-h-56 overflow-auto">
+                                            {customerSuggestions.map((c) => {
+                                                const displayName = c.commercial_name && c.commercial_name.trim() && c.commercial_name.toLowerCase() !== 'no aplica'
+                                                    ? c.commercial_name
+                                                    : (c.name || 'Cliente');
+                                                const nit = c.identification || '';
+                                                return (
+                                                    <div
+                                                        key={`${nit}-${c.id}`}
+                                                        onClick={() => {
+                                                            setFormData(prev => ({
+                                                                ...prev,
+                                                                customer_nit: nit,
+                                                                customer_name: displayName
+                                                            }));
+                                                            setNitSelected(true);
+                                                            setCustomerSuggestions([]);
+                                                        }}
+                                                        className="px-3 py-2 cursor-pointer hover:bg-blue-50"
+                                                    >
+                                                        <div className="text-sm font-medium text-gray-900">{displayName}</div>
+                                                        <div className="text-xs text-gray-500">NIT: {nit}</div>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    )}
                                 </div>
 
                                 <div>
@@ -420,7 +478,8 @@ const CustomerCreditPage = () => {
                                         required
                                         value={formData.customer_name}
                                         onChange={(e) => setFormData({ ...formData, customer_name: e.target.value })}
-                                        className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                                        readOnly={nitSelected}
+                                        className={`mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 ${nitSelected ? 'bg-gray-100' : ''}`}
                                     />
                                 </div>
 

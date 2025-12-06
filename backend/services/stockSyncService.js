@@ -27,6 +27,9 @@ class StockSyncService {
         this.syncInterval = null;
         this.webhookService = new WebhookService();
         this.webhooksConfigured = false;
+        this.customerWebhooksConfigured = false;
+        // Ventana anti-rollback para evitar sobrescribir con stock más alto de SIIGO justo después de facturar
+        this.recentLocalDecrements = new Map();
         
         // Configurar intervalo de 5 minutos (300000 ms)
         this.SYNC_INTERVAL = 5 * 60 * 1000;
@@ -76,7 +79,7 @@ class StockSyncService {
                 FROM products 
                 WHERE siigo_id IS NOT NULL 
                 ORDER BY IFNULL(last_sync_at, '1970-01-01') ASC
-                LIMIT 50
+                LIMIT 20
             `);
 
             console.log(`🔍 Encontrados ${products.length} productos para sincronizar stock`);
@@ -89,8 +92,10 @@ class StockSyncService {
                     await this.updateProductStock(connection, product);
                     updated++;
                     
-                    // Rate limiting - esperar entre requests
-                    await new Promise(resolve => setTimeout(resolve, 200));
+                    // Espera adaptativa basada en el rate limit dinámico del siigoService (+ jitter)
+                    const baseDelay = Math.min(Math.max(siigoService.rateLimitDelay || 1000, 500), 2000);
+                    const jitter = Math.floor(Math.random() * 250);
+                    await new Promise(resolve => setTimeout(resolve, baseDelay + jitter));
                     
                 } catch (error) {
                     console.error(`❌ Error actualizando stock producto ${product.siigo_id}:`, error.message);
@@ -111,23 +116,89 @@ class StockSyncService {
         try {
             // Obtener datos del producto desde SIIGO usando el endpoint correcto
             const headers = await siigoService.getHeaders();
-            const response = await axios.get(
-                `${siigoService.getBaseUrl()}/v1/products?code=${product.siigo_id}`,
-                { headers }
-            );
+            let response;
+            const isUuid = typeof product.siigo_id === 'string' && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(product.siigo_id);
 
-            // La respuesta viene en results array, tomar el primer producto
-            if (!response.data.results || response.data.results.length === 0) {
+            try {
+                if (isUuid) {
+                    // Consultar por ID (endpoint directo) cuando el siigo_id es UUID
+                    response = await siigoService.makeRequestWithRetry(async () => {
+                        return await axios.get(`${siigoService.getBaseUrl()}/v1/products/${product.siigo_id}`, {
+                            headers,
+                            timeout: 30000
+                        });
+                    });
+                } else {
+                    // Consultar por código (SKU) cuando siigo_id no es UUID
+                    response = await siigoService.makeRequestWithRetry(async () => {
+                        return await axios.get(`${siigoService.getBaseUrl()}/v1/products`, {
+                            headers,
+                            params: { code: product.siigo_id },
+                            timeout: 30000
+                        });
+                    });
+                }
+            } catch (err) {
+                // Fallback cruzado si el primer método falla con 400/404
+                if (isUuid && (err.response?.status === 400 || err.response?.status === 404)) {
+                    response = await siigoService.makeRequestWithRetry(async () => {
+                        return await axios.get(`${siigoService.getBaseUrl()}/v1/products`, {
+                            headers,
+                            params: { code: product.siigo_id },
+                            timeout: 30000
+                        });
+                    });
+                } else if (!isUuid && (err.response?.status === 400 || err.response?.status === 404)) {
+                    response = await siigoService.makeRequestWithRetry(async () => {
+                        return await axios.get(`${siigoService.getBaseUrl()}/v1/products/${product.siigo_id}`, {
+                            headers,
+                            timeout: 30000
+                        });
+                    });
+                } else {
+                    throw err;
+                }
+            }
+
+            // Soportar respuesta en array (results) o objeto único, con validación de respuesta
+            const respData = response?.data;
+            if (!respData) {
+                throw new Error(`Invalid SIIGO response for product ${product.siigo_id}`);
+            }
+            const siigoProduct = Array.isArray(respData.results) ? respData.results[0] : respData;
+
+            if (!siigoProduct) {
                 throw new Error(`Product ${product.siigo_id} not found in SIIGO`);
             }
-            
-            const siigoProduct = response.data.results[0];
             const currentStock = siigoProduct.available_quantity || 0;
             const currentActive = siigoProduct.active !== false; // SIIGO active field
 
             // Verificar si hay cambios en stock o estado activo
             const stockChanged = currentStock !== product.available_quantity;
             const activeChanged = currentActive !== (product.is_active !== 0); // Convert DB boolean to boolean
+
+            // Protección anti-rollback: si acabamos de decrementar localmente y SIIGO aún reporta un valor mayor,
+            // evitamos sobrescribir el stock local para no "rebotar" el inventario (ventana 2 minutos)
+            try {
+                const recent = this.recentLocalDecrements.get(product.id);
+                if (recent && (Date.now() - recent.ts) < 2 * 60 * 1000) {
+                    if (currentStock > recent.value) {
+                        console.log(`⏸️ Protección anti-rollback: SIIGO=${currentStock} > local_reciente=${recent.value} para id=${product.id}. Saltando update.`);
+                        await connection.execute(`
+                            UPDATE products 
+                            SET last_sync_at = NOW()
+                            WHERE id = ?
+                        `, [product.id]);
+                        return false;
+                    }
+                    // Si SIIGO ya refleja el valor menor o igual, limpiar marca
+                    if (currentStock <= recent.value) {
+                        this.recentLocalDecrements.delete(product.id);
+                    }
+                }
+            } catch (e) {
+                console.warn('⚠️ Anti-rollback check error:', e?.message || e);
+            }
             
             if (stockChanged || activeChanged) {
                 await connection.execute(`
@@ -186,10 +257,27 @@ class StockSyncService {
                     WHERE id = ?
                 `, [product.id]);
                 console.log(`⚠️  Producto ${product.siigo_id} no encontrado en SIIGO, marcado como inactivo`);
+            } else if (error.response?.status === 400) {
+                // Respuesta inválida/param incorrecto: omitir sin marcar inactivo y avanzar
+                await connection.execute(`
+                    UPDATE products 
+                    SET last_sync_at = NOW()
+                    WHERE id = ?
+                `, [product.id]);
+                console.warn(`⚠️  400 al consultar producto ${product.siigo_id} en SIIGO. Omitiendo y continuando.`);
             } else {
                 throw error;
             }
         }
+    }
+
+    // Marcar decremento local reciente para protección anti-rollback (ventana ~2 minutos)
+    markLocalDecrement(dbProductId, newLocalValue) {
+        try {
+            const id = Number(dbProductId);
+            if (!Number.isFinite(id)) return;
+            this.recentLocalDecrements.set(id, { ts: Date.now(), value: Number(newLocalValue) || 0 });
+        } catch {}
     }
 
     async startAutoSync() {
@@ -206,6 +294,12 @@ class StockSyncService {
             if (!this.webhooksConfigured) {
                 console.log('🔧 Configurando webhooks de SIIGO...');
                 await this.webhookService.setupStockWebhooks();
+                try {
+                    await this.webhookService.setupCustomerWebhooks();
+                    this.customerWebhooksConfigured = true;
+                } catch (e) {
+                    console.error('⚠️  Error configurando webhooks de clientes:', e.message);
+                }
                 this.webhooksConfigured = true;
                 console.log('✅ Webhooks configurados exitosamente');
             }

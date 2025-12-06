@@ -207,21 +207,35 @@ class ConfigService {
   async getConfig(key, defaultValue = null) {
     try {
       await this.detectSchema();
-      const rows = await db.query(
-        'SELECT config_value, config_type, data_type FROM system_config WHERE config_key = ?',
-        [key]
-      );
+
+      let rows;
+      // Construir SELECT según columnas disponibles para evitar ER_BAD_FIELD_ERROR
+      if (this.hasConfigType || this.hasDataType) {
+        const cols = ['config_value'];
+        if (this.hasConfigType) cols.push('config_type');
+        if (this.hasDataType) cols.push('data_type');
+        const sql = `SELECT ${cols.join(', ')} FROM system_config WHERE config_key = ?`;
+        rows = await db.query(sql, [key]);
+      } else {
+        rows = await db.query(
+          'SELECT config_value FROM system_config WHERE config_key = ?',
+          [key]
+        );
+      }
       
       if (!rows || rows.length === 0) {
         return defaultValue;
       }
       
       const { config_value } = rows[0];
-      const type = rows[0].config_type || rows[0].data_type || null;
+      const type =
+        (this.hasConfigType ? rows[0].config_type : null) ??
+        (this.hasDataType ? rows[0].data_type : null) ??
+        null;
       
       switch (type) {
         case 'boolean':
-          return config_value === 'true';
+          return config_value === 'true' || config_value === true || config_value === 1 || config_value === '1';
         case 'number':
           return Number(config_value);
         case 'json':
@@ -232,7 +246,7 @@ class ConfigService {
           return config_value;
       }
     } catch (error) {
-      console.error(`❌ Error obteniendo configuración: ${error.message}`);
+      console.warn(`⚠️  getConfig fallback (${key}): ${error.message}`);
       return defaultValue;
     }
   }

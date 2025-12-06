@@ -141,6 +141,13 @@ const verifyRole = (allowedRoles) => {
       });
     }
 
+    // Soportar sistema avanzado: permitir si alguno de sus roles activos está en allowedRoles
+    if (Array.isArray(req.user.roles) && req.user.roles.length > 0) {
+      const names = req.user.roles.map(r => r.role_name);
+      const hasAny = names.some(n => allowedRoles.includes(n));
+      if (hasAny) return next();
+    }
+
     if (!allowedRoles.includes(req.user.role)) {
       return res.status(403).json({ 
         success: false, 
@@ -170,39 +177,54 @@ const requirePermission = (permission) => {
       return next();
     }
 
-    // Si no hay sistema avanzado, usar roles básicos
-    if (!req.user.permissions || req.user.permissions.length === 0) {
-      // Fallback a verificación básica por rol
-      const rolePermissions = {
-        'admin': true,
-        'facturador': permission.includes('billing') || permission.includes('orders'),
-        'cartera': permission.includes('wallet') || permission.includes('orders'),
-        'logistica': permission.includes('logistics') || permission.includes('orders') || permission.includes('packaging'), // ✅ Logística puede acceder a empaque
-        'empaque': permission.includes('packaging') || permission.includes('orders'),
-        'mensajero': permission.includes('logistics') || permission.includes('orders') // ✅ Mensajeros pueden actualizar pedidos para registrar entregas
-      };
-      
-      if (rolePermissions[req.user.role]) {
-        return next();
+    // 1) Si tiene el permiso explícito en el sistema avanzado, permitir
+    const hasExplicitPermission = Array.isArray(req.user.permissions) &&
+      req.user.permissions.some(p => p.permission_name === permission);
+    if (hasExplicitPermission) return next();
+
+    // 2) Fallback a verificación por rol (soporta rol simple y sistema avanzado)
+    const normalize = (s) => String(s || '')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '');
+
+    const roleNamesRaw = [
+      req.user.role,
+      ...(Array.isArray(req.user.roles) ? req.user.roles.map(r => r.role_name) : [])
+    ].filter(Boolean);
+    const roleNames = roleNamesRaw.map(normalize);
+
+    const allowByRole = (() => {
+      // Acceso explícito para módulo de empaque: aceptar variantes y sinónimos
+      if (permission === 'packaging') {
+        // Permitir también a cartera ver recursos de empaque (galería de evidencias)
+        const packagingRoles = new Set(['admin','logistica','logistics','empaque','empacador','packaging','packaging_team','cartera']);
+        return roleNames.some(r => packagingRoles.has(r));
       }
-      
-      return res.status(403).json({ 
-        success: false, 
-        message: `No tienes el permiso requerido: ${permission}` 
-      });
+      // Compatibilidad genérica anterior (también acepta inglés y sin acentos)
+      const map = {
+        admin: true,
+        facturador: permission.includes('billing') || permission.includes('orders'),
+        cartera: permission.includes('wallet') || permission.includes('orders') || permission.includes('packaging'),
+        logistica: permission.includes('logistics') || permission.includes('orders') || permission.includes('packaging'),
+        logistics: permission.includes('logistics') || permission.includes('orders') || permission.includes('packaging'),
+        empaque: permission.includes('packaging') || permission.includes('orders'),
+        empacador: permission.includes('packaging'),
+        packaging: permission.includes('packaging') || permission.includes('orders'),
+        mensajero: permission.includes('logistics') || permission.includes('orders')
+      };
+      return roleNames.some(rn => map[rn]);
+    })();
+
+    if (allowByRole) {
+      return next();
     }
 
-    // Verificar si el usuario tiene el permiso específico
-    const hasPermission = req.user.permissions.some(p => p.permission_name === permission);
-
-    if (!hasPermission) {
-      return res.status(403).json({ 
-        success: false, 
-        message: `No tienes el permiso requerido: ${permission}` 
-      });
-    }
-
-    next();
+    // 3) Si no pasa ninguna, denegar
+    return res.status(403).json({ 
+      success: false, 
+      message: `No tienes el permiso requerido: ${permission}` 
+    });
   };
 };
 
@@ -274,7 +296,7 @@ const verifyRoles = {
   logistica: verifyRole(['admin', 'logistica']),
   mensajero: verifyRole(['admin', 'mensajero']),
   adminOrFacturador: verifyRole(['admin', 'facturador']),
-  allRoles: verifyRole(['admin', 'facturador', 'cartera', 'logistica', 'mensajero'])
+  allRoles: verifyRole(['admin', 'facturador', 'cartera', 'logistica', 'mensajero', 'empacador', 'empaque', 'packaging'])
 };
 
 module.exports = {

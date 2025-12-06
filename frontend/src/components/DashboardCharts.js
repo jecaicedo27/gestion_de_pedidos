@@ -29,6 +29,29 @@ const COLORS = {
 
 const PIE_COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#06B6D4', '#6B7280', '#8B5CF6'];
 
+// Helper: formatear correctamente fechas 'YYYY-MM-DD' como fecha local (evita desfase de zona horaria)
+const formatYMDLabelES = (s) => {
+  try {
+    if (!s) return '';
+    const [y, m, d] = String(s).split('-').map(Number);
+    if (!y || !m || !d) {
+      return new Date(s).toLocaleDateString('es-CO', { month: 'short', day: 'numeric' });
+    }
+    const dt = new Date(y, m - 1, d);
+    return dt.toLocaleDateString('es-CO', { month: 'short', day: 'numeric' });
+  } catch {
+    return String(s);
+  }
+};
+
+// Helper: obtener 'YYYY-MM-DD' desde un Date en hora local
+const toYMD = (dt) => {
+  const y = dt.getFullYear();
+  const m = String(dt.getMonth() + 1).padStart(2, '0');
+  const d = String(dt.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+};
+
 // Componente para gráfico de líneas - Evolución de pedidos
 export const OrderEvolutionChart = ({ data, loading }) => {
   if (loading) {
@@ -39,13 +62,39 @@ export const OrderEvolutionChart = ({ data, loading }) => {
     );
   }
 
-  const formattedData = data?.map(item => ({
-    ...item,
-    date: new Date(item.date).toLocaleDateString('es-CO', { 
-      month: 'short', 
-      day: 'numeric' 
-    })
-  })) || [];
+  // Completar la serie de los últimos 14 días (incluye días con 0) y formatear sin desfase de TZ
+  const items = Array.isArray(data) ? data : [];
+  // Normalizar la clave de fecha a 'YYYY-MM-DD' para alinear con los labels y evitar desfase
+  const normalizeToYMD = (v) => {
+    if (!v) return null;
+    const s = String(v);
+    const ymd = s.includes('T') ? s.split('T')[0] : (s.includes(' ') ? s.split(' ')[0] : s);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return ymd;
+    const d = new Date(s);
+    if (isNaN(d)) return null;
+    return toYMD(d);
+  };
+  const map = new Map();
+  for (const it of items) {
+    const key = normalizeToYMD(it.date);
+    if (key) {
+      map.set(key, { count: Number(it.count || 0), revenue: Number(it.revenue || 0) });
+    }
+  }
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  const formattedData = [];
+  for (let i = 13; i >= 0; i--) {
+    const d = new Date(start);
+    d.setDate(start.getDate() - i);
+    const key = toYMD(d);
+    const entry = map.get(key) || { count: 0, revenue: 0 };
+    formattedData.push({
+      date: formatYMDLabelES(key),
+      count: entry.count,
+      revenue: entry.revenue
+    });
+  }
 
   return (
     <ResponsiveContainer width="100%" height={320}>
@@ -287,7 +336,7 @@ export const MessengerTrendsChart = ({ data, loading }) => {
 
   const formattedData = (data || []).map(item => ({
     ...item,
-    date: new Date(item.date).toLocaleDateString('es-CO', { month: 'short', day: 'numeric' }),
+    date: formatYMDLabelES(item.date),
     assigned: Number(item.assigned || 0),
     accepted: Number(item.accepted || 0),
     in_delivery: Number(item.in_delivery || 0),

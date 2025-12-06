@@ -6,44 +6,51 @@ const router = express.Router();
 const webhookService = new WebhookService();
 
 // Ruta para recibir webhooks de SIIGO (no requiere autenticación porque viene de SIIGO)
-router.post('/receive', async (req, res) => {
+router.post('/receive', express.json({ type: '*/*' }), async (req, res) => {
     try {
-        console.log('📥 Webhook recibido de SIIGO:', JSON.stringify(req.body, null, 2));
-        
-        const payload = req.body;
-        
-        // Validar que tenga la estructura básica esperada
-        if (!payload || !payload.topic || !payload.id) {
-            console.error('❌ Webhook inválido - falta topic o id');
-            return res.status(400).json({
-                success: false,
-                message: 'Payload de webhook inválido'
-            });
-        }
+        // ACK INMEDIATO para evitar reintentos de SIIGO por timeouts
+        const payload = req.body || {};
+        const hasMinimalShape = !!payload && !!payload.topic && !!payload.id;
 
-        // Procesar el webhook
-        const processed = await webhookService.processWebhookPayload(payload);
-        
-        if (processed) {
-            console.log('✅ Webhook procesado exitosamente');
-            res.status(200).json({
-                success: true,
-                message: 'Webhook procesado exitosamente'
+        // Log básico sin bloquear
+        try {
+            console.log('📥 Webhook recibido de SIIGO (ACK inmediato):', {
+                topic: payload?.topic,
+                id: payload?.id,
+                code: payload?.code,
+                ts: new Date().toISOString()
             });
-        } else {
-            console.log('⚠️  Webhook recibido pero no procesado completamente');
-            res.status(200).json({
-                success: true,
-                message: 'Webhook recibido pero no procesado completamente'
-            });
-        }
+        } catch {}
 
-    } catch (error) {
-        console.error('❌ Error procesando webhook:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Error interno del servidor procesando webhook'
+        // Responder siempre 202 lo más rápido posible
+        res.status(202).json({
+            success: true,
+            received: true
         });
+
+        // Procesar en background para no bloquear la respuesta a SIIGO
+        setImmediate(async () => {
+            try {
+                if (!hasMinimalShape) {
+                    console.error('❌ Webhook inválido - falta topic o id (procesamiento async omitido)');
+                    return;
+                }
+                const processed = await webhookService.processWebhookPayload(payload);
+                if (processed) {
+                    console.log('✅ Webhook procesado (async):', payload.topic, payload.id);
+                } else {
+                    console.log('⚠️  Webhook recibido (async) pero no procesado completamente:', payload.topic, payload.id);
+                }
+            } catch (e) {
+                console.error('❌ Error procesando webhook (async):', e?.message || e);
+            }
+        });
+    } catch (error) {
+        // Fallback: intentar devolver ACK si no se envió aún
+        try {
+            res.status(202).json({ success: true, received: true });
+        } catch {}
+        console.error('❌ Error en /webhooks/receive (envolvente):', error?.message || error);
     }
 });
 

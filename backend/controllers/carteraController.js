@@ -1,4 +1,4 @@
-const { query } = require('../config/database');
+const { query, transaction } = require('../config/database');
 
 /**
  * GET /api/cartera/pending?messengerId=&from=&to=
@@ -14,7 +14,8 @@ const getPendingCashOrders = async (req, res) => {
     const whereMessenger = [
       'dt.delivered_at IS NOT NULL',
       '(COALESCE(dt.payment_collected,0) > 0 OR COALESCE(dt.delivery_fee_collected,0) > 0)',
-      '(ccd.id IS NULL OR ccd.collection_status <> "collected")'
+      '(ccd.id IS NULL OR ccd.collection_status <> "collected")',
+      "LOWER(COALESCE(o.payment_method,'')) <> 'reposicion'"
     ];
     const paramsMessenger = [];
 
@@ -45,9 +46,14 @@ const getPendingCashOrders = async (req, res) => {
         u.full_name AS messenger_name,
         dt.delivered_at,
         o.siigo_invoice_created_at AS invoice_date,
-        COALESCE(dt.payment_collected,0) AS product_collected,
-        COALESCE(dt.delivery_fee_collected,0) AS delivery_fee_collected,
-        (COALESCE(dt.payment_collected,0) + COALESCE(dt.delivery_fee_collected,0)) AS expected_amount,
+        -- Solo contabilizar efectivo para Cartera
+        CASE WHEN LOWER(COALESCE(dt.payment_method,'')) = 'efectivo' THEN COALESCE(dt.payment_collected,0) ELSE 0 END AS product_collected,
+        CASE WHEN LOWER(COALESCE(dt.delivery_fee_payment_method,'')) = 'efectivo' THEN COALESCE(dt.delivery_fee_collected,0) ELSE 0 END AS delivery_fee_collected,
+        (
+          CASE WHEN LOWER(COALESCE(dt.payment_method,'')) = 'efectivo' THEN COALESCE(dt.payment_collected,0) ELSE 0 END
+          +
+          CASE WHEN LOWER(COALESCE(dt.delivery_fee_payment_method,'')) = 'efectivo' THEN COALESCE(dt.delivery_fee_collected,0) ELSE 0 END
+        ) AS expected_amount,
         ccd.id AS detail_id,
         ccd.collected_amount AS declared_amount,
         ccd.collection_status,
@@ -56,18 +62,27 @@ const getPendingCashOrders = async (req, res) => {
         NULL AS cash_register_id,
         'messenger' AS source
       FROM orders o
-      JOIN delivery_tracking dt ON dt.order_id = o.id
+      -- Usar SIEMPRE el último registro de tracking por pedido para evitar filas antiguas
+      JOIN delivery_tracking dt ON dt.id = (
+        SELECT MAX(id) FROM delivery_tracking WHERE order_id = o.id
+      )
       LEFT JOIN cash_closing_details ccd ON ccd.order_id = o.id
       LEFT JOIN messenger_cash_closings mcc ON mcc.id = ccd.closing_id
       LEFT JOIN users u ON u.id = o.assigned_messenger_id
       WHERE ${whereMessenger.join(' AND ')}
+        AND (
+          (LOWER(COALESCE(dt.payment_method,'')) = 'efectivo' AND COALESCE(dt.payment_collected,0) > 0)
+          OR
+          (LOWER(COALESCE(dt.delivery_fee_payment_method,'')) = 'efectivo' AND COALESCE(dt.delivery_fee_collected,0) > 0)
+        )
       ORDER BY dt.delivered_at DESC
       LIMIT 500
     `;
 
     // Bloque 2: pagos registrados en bodega (cash_register) pendientes de aceptación
     const whereBodega = [
-      `(cr.status IS NULL OR cr.status <> 'collected')`
+      `(cr.status IS NULL OR cr.status <> 'collected')`,
+      "LOWER(COALESCE(o.payment_method,'')) <> 'reposicion'"
     ];
     const paramsBodega = [];
 
@@ -105,9 +120,17 @@ const getPendingCashOrders = async (req, res) => {
         NULL AS closing_id,
         NULL AS closing_date,
         cr.id AS cash_register_id,
+        cr.registered_by,
+        COALESCE(ur.full_name, ur.username) AS registered_by_name,
+        ur.role AS registered_by_role,
+        cr.accepted_by,
+        COALESCE(ua.full_name, ua.username) AS accepted_by_name,
+        ua.role AS accepted_by_role,
         'bodega' AS source
       FROM cash_register cr
       JOIN orders o ON o.id = cr.order_id
+      LEFT JOIN users ur ON ur.id = cr.registered_by
+      LEFT JOIN users ua ON ua.id = cr.accepted_by
       WHERE ${whereBodega.join(' AND ')}
       ORDER BY cr.created_at DESC
       LIMIT 500
@@ -117,8 +140,100 @@ const getPendingCashOrders = async (req, res) => {
     const rowsMessenger = await query(sqlMessenger, paramsMessenger);
     const rowsBodega = await query(sqlBodega, paramsBodega);
 
+    // Bloque 3: órdenes Recoge en Bodega sin cash_register aún (para que Cartera pueda registrar pago directo)
+    const eligibleStatuses = ['en_preparacion', 'en_logistica', 'en_empaque', 'empacado', 'listo', 'listo_para_entrega'];
+    const pmCash = ['efectivo', 'contado'];
+    const sqlEligible = `
+      SELECT 
+        o.id AS order_id,
+        o.order_number,
+        o.customer_name,
+        o.customer_phone,
+        o.customer_address,
+        o.total_amount,
+        o.payment_method,
+        o.shipping_payment_method,
+        NULL AS messenger_id,
+        'Bodega' AS messenger_name,
+        o.updated_at AS delivered_at,
+        o.siigo_invoice_created_at AS invoice_date,
+        0 AS product_collected,
+        0 AS delivery_fee_collected,
+        COALESCE(o.total_amount,0) AS expected_amount,
+        NULL AS detail_id,
+        0 AS declared_amount,
+        'pending' AS collection_status,
+        NULL AS closing_id,
+        NULL AS closing_date,
+        NULL AS cash_register_id,
+        NULL AS registered_by,
+        NULL AS registered_by_name,
+        NULL AS registered_by_role,
+        NULL AS accepted_by,
+        NULL AS accepted_by_name,
+        NULL AS accepted_by_role,
+        'bodega_eligible' AS source
+      FROM orders o
+      WHERE 
+        LOWER(COALESCE(o.delivery_method,'')) IN ('recoge_bodega','recogida_tienda')
+        AND LOWER(COALESCE(o.payment_method,'')) IN ('efectivo','contado')
+        AND o.status IN (${eligibleStatuses.map(() => '?').join(',')})
+        AND NOT EXISTS (SELECT 1 FROM cash_register cr WHERE cr.order_id = o.id)
+      ORDER BY o.updated_at DESC
+      LIMIT 500`;
+    const rowsEligible = await query(sqlEligible, eligibleStatuses);
+
+    // Bloque 4: Pagos Adhoc (recibos manuales de mensajero)
+    const whereAdhoc = ["status = 'pending'"];
+    const paramsAdhoc = [];
+    if (messengerId) {
+      whereAdhoc.push('messenger_id = ?');
+      paramsAdhoc.push(messengerId);
+    }
+    if (from) {
+      whereAdhoc.push('created_at >= ?');
+      paramsAdhoc.push(new Date(from).toISOString().slice(0, 19).replace('T', ' '));
+    }
+    if (to) {
+      whereAdhoc.push('created_at <= ?');
+      paramsAdhoc.push(new Date(to).toISOString().slice(0, 19).replace('T', ' '));
+    }
+
+    const sqlAdhoc = `
+      SELECT
+        CONCAT('adhoc-', map.id) AS order_id,
+        CONCAT('Recaudo #', map.id) AS order_number,
+        map.description AS customer_name,
+        NULL AS customer_phone,
+        NULL AS customer_address,
+        map.amount AS total_amount,
+        'efectivo' AS payment_method,
+        NULL AS shipping_payment_method,
+        map.messenger_id,
+        u.full_name AS messenger_name,
+        map.created_at AS delivered_at,
+        NULL AS invoice_date,
+        map.amount AS product_collected,
+        0 AS delivery_fee_collected,
+        map.amount AS expected_amount,
+        NULL AS detail_id,
+        0 AS declared_amount,
+        'pending' AS collection_status,
+        NULL AS closing_id,
+        NULL AS closing_date,
+        NULL AS cash_register_id,
+        'messenger_adhoc' AS source,
+        map.evidence_url,
+        map.id AS adhoc_id
+      FROM messenger_adhoc_payments map
+      JOIN users u ON u.id = map.messenger_id
+      WHERE ${whereAdhoc.join(' AND ')}
+      ORDER BY map.created_at DESC
+    `;
+    const rowsAdhoc = await query(sqlAdhoc, paramsAdhoc);
+
     // Unir y ordenar por fecha descendente
-    const rows = [...rowsMessenger, ...rowsBodega].sort((a, b) => {
+    const rows = [...rowsMessenger, ...rowsBodega, ...rowsEligible, ...rowsAdhoc].sort((a, b) => {
       const da = a.delivered_at ? new Date(a.delivered_at).getTime() : 0;
       const db = b.delivered_at ? new Date(b.delivered_at).getTime() : 0;
       return db - da;
@@ -204,9 +319,10 @@ const getHandovers = async (req, res) => {
     const bodegaRows = await query(
       `
       SELECT
-        -UNIX_TIMESTAMP(DATE(cr.accepted_at)) AS id,
+        -- Identificador único por día y origen
+        -(UNIX_TIMESTAMP(DATE(cr.accepted_at)) + CASE WHEN LOWER(COALESCE(ua.role,''))='logistica' THEN 1 ELSE 2 END) AS id,
         NULL AS messenger_id,
-        'Bodega' AS messenger_name,
+        CASE WHEN LOWER(COALESCE(ua.role,''))='logistica' THEN 'Bodega - Logística' ELSE 'Bodega - Cartera' END AS messenger_name,
         DATE(cr.accepted_at) AS closing_date,
         SUM(COALESCE(cr.accepted_amount, cr.amount)) AS expected_amount,
         SUM(COALESCE(cr.accepted_amount, cr.amount)) AS declared_amount,
@@ -219,10 +335,12 @@ const getHandovers = async (req, res) => {
         MAX(cr.accepted_at) AS updated_at,
         COUNT(*) AS items_count,
         COUNT(*) AS items_collected,
-        'bodega' AS source
+        CASE WHEN LOWER(COALESCE(ua.role,''))='logistica' THEN 'bodega_logistica' ELSE 'bodega_cartera' END AS source
       FROM cash_register cr
+      LEFT JOIN users ur ON ur.id = cr.registered_by
+      LEFT JOIN users ua ON ua.id = cr.accepted_by
       WHERE ${whereBodega.join(' AND ')}
-      GROUP BY DATE(cr.accepted_at)
+      GROUP BY DATE(cr.accepted_at), CASE WHEN LOWER(COALESCE(ua.role,''))='logistica' THEN 'logistica' ELSE 'cartera' END
       ORDER BY DATE(cr.accepted_at) DESC
       LIMIT 500
       `,
@@ -293,9 +411,13 @@ const getHandoverDetails = async (req, res) => {
         d.collected_amount AS declared_amount,
         d.collection_status,
         d.collected_at,
-        d.collection_notes
+        d.collection_notes,
+        mcc.approved_by AS accepted_by,
+        ua.full_name AS accepted_by_name
       FROM cash_closing_details d
       JOIN orders o ON o.id = d.order_id
+      LEFT JOIN messenger_cash_closings mcc ON mcc.id = d.closing_id
+      LEFT JOIN users ua ON ua.id = mcc.approved_by
       WHERE d.closing_id = ?
       ORDER BY d.id ASC
       `,
@@ -629,7 +751,9 @@ const getCashRegisterReceipt = async (req, res) => {
 const getBodegaHandoverDetails = async (req, res) => {
   try {
     const { date } = req.params; // 'YYYY-MM-DD'
-    // Items del día
+    const origin = String(req.query.origin || '').toLowerCase(); // 'logistica' | 'cartera' | ''
+    const originFilter = origin === 'logistica' ? " AND LOWER(COALESCE(ua.role,''))='logistica'" : (origin === 'cartera' ? " AND LOWER(COALESCE(ua.role,''))<>'logistica'" : '');
+    // Items del día (con filtro por origen si aplica)
     const items = await query(
       `
       SELECT
@@ -643,10 +767,17 @@ const getBodegaHandoverDetails = async (req, res) => {
         COALESCE(cr.amount,0) AS expected_amount,
         COALESCE(cr.accepted_amount, cr.amount) AS declared_amount,
         COALESCE(cr.status,'pending') AS collection_status,
-        cr.accepted_at AS collected_at
+        cr.accepted_at AS collected_at,
+        cr.accepted_by,
+        COALESCE(ua.full_name, ua.username) AS accepted_by_name,
+        ua.role AS accepted_by_role,
+        COALESCE(ur.role,'') AS registered_by_role,
+        COALESCE(ur.full_name, ur.username) AS registered_by_name
       FROM cash_register cr
       JOIN orders o ON o.id = cr.order_id
-      WHERE DATE(cr.accepted_at) = ? AND cr.status = 'collected'
+      LEFT JOIN users ua ON ua.id = cr.accepted_by
+      LEFT JOIN users ur ON ur.id = cr.registered_by
+      WHERE DATE(cr.accepted_at) = ? AND cr.status = 'collected'${originFilter}
       ORDER BY cr.accepted_at ASC
       `,
       [date]
@@ -656,9 +787,9 @@ const getBodegaHandoverDetails = async (req, res) => {
     const declared = items.reduce((sum, it) => sum + Number(it.declared_amount || 0), 0);
 
     const header = {
-      id: -Math.floor(new Date(`${date} 00:00:00`).getTime() / 1000),
+      id: -Math.floor(new Date(`${date} 00:00:00`).getTime() / 1000) + (origin === 'logistica' ? 1 : origin === 'cartera' ? 2 : 0),
       messenger_id: null,
-      messenger_name: 'Bodega',
+      messenger_name: origin === 'logistica' ? 'Bodega - Logística' : (origin === 'cartera' ? 'Bodega - Cartera' : 'Bodega'),
       closing_date: date,
       expected_amount: expected,
       declared_amount: declared,
@@ -668,7 +799,8 @@ const getBodegaHandoverDetails = async (req, res) => {
       approved_by_name: null,
       approved_at: null,
       created_at: null,
-      updated_at: null
+      updated_at: null,
+      origin
     };
 
     return res.json({ success: true, data: { handover: header, items } });
@@ -685,6 +817,8 @@ const getBodegaHandoverDetails = async (req, res) => {
 const getBodegaHandoverReceipt = async (req, res) => {
   try {
     const { date } = req.params;
+    const origin = String(req.query.origin || '').toLowerCase();
+    const originFilter = origin === 'logistica' ? " AND LOWER(COALESCE(ua.role,''))='logistica'" : (origin === 'cartera' ? " AND LOWER(COALESCE(ua.role,''))<>'logistica'" : '');
     const rows = await query(
       `
       SELECT
@@ -698,7 +832,9 @@ const getBodegaHandoverReceipt = async (req, res) => {
         cr.accepted_at
       FROM cash_register cr
       JOIN orders o ON o.id = cr.order_id
-      WHERE DATE(cr.accepted_at) = ? AND cr.status = 'collected'
+      LEFT JOIN users ur ON ur.id = cr.registered_by
+      LEFT JOIN users ua ON ua.id = cr.accepted_by
+      WHERE DATE(cr.accepted_at) = ? AND cr.status = 'collected'${originFilter}
       ORDER BY cr.accepted_at ASC
       `,
       [date]
@@ -784,6 +920,364 @@ const getBodegaHandoverReceipt = async (req, res) => {
   }
 };
 
+/**
+ * POST /api/cartera/orders/:id/return-to-billing
+ * Devuelve un pedido a Facturación para corrección de forma de pago/envío.
+ * Reglas:
+ *  - Solo roles: cartera, admin
+ *  - Solo si el pedido está en 'revision_cartera'
+ *  - No debe tener cobros aceptados (cash_register.status = 'collected' o cash_closing_details.collection_status = 'collected')
+ *  - No debe estar entregado (delivery_tracking.delivered_at)
+ * Auditoría:
+ *  - Inserta en orders_audit con action = 'RETURN_TO_BILLING' y motivo en customer_name
+ */
+const returnToBilling = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { reason, cleanFlags } = req.body || {};
+    const userId = req.user?.id || null;
+
+    if (!reason || String(reason).trim().length < 3) {
+      return res.status(400).json({ success: false, message: 'Debes especificar un motivo (mínimo 3 caracteres)' });
+    }
+
+    // 1) Cargar pedido y validar estado
+    const rows = await query(
+      `SELECT id, order_number, status, siigo_invoice_number, validation_status, validation_notes
+       FROM orders WHERE id = ? LIMIT 1`,
+      [id]
+    );
+    if (!rows.length) {
+      return res.status(404).json({ success: false, message: 'Pedido no encontrado' });
+    }
+    const order = rows[0];
+
+    if (order.status !== 'revision_cartera') {
+      return res.status(400).json({
+        success: false,
+        message: `Solo se pueden devolver pedidos en 'revision_cartera'. Estado actual: '${order.status}'`
+      });
+    }
+
+    // 2) Validaciones de bloqueo
+    const [hasCollectedCR] = await query(
+      `SELECT 1 AS ok FROM cash_register WHERE order_id = ? AND status = 'collected' LIMIT 1`,
+      [id]
+    );
+    if (hasCollectedCR && hasCollectedCR.ok === 1) {
+      return res.status(400).json({
+        success: false,
+        message: 'No se puede devolver: el pedido tiene pago aceptado en bodega'
+      });
+    }
+
+    const [hasCollectedCCD] = await query(
+      `SELECT 1 AS ok FROM cash_closing_details WHERE order_id = ? AND collection_status = 'collected' LIMIT 1`,
+      [id]
+    );
+    if (hasCollectedCCD && hasCollectedCCD.ok === 1) {
+      return res.status(400).json({
+        success: false,
+        message: 'No se puede devolver: el pedido tiene cobro aceptado en cierre de mensajero'
+      });
+    }
+
+    const [trk] = await query(
+      `SELECT delivered_at FROM delivery_tracking WHERE order_id = ? ORDER BY id DESC LIMIT 1`,
+      [id]
+    );
+    if (trk && trk.delivered_at) {
+      return res.status(400).json({
+        success: false,
+        message: 'No se puede devolver: el pedido ya fue entregado'
+      });
+    }
+
+    // 3) Transacción: auditoría + actualización
+    await transaction(async (connection) => {
+      // Auditoría: usar patrón similar a SPECIAL_MANAGED
+      try {
+        await connection.execute(
+          `INSERT INTO orders_audit (order_id, action, siigo_invoice_number, customer_name, user_id, created_at)
+           VALUES (?, 'RETURN_TO_BILLING', ?, ?, ?, NOW())`,
+          [id, order.siigo_invoice_number || null, String(reason).trim(), userId]
+        );
+      } catch (e) {
+        console.warn('orders_audit insert error (RETURN_TO_BILLING):', e.message);
+      }
+
+      // Limpieza mínima de banderas de Cartera. No tocar payment_method/delivery_method.
+      const setParts = [
+        `status = 'pendiente_por_facturacion'`,
+        `validation_status = NULL`,
+        `validation_notes = NULL`,
+        `updated_at = NOW()`
+      ];
+
+      // Limpieza opcional (si se solicita explícitamente)
+      if (cleanFlags === true) {
+        setParts.push(`requires_payment = NULL`);
+        setParts.push(`paid_amount = NULL`);
+        setParts.push(`siigo_payment_info = NULL`);
+      }
+
+      await connection.execute(
+        `UPDATE orders SET ${setParts.join(', ')} WHERE id = ?`,
+        [id]
+      );
+    });
+
+    // Emitir evento tiempo real si está disponible
+    try {
+      if (global.io) {
+        const payload = {
+          orderId: Number(id),
+          order_number: order.order_number,
+          from_status: 'revision_cartera',
+          to_status: 'pendiente_por_facturacion',
+          changed_by_role: req.user?.role || null,
+          timestamp: new Date().toISOString()
+        };
+        global.io.to('orders-updates').emit('order-status-changed', payload);
+        console.log('📡 Emitido order-status-changed (return-to-billing):', payload);
+      }
+    } catch (emitErr) {
+      console.error('⚠️  Error emitiendo evento order-status-changed:', emitErr.message);
+    }
+
+    return res.json({
+      success: true,
+      message: 'Pedido devuelto a Facturación para corrección',
+      data: { id: Number(id), from_status: 'revision_cartera', to_status: 'pendiente_por_facturacion' }
+    });
+  } catch (error) {
+    console.error('Error devolviendo pedido a facturación:', error);
+    return res.status(500).json({ success: false, message: 'Error interno del servidor' });
+  }
+};
+
+/**
+ * POST /api/cartera/orders/:id/close-siigo
+ * Marca el pedido como CERRADO EN SIIGO (marcado interno por ahora).
+ * Reglas:
+ *  - Solo roles: cartera, admin
+ *  - Requiere body.method en {'efectivo','transferencia'} (obligatorio)
+ *  - Si ya está cerrado, responde 409 sin cambios
+ * Auditoría:
+ *  - Inserta en orders_audit con action = 'SIIGO_CLOSED' y motivo (note) en customer_name
+ */
+const closeOrderInSiigo = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { method, note, tags } = req.body || {};
+    const userId = req.user?.id || null;
+
+    // Guardar nuevos tags en la tabla global
+    if (Array.isArray(tags) && tags.length > 0) {
+      for (const tagName of tags) {
+        if (tagName && typeof tagName === 'string' && tagName.trim()) {
+          try {
+            await query('INSERT IGNORE INTO tags (name) VALUES (?)', [tagName.trim()]);
+          } catch (e) {
+            // Ignorar errores de duplicados u otros
+            console.warn('Error guardando tag:', tagName, e.message);
+          }
+        }
+      }
+    }
+
+    const allowed = new Set(['efectivo', 'transferencia', 'mercadopago', 'credito', 'reposicion', 'otros', 'pago_electronico', 'contraentrega', 'publicidad']);
+    const normalizedMethod = String(method || '').toLowerCase().trim();
+
+    if (!allowed.has(normalizedMethod)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Método de cierre en Siigo inválido. Opciones: efectivo, transferencia, credito, reposicion, otros.'
+      });
+    }
+
+    // Verificar existencia de pedido y estado de cierre
+    const rows = await query(
+      'SELECT id, order_number, siigo_closed, siigo_invoice_number FROM orders WHERE id = ? LIMIT 1',
+      [id]
+    );
+    if (!rows.length) {
+      return res.status(404).json({ success: false, message: 'Pedido no encontrado' });
+    }
+    const order = rows[0];
+
+    if (Number(order.siigo_closed || 0) === 1) {
+      return res.status(409).json({
+        success: false,
+        message: 'El pedido ya está marcado como cerrado en Siigo'
+      });
+    }
+
+    // Marcar cierre interno
+    await transaction(async (connection) => {
+      await connection.execute(
+        `UPDATE orders
+           SET siigo_closed = 1,
+               siigo_closed_at = NOW(),
+               siigo_closed_by = ?,
+               siigo_closure_method = ?,
+               siigo_closure_note = ?,
+               tags = ?,
+               updated_at = NOW()
+         WHERE id = ?`,
+        [userId || null, normalizedMethod, note || null, tags ? JSON.stringify(tags) : null, id]
+      );
+
+      // Auditoría
+      try {
+        await connection.execute(
+          `INSERT INTO orders_audit (order_id, action, siigo_invoice_number, customer_name, user_id, created_at)
+           VALUES (?, 'SIIGO_CLOSED', ?, ?, ?, NOW())`,
+          [id, order.siigo_invoice_number || null, String(note || `Cierre en Siigo (${normalizedMethod})`).trim(), userId]
+        );
+      } catch (e) {
+        console.warn('orders_audit insert error (SIIGO_CLOSED):', e.message);
+      }
+    });
+
+    // Integración futura opcional con API de Siigo (flag via env)
+    try {
+      if (String(process.env.SIIGO_CLOSE_WITH_API || '').toLowerCase() === 'true') {
+        // TODO: implementar llamada real a la API de Siigo (stub)
+        console.log('ℹ️ SIIGO_CLOSE_WITH_API=true -> ejecutar integración real aquí (stub)');
+      }
+    } catch (e) {
+      console.warn('⚠️ Error en stub de integración SIIGO_CLOSE_WITH_API:', e.message);
+    }
+
+    // Emitir evento en tiempo real para clientes suscritos (indicador visual)
+    try {
+      if (global.io) {
+        const payload = {
+          orderId: Number(id),
+          order_number: order.order_number,
+          event: 'siigo_closed',
+          method: normalizedMethod,
+          closed_by: userId || null,
+          closed_at: new Date().toISOString()
+        };
+        global.io.to('orders-updates').emit('order-siigo-closed', payload);
+        console.log('📡 Emitido order-siigo-closed:', payload);
+      }
+    } catch (emitErr) {
+      console.error('⚠️  Error emitiendo evento order-siigo-closed:', emitErr.message);
+    }
+
+    return res.json({
+      success: true,
+      message: 'Pedido marcado como cerrado en Siigo',
+      data: { id: Number(id), method: normalizedMethod }
+    });
+  } catch (error) {
+    console.error('Error cerrando en Siigo:', error);
+    return res.status(500).json({ success: false, message: 'Error interno del servidor' });
+  }
+};
+
+// Listado de pedidos que ya fueron enviados a logística (o posteriores) y aún NO están cerrados en Siigo
+// GET /api/cartera/pending-siigo-close?search=&from=&to=&limit=
+const getPendingSiigoClose = async (req, res) => {
+  try {
+    const { search, from, to, limit = 200 } = req.query;
+
+    const where = [
+      'o.deleted_at IS NULL',
+      '(o.siigo_closed IS NULL OR o.siigo_closed = 0)'
+    ];
+    const params = [];
+
+    // Estados posteriores a Cartera (excluir 'revision_cartera')
+    const eligible = [
+      'en_logistica', 'pendiente_empaque', 'en_preparacion', 'en_empaque',
+      'empacado', 'listo', 'listo_para_entrega', 'en_reparto',
+      'entregado_transportadora', 'entregado_cliente', 'entregado_bodega',
+      'gestion_especial', 'cancelado'
+    ];
+    where.push(`o.status IN (${eligible.map(() => '?').join(',')})`);
+    params.push(...eligible);
+
+    if (from) {
+      where.push('DATE(COALESCE(o.siigo_invoice_created_at, o.created_at)) >= ?');
+      params.push(from);
+    }
+    if (to) {
+      where.push('DATE(COALESCE(o.siigo_invoice_created_at, o.created_at)) <= ?');
+      params.push(to);
+    }
+    if (search) {
+      where.push('(o.order_number LIKE ? OR o.customer_name LIKE ?)');
+      const s = `%${search}%`;
+      params.push(s, s);
+    }
+
+    const rows = await query(
+      `
+      SELECT 
+        o.id, o.order_number, o.customer_name, o.status,
+        -- Datos de entrega para mostrar canal en Cartera
+        o.delivery_method,
+        o.assigned_messenger_id,
+        messenger.full_name AS messenger_name,
+        o.carrier_id,
+        c.name AS carrier_name,
+        -- Pago
+        o.payment_method,
+        -- Canal de entrega legible
+        CASE 
+          WHEN LOWER(COALESCE(o.delivery_method,'')) IN ('recoge_bodega','recogida_tienda') THEN 'Bodega'
+          WHEN o.carrier_id IS NOT NULL THEN COALESCE(c.name,'Transportadora')
+          WHEN o.assigned_messenger_id IS NOT NULL THEN CONCAT('Mensajero: ', COALESCE(messenger.full_name, CONCAT('ID ', o.assigned_messenger_id)))
+          ELSE NULL
+        END AS delivery_channel,
+        -- Datos SIIGO
+        o.siigo_invoice_id, o.siigo_invoice_number, o.siigo_invoice_created_at,
+        o.siigo_closed, o.siigo_closed_at, o.siigo_closure_method,
+        o.payment_evidence_path, o.tags, o.electronic_payment_type
+      FROM orders o
+      LEFT JOIN carriers c ON o.carrier_id = c.id
+      LEFT JOIN users messenger ON o.assigned_messenger_id = messenger.id
+      WHERE ${where.join(' AND ')}
+      ORDER BY COALESCE(o.siigo_invoice_created_at, o.created_at) DESC, o.id DESC
+      LIMIT ${Number(limit) || 200}
+      `,
+      params
+    );
+
+    return res.json({ success: true, data: rows });
+  } catch (e) {
+    console.error('Error listando pendientes de cierre SIIGO:', e);
+    return res.status(500).json({ success: false, message: 'Error interno del servidor' });
+  }
+};
+
+/**
+ * POST /api/cartera/adhoc-payments/:id/accept
+ * Aceptar pago adhoc
+ */
+const acceptAdhocPayment = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const approverId = req.user.id;
+
+    await query(
+      `UPDATE messenger_adhoc_payments
+       SET status = 'collected', accepted_by = ?, accepted_at = NOW()
+       WHERE id = ?`,
+      [approverId, id]
+    );
+
+    return res.json({ success: true, message: 'Pago aceptado correctamente' });
+  } catch (error) {
+    console.error('Error aceptando pago adhoc:', error);
+    return res.status(500).json({ success: false, message: 'Error interno del servidor' });
+  }
+};
+
 module.exports = {
   getPendingCashOrders,
   getHandovers,
@@ -793,5 +1287,18 @@ module.exports = {
   acceptCashRegister,
   getCashRegisterReceipt,
   getBodegaHandoverDetails,
-  getBodegaHandoverReceipt
+  getBodegaHandoverReceipt,
+  returnToBilling,
+  closeOrderInSiigo,
+  getPendingSiigoClose,
+  acceptAdhocPayment,
+  getTags: async (req, res) => {
+    try {
+      const rows = await query('SELECT name FROM tags ORDER BY name ASC');
+      return res.json({ success: true, data: rows.map(r => r.name) });
+    } catch (e) {
+      console.error('Error listando tags:', e);
+      return res.status(500).json({ success: false, message: 'Error interno' });
+    }
+  }
 };

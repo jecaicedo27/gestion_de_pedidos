@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import * as Icons from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useAuth } from '../context/AuthContext';
@@ -15,6 +15,34 @@ const ContraentregaModal = ({ isOpen, onClose, order, onConfirm }) => {
   });
 
   const [loading, setLoading] = useState(false);
+
+  // Detección simple del canal desde texto (para autocompletar sin mostrar campos)
+  const detectProviderFromStringLocal = (text = '') => {
+    const t = String(text).toLowerCase();
+    if (t.includes('nequi')) return 'nequi';
+    if (t.includes('daviplata')) return 'daviplata';
+    if (t.includes('bancolombia') || t.includes('banco')) return 'bancolombia';
+    if (t.includes('mercadopago')) return 'mercadopago';
+    if (t.includes('bold')) return 'bold';
+    return 'otro';
+  };
+
+  // Autocompletar datos de transferencia (ocultos) para no pedirlos al mensajero
+  useEffect(() => {
+    if (formData.actualPaymentMethod === 'transferencia') {
+      const fromOrder = (order?.electronic_payment_type || order?.payment_provider || '').toString().trim();
+      const detected = detectProviderFromStringLocal(order?.notes || '');
+      const bank = (fromOrder || detected || 'otro').toLowerCase();
+      const ref = `auto-${Date.now()}`;
+      const dateStr = new Date().toISOString().slice(0, 10);
+      setFormData(prev => ({
+        ...prev,
+        transferenceBank: bank,
+        transferenceReference: ref,
+        transferenceDate: dateStr
+      }));
+    }
+  }, [formData.actualPaymentMethod, order]);
 
   const handleInputChange = (field, value) => {
     setFormData(prev => ({
@@ -34,12 +62,7 @@ const ContraentregaModal = ({ isOpen, onClose, order, onConfirm }) => {
       return;
     }
 
-    if (formData.actualPaymentMethod === 'transferencia') {
-      if (!formData.transferenceReference || !formData.transferenceBank) {
-        toast.error('Debe completar los datos de la transferencia');
-        return;
-      }
-    }
+    // Para transferencia, los datos (banco, referencia, fecha) se autocompletan de forma oculta
 
     setLoading(true);
     try {
@@ -195,40 +218,13 @@ const ContraentregaModal = ({ isOpen, onClose, order, onConfirm }) => {
                 {/* Campos específicos para transferencia */}
                 {formData.actualPaymentMethod === 'transferencia' && (
                   <div className="space-y-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Referencia de Transferencia *
-                      </label>
-                      <input
-                        type="text"
-                        value={formData.transferenceReference}
-                        onChange={(e) => handleInputChange('transferenceReference', e.target.value)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        placeholder="Número de referencia o comprobante"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Banco *
-                      </label>
-                      <input
-                        type="text"
-                        value={formData.transferenceBank}
-                        onChange={(e) => handleInputChange('transferenceBank', e.target.value)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        placeholder="Nombre del banco"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Fecha de Transferencia
-                      </label>
-                      <input
-                        type="date"
-                        value={formData.transferenceDate}
-                        onChange={(e) => handleInputChange('transferenceDate', e.target.value)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      />
+                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                      <div className="flex items-start">
+                        <Icons.Info className="w-4 h-4 text-blue-500 mt-0.5 mr-2" />
+                        <p className="text-sm text-blue-700">
+                          Datos de transferencia (banco, referencia y fecha) se registran automáticamente. No requiere ingresar información.
+                        </p>
+                      </div>
                     </div>
                     <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
                       <div className="flex items-start">

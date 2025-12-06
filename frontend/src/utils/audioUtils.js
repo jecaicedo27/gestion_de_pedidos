@@ -113,6 +113,27 @@ class AudioFeedback {
     }
   }
 
+  // Attention/alert sound for status changes and new orders (bright, non-error)
+  async playStatusAlert() {
+    if (!this.enabled) return;
+    
+    try {
+      // Resume audio context if needed
+      if (this.audioContext.state === 'suspended') {
+        await this.audioContext.resume();
+      }
+
+      // Ascending pleasant chime sequence (strong, identificative, not error-like)
+      await this.createBeep(784, 0.12, 'square');            // G5
+      setTimeout(() => { this.createBeep(988, 0.12, 'square'); }, 120);   // B5
+      setTimeout(() => { this.createBeep(1319, 0.18, 'triangle'); }, 260); // E6
+      setTimeout(() => { this.createBeep(1568, 0.12, 'square'); }, 460);   // G6 finisher
+
+    } catch (error) {
+      console.warn('Error playing status alert sound:', error);
+    }
+  }
+
   // Progress sound: For multi-unit counting
   async playProgress() {
     if (!this.enabled) return;

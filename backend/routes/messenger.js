@@ -16,7 +16,7 @@ const requireMessengerRole = (req, res, next) => {
 };
 
 // GET /api/messenger/orders - Obtener pedidos asignados
-router.get('/orders', auth.authenticateToken, requireMessengerRole, messengerController.getAssignedOrders);
+router.get('/orders', auth.authenticateToken, messengerController.getAssignedOrders);
 
 // POST /api/messenger/orders/:orderId/accept - Aceptar pedido
 router.post('/orders/:orderId/accept', auth.authenticateToken, requireMessengerRole, messengerController.acceptOrder);
@@ -32,6 +32,9 @@ router.post('/orders/:orderId/complete', auth.authenticateToken, requireMessenge
 
 // POST /api/messenger/orders/:orderId/mark-failed - Marcar entrega como fallida
 router.post('/orders/:orderId/mark-failed', auth.authenticateToken, requireMessengerRole, messengerController.markDeliveryFailed);
+
+// POST /api/messenger/orders/:orderId/pending-evidence - Marcar pendiente de comprobante
+router.post('/orders/:orderId/pending-evidence', auth.authenticateToken, requireMessengerRole, messengerController.markPendingEvidence);
 
 // POST /api/messenger/orders/:orderId/upload-evidence - Subir evidencia fotográfica
 router.post(
@@ -55,13 +58,13 @@ router.post(
   messengerController.uploadEvidence
 );
 
- // GET /api/messenger/daily-summary - Obtener resumen diario
+// GET /api/messenger/daily-summary - Obtener resumen diario
 router.get('/daily-summary', auth.authenticateToken, requireMessengerRole, messengerController.getDailySummary);
 
 // GET /api/messenger/cash-summary - Resumen de dinero recibido (rango fechas opcional)
 router.get('/cash-summary', auth.authenticateToken, requireMessengerRole, messengerController.getCashSummary);
 
- // GET /api/messenger/deliveries - Historial de entregas (paginado)
+// GET /api/messenger/deliveries - Historial de entregas (paginado)
 router.get('/deliveries', auth.authenticateToken, requireMessengerRole, messengerController.getDeliveryHistory);
 
 /* Nuevos endpoints de caja */
@@ -113,5 +116,21 @@ router.get(
 
 // GET /api/messenger/stats - Estadísticas del mensajero
 router.get('/stats', auth.authenticateToken, requireMessengerRole, messengerController.getStats);
+
+// POST /api/messenger/adhoc-payments - Registrar pago adhoc
+router.post(
+  '/adhoc-payments',
+  auth.authenticateToken,
+  requireMessengerRole,
+  (req, res, next) => {
+    messengerController.upload.single('evidence')(req, res, function (err) {
+      if (err) {
+        return res.status(400).json({ success: false, message: err.message || 'Error al subir imagen' });
+      }
+      next();
+    });
+  },
+  messengerController.registerAdhocPayment
+);
 
 module.exports = router;

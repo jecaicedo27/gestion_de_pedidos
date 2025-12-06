@@ -1,0 +1,84 @@
+
+      <!doctype html>
+      <html lang="es">
+      <head>
+        <meta charset="utf-8"/>
+        <title>Recibo Entrega Efectivo - Factura FV-2-14347</title>
+        <style>
+          :root { color-scheme: light; }
+          body { font-family: Arial, sans-serif; padding: 16px; color: #111827; }
+          h1 { font-size: 18px; margin: 0 0 6px; }
+          .meta, .section { font-size: 13px; color: #374151; margin-bottom: 12px; }
+          .label { color: #6b7280; }
+          .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 24px; }
+          .row { display: flex; justify-content: space-between; margin: 4px 0; }
+          .amounts { margin: 12px 0; }
+          .box { border: 1px solid #e5e7eb; border-radius: 6px; padding: 12px; }
+          .num { font-weight: 600; }
+          .status { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 12px; border: 1px solid #e5e7eb; }
+          .status.pending { background: #fff7ed; color: #9a3412; border-color: #fed7aa; }
+          .status.collected { background: #ecfdf5; color: #065f46; border-color: #a7f3d0; }
+          table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+          th, td { border: 1px solid #e5e7eb; padding: 8px; font-size: 12px; }
+          th { background: #f9fafb; text-align: left; }
+          .footer { margin-top: 28px; display: flex; gap: 40px; }
+          .sign { width: 45%; border-top: 1px solid #111827; padding-top: 8px; text-align: center; }
+          @media print {
+            .no-print { display: none; }
+            body { padding: 0; }
+          }
+        </style>
+      </head>
+      <body>
+        <div class="no-print" style="text-align:right;margin-bottom:8px;">
+          <button onclick="window.print()" style="padding:6px 12px;border:1px solid #e5e7eb;background:#111827;color:#fff;border-radius:4px;cursor:pointer;">Imprimir</button>
+        </div>
+        <h1>Recibo de Entrega de Efectivo - Factura FV-2-14347</h1>
+        <div class="meta grid">
+          <div><span class="label">Cliente:</span> <strong>Cliente SIIGO</strong></div>
+          <div><span class="label">Fecha de entrega:</span> <strong>8/11/2025, 6:18:55 p. m.</strong></div>
+          <div><span class="label">Mensajero:</span> <strong>Julian Carrillo (ID 16)</strong></div>
+          <div><span class="label">Emitido por:</span> <strong>TEST USUARIO - 2025-08-30T01:02:54.142Z</strong></div>
+          <div><span class="label">Fecha emisión:</span> <strong>8/11/2025, 11:05:03 p. m.</strong></div>
+          <div><span class="label">Estado de caja:</span> <span class="status pending">pending</span></div>
+        </div>
+
+        <div class="box amounts">
+          <div class="row"><span>Valor producto cobrado:</span> <span class="num">$ 9.379.229</span></div>
+          <div class="row"><span>Valor flete cobrado:</span> <span class="num">$ 0</span></div>
+          <div class="row"><span>Total esperado:</span> <span class="num">$ 9.379.229</span></div>
+          <div class="row"><span>Total declarado/aceptado:</span> <span class="num">$ 9.379.229</span></div>
+        </div>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Concepto</th>
+              <th class="num">Monto</th>
+              <th>Método</th>
+              <th>Fecha aceptación</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Pago de producto</td>
+              <td class="num">$ 9.379.229</td>
+              <td>EFECTIVO</td>
+              <td>-</td>
+            </tr>
+            <tr>
+              <td>Flete / Domicilio</td>
+              <td class="num">$ 0</td>
+              <td>-</td>
+              <td>-</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="footer">
+          <div class="sign">Firma Mensajero</div>
+          <div class="sign">Firma Cartera</div>
+        </div>
+      </body>
+      </html>
+    

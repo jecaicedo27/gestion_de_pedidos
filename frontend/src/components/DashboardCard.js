@@ -37,17 +37,17 @@ const DashboardCard = ({
       className={`card ${clickable ? 'cursor-pointer hover:shadow-lg transition-shadow duration-200' : ''}`}
       onClick={handleClick}
     >
-      <div className="card-content">
+      <div className="card-content p-3 sm:p-4">
         <div className="flex items-center justify-between">
           <div className="flex-1">
             <div className="flex items-center mb-2">
               <div className={`p-2 rounded-lg ${colorClasses[color]}`}>
-                <IconComponent className="w-5 h-5" />
+                <IconComponent className="w-4 h-4 sm:w-5 sm:h-5" />
               </div>
               <div className="ml-3">
-                <p className="text-sm font-medium text-gray-600">{title}</p>
+                <p className="text-xs sm:text-sm font-medium text-gray-600">{title}</p>
                 {subtitle && (
-                  <p className="text-xs text-gray-500">{subtitle}</p>
+                  <p className="text-[11px] sm:text-xs text-gray-500">{subtitle}</p>
                 )}
               </div>
             </div>
@@ -59,7 +59,7 @@ const DashboardCard = ({
                     <div className="h-8 bg-gray-200 rounded w-20"></div>
                   </div>
                 ) : (
-                  <p className="text-2xl font-bold text-gray-900">{value}</p>
+                  <p className="text-xl sm:text-2xl font-bold text-gray-900">{value}</p>
                 )}
               </div>
               

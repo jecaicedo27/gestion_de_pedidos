@@ -3,9 +3,12 @@ import * as Icons from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useAuth } from '../context/AuthContext';
 import PasswordChangeModal from '../components/PasswordChangeModal';
+import { useNavigate } from 'react-router-dom';
+import api from '../services/api';
 
 const UsersPage = () => {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -22,6 +25,10 @@ const UsersPage = () => {
     role: 'facturador',
     password: ''
   });
+  // Estado para roles avanzados (múltiples)
+  const [advAllRoles, setAdvAllRoles] = useState([]); // roles de la tabla roles
+  const [advUserRoles, setAdvUserRoles] = useState([]); // objetos de rol asignados al usuario
+  const [advNewRoleId, setAdvNewRoleId] = useState('');
 
   const roles = [
     { value: 'admin', label: 'Administrador', color: 'bg-red-100 text-red-800' },
@@ -227,7 +234,54 @@ const UsersPage = () => {
       role: userToEdit.role,
       password: ''
     });
+    // Cargar roles avanzados del usuario
+    loadAdvancedRoles(userToEdit.id);
     setShowEditModal(true);
+  };
+
+  // Cargar roles avanzados (roles disponibles y roles del usuario)
+  const loadAdvancedRoles = async (userId) => {
+    try {
+      const [rolesRes, userRolesRes] = await Promise.all([
+        api.get('/admin/roles'),
+        api.get('/admin/user-roles')
+      ]);
+      const pick = (res) => (res?.data?.data ?? res?.data?.roles ?? res?.data) || [];
+      const all = pick(rolesRes);
+      const urs = ((res) => (res?.data?.data ?? res?.data?.userRoles ?? res?.data) || [])(userRolesRes);
+      // Filtrar por usuario y mapear a objetos de rol
+      const assigned = urs
+        .filter((ur) => ur.user_id === userId && (ur.is_active === 1 || ur.is_active === true))
+        .map((ur) => all.find((r) => r.id === ur.role_id))
+        .filter(Boolean);
+      setAdvAllRoles(all);
+      setAdvUserRoles(assigned);
+      setAdvNewRoleId('');
+    } catch (e) {
+      console.error('Error cargando roles avanzados:', e);
+    }
+  };
+
+  const assignAdvancedRole = async () => {
+    if (!editingUser || !advNewRoleId) return;
+    try {
+      await api.post('/admin/assign-role', { user_id: editingUser.id, role_id: advNewRoleId });
+      await loadAdvancedRoles(editingUser.id);
+      toast.success('Rol adicional asignado');
+    } catch (e) {
+      toast.error('No se pudo asignar el rol');
+    }
+  };
+
+  const removeAdvancedRole = async (roleId) => {
+    if (!editingUser) return;
+    try {
+      await api.post('/admin/remove-role', { user_id: editingUser.id, role_id: roleId });
+      await loadAdvancedRoles(editingUser.id);
+      toast.success('Rol removido');
+    } catch (e) {
+      toast.error('No se pudo remover el rol');
+    }
   };
 
   if (loading) {
@@ -279,14 +333,24 @@ const UsersPage = () => {
           </select>
         </div>
 
-        {/* Botón crear usuario */}
-        <button
-          onClick={() => setShowCreateModal(true)}
-          className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
-        >
-          <Icons.Plus className="w-4 h-4 mr-2" />
-          Crear Usuario
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => navigate('/roles-management')}
+            className="flex items-center px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-500"
+            title="Gestionar roles y permisos (múltiples roles por usuario)"
+          >
+            <Icons.Shield className="w-4 h-4 mr-2" />
+            Gestionar Roles
+          </button>
+          {/* Botón crear usuario */}
+          <button
+            onClick={() => setShowCreateModal(true)}
+            className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            <Icons.Plus className="w-4 h-4 mr-2" />
+            Crear Usuario
+          </button>
+        </div>
       </div>
 
       {/* Estadísticas */}
@@ -501,6 +565,8 @@ const UsersPage = () => {
                   </select>
                 </div>
 
+
+
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     Contraseña *
@@ -602,6 +668,57 @@ const UsersPage = () => {
                       </option>
                     ))}
                   </select>
+                </div>
+
+                {/* Roles adicionales (multi-rol) */}
+                <div className="pt-2">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Roles adicionales (multi-rol)
+                  </label>
+                  {/* Chips de roles actuales */}
+                  <div className="flex flex-wrap gap-2 mb-3">
+                    {advUserRoles.length === 0 && (
+                      <span className="text-sm text-gray-500">Sin roles adicionales</span>
+                    )}
+                    {advUserRoles.map((r) => (
+                      <span key={r.id} className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
+                        {r.display_name || r.name}
+                        <button
+                          type="button"
+                          className="ml-2 text-red-600 hover:text-red-800"
+                          onClick={() => removeAdvancedRole(r.id)}
+                          title="Quitar rol"
+                        >
+                          ×
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                  {/* Agregar nuevo rol */}
+                  <div className="flex gap-2">
+                    <select
+                      value={advNewRoleId}
+                      onChange={(e) => setAdvNewRoleId(Number(e.target.value))}
+                      className="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500"
+                    >
+                      <option value="">Seleccionar rol para agregar</option>
+                      {advAllRoles
+                        .filter((r) => !advUserRoles.some((ur) => ur.id === r.id))
+                        .map((r) => (
+                          <option key={r.id} value={r.id}>
+                            {r.display_name || r.name}
+                          </option>
+                        ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={assignAdvancedRole}
+                      disabled={!advNewRoleId}
+                      className="px-3 py-2 bg-purple-600 text-white rounded-md disabled:opacity-50"
+                    >
+                      Agregar
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>

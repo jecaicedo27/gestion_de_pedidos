@@ -40,20 +40,22 @@ const RoleManagementPage = () => {
     try {
       setLoading(true);
       const [usersRes, rolesRes, permissionsRes, userRolesRes, rolePermissionsRes, roleViewsRes] = await Promise.all([
-        api.get('/api/admin/users'),
-        api.get('/api/admin/roles'),
-        api.get('/api/admin/permissions'),
-        api.get('/api/admin/user-roles'),
-        api.get('/api/admin/role-permissions'),
-        api.get('/api/admin/role-views')
+        api.get('/admin/users'),
+        api.get('/admin/roles'),
+        api.get('/admin/permissions'),
+        api.get('/admin/user-roles'),
+        api.get('/admin/role-permissions'),
+        api.get('/admin/role-views')
       ]);
 
-      setUsers(usersRes.data.users || []);
-      setRoles(rolesRes.data.roles || []);
-      setPermissions(permissionsRes.data.permissions || []);
-      setUserRoles(userRolesRes.data.userRoles || []);
-      setRolePermissions(rolePermissionsRes.data.rolePermissions || []);
-      setRoleViews(roleViewsRes.data.roleViews || []);
+      // Normalizar respuestas { success, data }
+      const pick = (res) => (res?.data?.data ?? res?.data?.users ?? res?.data?.roles ?? res?.data?.permissions ?? res?.data) || [];
+      setUsers(pick(usersRes));
+      setRoles(pick(rolesRes));
+      setPermissions(pick(permissionsRes));
+      setUserRoles(pick(userRolesRes));
+      setRolePermissions(pick(rolePermissionsRes));
+      setRoleViews(pick(roleViewsRes));
     } catch (error) {
       console.error('Error cargando datos:', error);
       toast.error('Error al cargar los datos del sistema');
@@ -81,7 +83,7 @@ const RoleManagementPage = () => {
   // Asignar rol a usuario
   const assignRoleToUser = async (userId, roleId) => {
     try {
-      await api.post('/api/admin/assign-role', { userId, roleId });
+      await api.post('/admin/assign-role', { user_id: userId, role_id: roleId });
       toast.success('Rol asignado correctamente');
       loadData();
     } catch (error) {
@@ -92,11 +94,24 @@ const RoleManagementPage = () => {
   // Quitar rol de usuario
   const removeRoleFromUser = async (userId, roleId) => {
     try {
-      await api.post('/api/admin/remove-role', { userId, roleId });
+      await api.post('/admin/remove-role', { user_id: userId, role_id: roleId });
       toast.success('Rol removido correctamente');
       loadData();
     } catch (error) {
       toast.error('Error al remover rol');
+    }
+  };
+
+  // Eliminar usuario (admin)
+  const handleDeleteUser = async (userId) => {
+    if (!window.confirm('¿Seguro que deseas eliminar este usuario? Esta acción no se puede deshacer.')) return;
+    try {
+      await api.delete(`/admin/users/${userId}`);
+      toast.success('Usuario eliminado');
+      await loadData();
+    } catch (error) {
+      console.error('Error eliminando usuario:', error);
+      toast.error('No se pudo eliminar el usuario');
     }
   };
 

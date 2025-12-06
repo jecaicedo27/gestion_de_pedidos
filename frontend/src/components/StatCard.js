@@ -76,10 +76,40 @@ const StatCard = ({
       value: 'text-gray-900',
       subtitle: 'text-purple-600',
       hover: 'hover:border-purple-300 hover:shadow-md'
+    },
+    red: {
+      bg: 'bg-white',
+      border: 'border-gray-200',
+      icon: 'text-red-500',
+      iconBg: 'bg-red-50',
+      title: 'text-gray-600',
+      value: 'text-gray-900',
+      subtitle: 'text-red-600',
+      hover: 'hover:border-red-300 hover:shadow-md'
+    },
+    indigo: {
+      bg: 'bg-white',
+      border: 'border-gray-200',
+      icon: 'text-indigo-500',
+      iconBg: 'bg-indigo-50',
+      title: 'text-gray-600',
+      value: 'text-gray-900',
+      subtitle: 'text-indigo-600',
+      hover: 'hover:border-indigo-300 hover:shadow-md'
+    },
+    gray: {
+      bg: 'bg-white',
+      border: 'border-gray-200',
+      icon: 'text-gray-500',
+      iconBg: 'bg-gray-50',
+      title: 'text-gray-600',
+      value: 'text-gray-900',
+      subtitle: 'text-gray-600',
+      hover: 'hover:border-gray-300 hover:shadow-md'
     }
   };
 
-  const classes = colorClasses[color];
+  const classes = colorClasses[color] || colorClasses.blue;
 
   const handleClick = () => {
     if (clickable && onClick) {
@@ -90,38 +120,38 @@ const StatCard = ({
   return (
     <div 
       className={`
-        ${classes.bg} ${classes.border} border rounded-lg p-6 
+        ${classes.bg} ${classes.border} border rounded-lg p-3 sm:p-6 
         ${clickable ? `cursor-pointer ${classes.hover} transition-all duration-200` : ''}
       `}
       onClick={handleClick}
     >
       <div className="flex flex-col items-center text-center">
         {/* Título */}
-        <h3 className={`text-lg font-medium ${classes.title} mb-4`}>
+        <h3 className={`text-sm sm:text-lg font-medium ${classes.title} mb-2 sm:mb-4`}>
           {title}
         </h3>
         
         {/* Valor principal */}
-        <div className="mb-4">
+        <div className="mb-2 sm:mb-4">
           {loading ? (
             <div className="animate-pulse">
-              <div className="h-12 bg-gray-200 rounded w-16 mx-auto"></div>
+              <div className="h-8 sm:h-12 bg-gray-200 rounded w-12 sm:w-16 mx-auto"></div>
             </div>
           ) : (
-            <div className={`text-4xl font-bold ${classes.value}`}>
+            <div className={`text-2xl sm:text-4xl font-bold ${classes.value}`}>
               {value}
             </div>
           )}
         </div>
         
         {/* Subtítulo */}
-        <div className={`text-sm font-medium ${classes.subtitle} mb-4`}>
+        <div className={`text-xs sm:text-sm font-medium ${classes.subtitle} mb-2 sm:mb-4`}>
           {subtitle}
         </div>
         
         {/* Ícono */}
-        <div className={`${classes.iconBg} p-3 rounded-full`}>
-          <IconComponent className={`w-8 h-8 ${classes.icon}`} />
+        <div className={`${classes.iconBg} p-2 sm:p-3 rounded-full`}>
+          <IconComponent className={`w-6 h-6 sm:w-8 sm:h-8 ${classes.icon}`} />
         </div>
       </div>
     </div>

@@ -1,0 +1,28 @@
+
+> gestion-pedidos-frontend@1.0.0 build
+> react-scripts build
+
+Creating an optimized production build...
+Compiled successfully.
+
+File sizes after gzip:
+
+  470.72 kB  build/static/js/main.f942f340.js
+  42.82 kB   build/static/js/527.226b693b.chunk.js
+  10.73 kB   build/static/css/main.718d9443.css
+  6.34 kB    build/static/css/392.d6bfd15f.chunk.css
+  145 B      build/static/js/392.0c4e9f85.chunk.js
+
+The project was built assuming it is hosted at /.
+You can control this with the homepage field in your package.json.
+
+The build folder is ready to be deployed.
+You may serve it with a static server:
+
+  npm install -g serve
+  serve -s build
+
+Find out more about deployment here:
+
+  https://cra.link/deployment
+

@@ -3,17 +3,27 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const configService = require('../services/configService');
+const eventBus = require('../services/postventa/eventBusService');
+
+// Normaliza método de pago a los valores del ENUM de cash_closing_details
+function normalizePay(v) {
+  const s = String(v || '').toLowerCase().trim();
+  if (['efectivo', 'cash', 'contraentrega', 'contra-entrega'].includes(s)) return 'cash';
+  if (['transfer', 'transferencia', 'transferido', 'nequi', 'daviplata'].includes(s)) return 'transfer';
+  if (['card', 'tarjeta', 'credito', 'crédito', 'debito', 'débito', 'pos', 'datáfono', 'dataphone', 'datfono'].includes(s)) return 'card';
+  return 'other';
+}
 
 // Configuración de multer para subida de fotos
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
     const uploadPath = path.join(__dirname, '../uploads/delivery_evidence');
-    
+
     // Crear directorio si no existe
     if (!fs.existsSync(uploadPath)) {
       fs.mkdirSync(uploadPath, { recursive: true });
     }
-    
+
     cb(null, uploadPath);
   },
   filename: function (req, file, cb) {
@@ -22,10 +32,10 @@ const storage = multer.diskStorage({
   }
 });
 
-const upload = multer({ 
+const upload = multer({
   storage: storage,
   limits: {
-    fileSize: 5 * 1024 * 1024, // 5MB máximo
+    fileSize: 15 * 1024 * 1024, // 15MB máximo
   },
   fileFilter: (req, file, cb) => {
     // Solo permitir imágenes
@@ -40,53 +50,106 @@ const upload = multer({
 // Obtener pedidos asignados al mensajero
 const getAssignedOrders = async (req, res) => {
   try {
+    const userRole = (req.user && req.user.role) || 'mensajero';
     const messengerId = req.user.id;
-    console.log('🚚 Obteniendo pedidos para mensajero ID:', messengerId);
+    console.log('🚚 getAssignedOrders - role:', userRole, 'userId:', messengerId);
 
     console.log('🔍 Intentando consulta a base de datos...');
-    
-    // Buscar pedidos que estén listos para entrega y asignados a mensajería urbana
-    const orders = await query(`
-      SELECT 
-        o.id,
-        o.order_number,
-        o.customer_name,
-        o.customer_phone,
-        o.customer_address,
-        o.total_amount as total,
-        o.requires_payment,
-        o.payment_amount,
-        o.payment_method,
-        o.shipping_payment_method,
-        o.delivery_fee_exempt,
-        o.delivery_fee,
-        o.siigo_balance,
-        o.status,
-        o.delivery_method,
-        o.created_at,
-        o.shipping_date,
-        o.notes,
-        o.assigned_messenger_id,
-        u.full_name as messenger_name,
-        o.messenger_status,
-        (SELECT COUNT(*) FROM order_items oi WHERE oi.order_id = o.id) AS items_count
-      FROM orders o
-      LEFT JOIN users u ON o.assigned_messenger_id = u.id
-      WHERE (
-        (o.status = 'listo_para_entrega' AND o.delivery_method IN ('mensajeria_urbana', 'domicilio', 'mensajeria_local'))
-        OR 
-        (o.assigned_messenger_id = ? AND o.status IN ('en_reparto', 'listo_para_entrega'))
-      )
-      ORDER BY 
-        CASE 
-          WHEN o.assigned_messenger_id = ? THEN 1
-          ELSE 2
-        END,
-        o.created_at DESC
-    `, [messengerId, messengerId]);
+
+    let orders;
+
+    if (userRole === 'mensajero') {
+      // Vista propia del mensajero: priorizar los suyos y además ver listos para entrega locales
+      orders = await query(`
+        SELECT 
+          o.id,
+          o.order_number,
+          o.customer_name,
+          o.customer_phone,
+          o.customer_address,
+          o.customer_address as delivery_address,
+          o.total_amount as total,
+          o.requires_payment,
+          o.payment_amount,
+          o.payment_method,
+          o.shipping_payment_method,
+          o.delivery_fee_exempt,
+          o.delivery_fee,
+          o.siigo_balance,
+          o.status,
+          o.delivery_method,
+          o.created_at,
+          o.shipping_date,
+          o.notes,
+          o.special_management_note,
+          o.assigned_messenger_id,
+          u.full_name as messenger_name,
+          o.messenger_status,
+          o.payment_evidence_path,
+          o.is_pending_payment_evidence,
+          (SELECT COUNT(*) FROM order_items oi WHERE oi.order_id = o.id) AS items_count
+        FROM orders o
+        LEFT JOIN users u ON o.assigned_messenger_id = u.id
+        WHERE (
+          (o.status = 'listo_para_entrega' AND o.delivery_method IN ('mensajeria_urbana', 'domicilio', 'mensajeria_local'))
+          OR 
+          (o.assigned_messenger_id = ? AND o.status IN ('en_reparto', 'listo_para_entrega'))
+        )
+        ORDER BY 
+          CASE 
+            WHEN o.assigned_messenger_id = ? THEN 1
+            ELSE 2
+          END,
+          o.created_at ASC
+      `, [messengerId, messengerId]);
+    } else {
+      // Vista de admin/logística: devolver dataset amplio para filtrar en frontend
+      orders = await query(`
+        SELECT 
+          o.id,
+          o.order_number,
+          o.customer_name,
+          o.customer_phone,
+          o.customer_address,
+          o.customer_address as delivery_address,
+          o.total_amount as total,
+          o.requires_payment,
+          o.payment_amount,
+          o.payment_method,
+          o.shipping_payment_method,
+          o.delivery_fee_exempt,
+          o.delivery_fee,
+          o.siigo_balance,
+          o.status,
+          o.delivery_method,
+          o.created_at,
+          o.shipping_date,
+          o.notes,
+          o.special_management_note,
+          o.assigned_messenger_id,
+          u.full_name as messenger_name,
+          o.messenger_status,
+          o.payment_evidence_path,
+          o.is_pending_payment_evidence,
+          (SELECT COUNT(*) FROM order_items oi WHERE oi.order_id = o.id) AS items_count
+        FROM orders o
+        LEFT JOIN users u ON o.assigned_messenger_id = u.id
+        WHERE (
+          (o.status = 'listo_para_entrega' AND o.delivery_method IN ('mensajeria_urbana', 'domicilio', 'mensajeria_local'))
+          OR 
+          (o.assigned_messenger_id IS NOT NULL AND o.status IN ('en_reparto', 'listo_para_entrega','entregado_cliente'))
+        )
+        ORDER BY 
+          CASE 
+            WHEN o.assigned_messenger_id IS NOT NULL THEN 1
+            ELSE 2
+          END,
+          o.created_at ASC
+      `);
+    }
 
     console.log(`📋 Query ejecutada exitosamente`);
-    console.log(`📦 Encontrados ${orders.length} pedidos para el mensajero`);
+    console.log(`📦 Encontrados ${orders.length} pedidos`);
 
     // Calcular regla de cobro de domicilio para cada pedido (local < umbral y no exento y flete 'contraentrega')
     const localThreshold = await configService.getConfig('local_delivery_threshold', 150000);
@@ -102,19 +165,29 @@ const getAssignedOrders = async (req, res) => {
 
       // Derivar obligación de cobro de PRODUCTO desde facturación (fuente de verdad adicional)
       // Si facturación marcó 'efectivo' o 'contraentrega' para el producto, el mensajero debe cobrar
+      // Si está marcado como 'crédito', NO derivar cobro desde siigo_balance
       const productPayMethod = (o.payment_method || '').toLowerCase();
+      const isCredit = ['cliente_credito', 'cliente a credito', 'credito', 'crédito', 'credit'].some(k => productPayMethod.includes(k));
       const baseRequiresPayment = o.requires_payment === 1 || o.requires_payment === true || o.requires_payment === '1';
       const derivedRequiresPayment =
-        ['efectivo', 'contraentrega', 'cash', 'contra-entrega'].includes(productPayMethod) ||
-        Number(o.siigo_balance || 0) > 0;
-      const requiresPayment = baseRequiresPayment || derivedRequiresPayment;
+        !isCredit && (
+          ['efectivo', 'contraentrega', 'cash', 'contra-entrega'].includes(productPayMethod) ||
+          Number(o.siigo_balance || 0) > 0
+        );
+      // Forzar NO cobro de producto si es cliente a crédito
+      const requiresPayment = isCredit ? false : (baseRequiresPayment || derivedRequiresPayment);
 
-      // Asegurar payment_amount consistente si se debe cobrar el producto
-      // Si payment_amount viene 0 o nulo, usar siigo_balance o total/total_amount como respaldo
-      let paymentAmount = requiresPayment ? Number(o.payment_amount) : 0;
+      // Asegurar payment_amount consistente para UI:
+      // - Mantener payment_amount si viene desde BD (incluso si requires_payment es falso), para reflejar saldos mixtos
+      // - Si requires_payment es verdadero y payment_amount no viene, usar siigo_balance o total como respaldo
+      // - Si es cliente a crédito, el monto a cobrar por producto debe ser 0
+      let paymentAmount = Number(o.payment_amount || 0);
       if (requiresPayment && (!paymentAmount || paymentAmount <= 0)) {
         const totalCandidate = (o.siigo_balance ?? o.total ?? o.total_amount ?? 0);
         paymentAmount = Number(totalCandidate) || 0;
+      }
+      if (isCredit) {
+        paymentAmount = 0;
       }
 
       // Si no viene método de pago pero se debe cobrar, exponer 'contraentrega' como método efectivo para UI
@@ -125,10 +198,11 @@ const getAssignedOrders = async (req, res) => {
 
       return {
         ...o,
+        is_credit: isCredit ? 1 : 0,
         payment_method: effectivePaymentMethod,
         requires_payment: requiresPayment ? 1 : 0,
         payment_amount: paymentAmount,
-        should_collect_delivery_fee: shouldCollectDeliveryFee,
+        should_collect_delivery_fee: isCredit ? false : shouldCollectDeliveryFee,
         local_delivery_threshold: Number(localThreshold || 0)
       };
     });
@@ -343,21 +417,39 @@ const startDelivery = async (req, res) => {
 const completeDelivery = async (req, res) => {
   try {
     const { orderId } = req.params;
-    const { 
-      paymentCollected, 
-      deliveryFeeCollected, 
-      paymentMethod, 
+    const {
+      paymentCollected,
+      deliveryFeeCollected,
+      paymentMethod,
       deliveryFeePaymentMethod,
       deliveryNotes,
       latitude,
-      longitude 
-    } = req.body;
-  const messengerId = req.user.id;
+      longitude,
+      // Nuevos campos para transferencias
+      transferAmount,
+      transferBank,
+      transferReference,
+      transferDate,
+      // Entrega con confianza
+      trustedDelivery,
+      authorizedByUserId,
+      trustNote,
+      // Flag de pendiente de comprobante (failsafe)
+      isPendingEvidence
+    } = (req.body || {});
+    // Aceptar alias desde el frontend:
+    // - amountReceived -> paymentCollected
+    // - productPaymentMethod -> paymentMethod
+    // - notes -> deliveryNotes (se fusiona más abajo)
+    const amountReceived = (req.body && (req.body.amountReceived ?? req.body.amount_received)) ?? undefined;
+    const productPaymentMethod = (req.body && (req.body.productPaymentMethod ?? req.body.product_payment_method)) ?? undefined;
+    const paymentCollectedNum = Number((paymentCollected !== undefined && paymentCollected !== null) ? paymentCollected : (amountReceived || 0));
+    const messengerId = req.user.id;
 
     // Verificar que el pedido esté en entrega
     const orderResult = await query(
-      'SELECT id, messenger_status, requires_payment, payment_amount, payment_method, delivery_fee, delivery_method, shipping_payment_method, total_amount, delivery_fee_exempt FROM orders WHERE id = ? AND assigned_messenger_id = ?',
-      [orderId, messengerId]
+      'SELECT id, messenger_status, requires_payment, payment_amount, payment_method, delivery_fee, delivery_method, shipping_payment_method, total_amount, delivery_fee_exempt, assigned_messenger_id FROM orders WHERE id = ?',
+      [orderId]
     );
 
     if (!orderResult.length) {
@@ -367,29 +459,130 @@ const completeDelivery = async (req, res) => {
       });
     }
 
-    if (orderResult[0].messenger_status !== 'in_delivery') {
-      return res.status(400).json({
+    // Autorización y mensajero efectivo para tracking:
+    const userRole = (req.user && req.user.role) || null;
+    const isPrivileged = ['admin', 'logistica', 'cartera'].includes(String(userRole || '').toLowerCase());
+    const assignedId = Number(orderResult[0].assigned_messenger_id || 0);
+    if (!isPrivileged && assignedId !== Number(messengerId)) {
+      return res.status(404).json({
         success: false,
-        message: 'El pedido debe estar en entrega para completarlo'
+        message: 'Pedido no asignado a este mensajero'
       });
+    }
+    const trackingMessengerId = assignedId || messengerId;
+
+    let alreadyDelivered = false;
+    if (orderResult[0].messenger_status === 'delivered') {
+      alreadyDelivered = true;
+    }
+    if (!alreadyDelivered && orderResult[0].messenger_status !== 'in_delivery') {
+      const allowedToAutoStart = ['accepted', 'assigned'].includes(orderResult[0].messenger_status);
+      if (!allowedToAutoStart) {
+        return res.status(400).json({
+          success: false,
+          message: 'El pedido debe estar en entrega para completarlo'
+        });
+      }
+      try {
+        await query('UPDATE orders SET messenger_status = ? WHERE id = ?', ['in_delivery', orderId]);
+        await query('UPDATE delivery_tracking SET started_delivery_at = COALESCE(started_delivery_at, NOW()) WHERE order_id = ? AND messenger_id = ?', [orderId, trackingMessengerId]);
+      } catch (e) {
+        console.warn('No se pudo auto-iniciar entrega (se continúa):', e.message);
+      }
     }
 
     const order = orderResult[0];
 
-    // Validar montos si requiere pago (permitir transferencia sin efectivo)
-    const productPayMethod = (paymentMethod || '').toLowerCase();
-    // Enforce billing-mandated cash for product: cannot override to transferencia at delivery time
-    if (order.requires_payment && (order.payment_method || '').toLowerCase() === 'efectivo' && productPayMethod === 'transferencia') {
-      return res.status(400).json({
-        success: false,
-        message: 'El método de pago del producto está definido como efectivo por facturación; no puede cambiarse a transferencia en la entrega'
+    // Tratamiento especial: Reposición NO es cobrable por mensajero.
+    const orderPmNorm = String(order.payment_method || '').toLowerCase();
+    const isReplacement = (orderPmNorm === 'reposicion' || orderPmNorm === 'reposición');
+    if (isReplacement) {
+      // Asegurar estado entregado
+      if (!alreadyDelivered) {
+        await query(
+          'UPDATE orders SET messenger_status = ?, status = ? WHERE id = ?',
+          ['delivered', 'entregado', orderId]
+        );
+      }
+      // Asegurar registro de tracking y marcar entrega sin cobro
+      try {
+        const existing = await query(
+          'SELECT id FROM delivery_tracking WHERE order_id = ? AND messenger_id = ? ORDER BY id DESC LIMIT 1',
+          [orderId, trackingMessengerId]
+        );
+        if (!existing.length) {
+          await query(
+            'INSERT INTO delivery_tracking (order_id, messenger_id, assigned_at, accepted_at, started_delivery_at) VALUES (?, ?, NOW(), NOW(), NOW())',
+            [orderId, trackingMessengerId]
+          );
+        }
+      } catch (e) {
+        console.warn('No se pudo asegurar tracking para reposición:', e.message);
+      }
+      await query(
+        `UPDATE delivery_tracking SET 
+           delivered_at = NOW(),
+           payment_collected = 0,
+           delivery_fee_collected = 0,
+           payment_method = NULL,
+           delivery_fee_payment_method = NULL,
+           delivery_notes = ?
+         WHERE order_id = ? AND messenger_id = ?`,
+        [(deliveryNotes ?? (req.body && req.body.notes) ?? null), orderId, trackingMessengerId]
+      );
+      return res.json({
+        success: true,
+        message: 'Pedido de reposición entregado sin cobro'
       });
     }
-    if (order.requires_payment && productPayMethod !== 'transferencia' && (!paymentCollected || paymentCollected <= 0)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Este pedido requiere recolección de dinero (o marcar transferencia como método de pago)'
-      });
+
+    // Calcular monto esperado del producto (fallback a total_amount si payment_amount no está definido)
+    let expectedAmount = Number(order.payment_amount || 0);
+    if (!expectedAmount || expectedAmount <= 0) {
+      expectedAmount = Number(order.total_amount || 0);
+    }
+
+    // Validar montos si requiere pago (permitir transferencia sin efectivo)
+    const productPayMethod = ((paymentMethod !== undefined && paymentMethod !== null ? String(paymentMethod) : (productPaymentMethod || '')).toLowerCase());
+    const isTrusted = (req.body && (req.body.trustedDelivery === true || String(req.body.trustedDelivery).toLowerCase() === 'true')) && (productPayMethod === 'transferencia');
+    // Validaciones de cobro según método seleccionado por el mensajero
+    // Si el pedido ya estaba entregado, no forzar validaciones (idempotencia suave)
+    // Si el pedido es cliente a crédito (incluye override de cartera), no se requiere cobro del producto
+    const orderPayMethodNormalized = String(order.payment_method || '').toLowerCase();
+    const isCreditMethod = ['cliente_credito', 'cliente a credito', 'credito', 'crédito', 'credit'].some(k => orderPayMethodNormalized.includes(k));
+    if (order.requires_payment && !isCreditMethod && !alreadyDelivered && !isTrusted) {
+      const tAmt = Number(transferAmount || 0);
+      const cashAmt = paymentCollectedNum;
+
+      if (productPayMethod === 'transferencia') {
+        if (!(tAmt > 0) || tAmt !== expectedAmount) {
+          return res.status(400).json({
+            success: false,
+            message: 'La transferencia debe ser por el monto total del pedido'
+          });
+        }
+      } else if (productPayMethod === 'mixto') {
+        if (!(tAmt > 0)) {
+          return res.status(400).json({
+            success: false,
+            message: 'Ingrese el monto transferido para pago mixto'
+          });
+        }
+        if ((cashAmt + tAmt) !== expectedAmount) {
+          return res.status(400).json({
+            success: false,
+            message: 'En pago mixto, efectivo + transferencia debe igualar el monto a cobrar'
+          });
+        }
+      } else {
+        // efectivo/contraentrega
+        if (!(cashAmt > 0) || cashAmt !== expectedAmount) {
+          return res.status(400).json({
+            success: false,
+            message: 'Este pedido requiere recolección en efectivo por el monto total'
+          });
+        }
+      }
     }
 
     // Validar cobro de domicilio según reglas locales
@@ -400,7 +593,7 @@ const completeDelivery = async (req, res) => {
     const underThreshold = Number(order.total_amount || 0) < Number(localThreshold || 0);
     const exempt = order.delivery_fee_exempt === 1 || order.delivery_fee_exempt === true;
 
-    if (isLocal && shippingPay === 'contraentrega' && underThreshold && !exempt) {
+    if (!alreadyDelivered && !isCreditMethod && isLocal && shippingPay === 'contraentrega' && underThreshold && !exempt) {
       const feePayMethod = (deliveryFeePaymentMethod || '').toLowerCase();
       if (feePayMethod !== 'transferencia' && (!deliveryFeeCollected || Number(deliveryFeeCollected) <= 0)) {
         return res.status(400).json({
@@ -411,7 +604,7 @@ const completeDelivery = async (req, res) => {
     }
 
     // Reflejar método de pago actualizado en orders (si fue proporcionado)
-    if (productPayMethod) {
+    if (productPayMethod && productPayMethod !== 'mixto') {
       try {
         await query('UPDATE orders SET payment_method = ? WHERE id = ?', [productPayMethod, orderId]);
       } catch (e) {
@@ -419,12 +612,92 @@ const completeDelivery = async (req, res) => {
       }
     }
 
-    // Actualizar estado del pedido
-    await query(
-      'UPDATE orders SET messenger_status = ?, status = ? WHERE id = ?',
-      ['delivered', 'entregado', orderId]
-    );
+    // Actualizar datos electrónicos (banco y referencia) si aplica transferencia (total o mixta)
+    // Guardar datos electrónicos solo si se proporcionan (no obligatorios para el mensajero)
+    if ((productPayMethod === 'transferencia' || productPayMethod === 'mixto') && Number(transferAmount || 0) > 0 && (transferBank || transferReference)) {
+      try {
+        const epType = transferBank ? String(transferBank).toLowerCase().trim() : null;
+        const epNotes = transferReference ? String(transferReference).slice(0, 255) : null;
+        await query('UPDATE orders SET electronic_payment_type = ?, electronic_payment_notes = ? WHERE id = ?', [epType, epNotes, orderId]);
+      } catch (e) {
+        console.warn('No se pudo actualizar electronic_payment_* en orders:', e.message);
+      }
+    }
 
+    // Actualizar estado del pedido (solo si aún no está marcado como entregado)
+    if (!alreadyDelivered) {
+      const newStatus = isTrusted ? 'revision_cartera' : 'entregado';
+      await query(
+        'UPDATE orders SET messenger_status = ?, status = ? WHERE id = ?',
+        ['delivered', newStatus, orderId]
+      );
+      // Si es entrega con confianza, marcar banderas para Cartera
+      if (isTrusted) {
+        try {
+          await query('UPDATE orders SET actual_payment_method = ?, payment_confirmed_by_wallet = 0 WHERE id = ?', ['transferencia', orderId]);
+        } catch (e) {
+          console.warn('No se pudo actualizar flags de confianza en orders:', e.message);
+        }
+      }
+
+      // Failsafe: Si el frontend indica que está pendiente de comprobante, asegurarlo en BD
+      if (isPendingEvidence === true || String(isPendingEvidence) === 'true') {
+        try {
+          await query('UPDATE orders SET is_pending_payment_evidence = 1 WHERE id = ?', [orderId]);
+        } catch (e) {
+          console.warn('No se pudo asegurar flag is_pending_payment_evidence:', e.message);
+        }
+      }
+    }
+
+    // Preparar datos de tracking y notas
+    // delivery_tracking.payment_method: ENUM('efectivo','transferencia','tarjeta')
+    // mapear valores de frontend a ENUM soportado (incl. contraentrega -> efectivo)
+    const pmNorm = String(productPayMethod || paymentMethod || '').toLowerCase().trim();
+    const tAmt = Number(transferAmount || 0);
+    const cashAmtForMap = Number(paymentCollectedNum || 0);
+    let trackingPayMethod = null;
+    if (pmNorm === 'mixto') {
+      trackingPayMethod = (cashAmtForMap > 0) ? 'efectivo' : 'transferencia';
+    } else if (['efectivo', 'cash', 'contraentrega', 'contra-entrega'].includes(pmNorm)) {
+      trackingPayMethod = 'efectivo';
+    } else if (['transferencia', 'transfer'].includes(pmNorm)) {
+      trackingPayMethod = 'transferencia';
+    } else if (pmNorm.includes('tarjeta')) {
+      trackingPayMethod = 'tarjeta';
+    } else if (tAmt > 0) {
+      trackingPayMethod = 'transferencia';
+    } else if (cashAmtForMap > 0) {
+      trackingPayMethod = 'efectivo';
+    } else {
+      // Fallback seguro para evitar error de ENUM en modo estricto
+      trackingPayMethod = 'efectivo';
+    }
+    // Mapear método de pago del flete a valores conocidos
+    const feePmNorm = String(deliveryFeePaymentMethod || '').toLowerCase().trim();
+    const mappedFeeMethod =
+      feePmNorm
+        ? (['efectivo', 'cash', 'contraentrega', 'contra-entrega'].includes(feePmNorm)
+          ? 'efectivo'
+          : (['transferencia', 'transfer', 'nequi', 'daviplata'].includes(feePmNorm) ? 'transferencia' : null))
+        : null;
+    const hasTransfer = ((productPayMethod === 'transferencia' || productPayMethod === 'mixto') && Number(transferAmount || 0) > 0);
+    const extraNotes = (hasTransfer && (transferBank || transferReference))
+      ? `[TRANSFER] ${transferBank || ''} REF:${transferReference || ''} ${transferDate || ''}`.trim()
+      : null;
+    const finalNotes = [(deliveryNotes ?? (req.body && req.body.notes) ?? null), extraNotes].filter(Boolean).join(' | ') || null;
+
+    // Asegurar existencia de registro de tracking para (orderId, messengerId)
+    try {
+      const existing = await query('SELECT id FROM delivery_tracking WHERE order_id = ? AND messenger_id = ? ORDER BY id DESC LIMIT 1', [orderId, trackingMessengerId]);
+      if (!existing.length) {
+        await query('INSERT INTO delivery_tracking (order_id, messenger_id, assigned_at, accepted_at, started_delivery_at) VALUES (?, ?, NOW(), NOW(), NOW())', [orderId, trackingMessengerId]);
+      }
+    } catch (e) {
+      console.warn('No se pudo asegurar registro de tracking (se continúa):', e.message);
+    }
+
+    const paymentCollectedForUpdate = isTrusted ? 0 : paymentCollectedNum;
     // Actualizar registro de tracking
     await query(
       `UPDATE delivery_tracking SET 
@@ -435,20 +708,43 @@ const completeDelivery = async (req, res) => {
          delivery_fee_payment_method = ?,
          delivery_notes = ?,
          delivery_latitude = ?,
-         delivery_longitude = ?
+         delivery_longitude = ?,
+         trusted_delivery = ?,
+         trusted_authorized_by = ?,
+         trusted_note = ?
        WHERE order_id = ? AND messenger_id = ?`,
       [
-        paymentCollected || 0,
+        paymentCollectedForUpdate,
         deliveryFeeCollected || 0,
-        paymentMethod || null,
-        deliveryFeePaymentMethod || null,
-        deliveryNotes || null,
+        (trackingPayMethod || null),
+        mappedFeeMethod,
+        finalNotes || null,
         latitude || null,
         longitude || null,
+        isTrusted ? 1 : 0,
+        authorizedByUserId || null,
+        (trustNote ?? (req.body && req.body.trustNote) ?? null),
         orderId,
-        messengerId
+        trackingMessengerId
       ]
     );
+
+    try {
+      const orderRow = await query('SELECT order_number, customer_id, total_amount, delivery_method, shipping_payment_method, payment_method FROM orders WHERE id = ? LIMIT 1', [orderId]);
+      const ord = orderRow[0] || {};
+      await eventBus.emit('order.delivered', {
+        orderId,
+        orderNumber: ord.order_number || null,
+        customerId: ord.customer_id || null,
+        deliveredAt: new Date().toISOString(),
+        deliveryMethod: ord.delivery_method || null,
+        paymentMethod: ord.payment_method || null,
+        shippingPaymentMethod: ord.shipping_payment_method || null,
+        total: ord.total_amount || null
+      });
+    } catch (e) {
+      console.warn('⚠️ Error emitiendo evento order.delivered:', e?.message || e);
+    }
 
     res.json({
       success: true,
@@ -456,10 +752,24 @@ const completeDelivery = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error completando entrega:', error);
-    res.status(500).json({
+    const rawMsg = (error && (error.sqlMessage || error.message)) || 'Error interno del servidor';
+    console.error('Error completando entrega:', rawMsg, error);
+    const msgLc = String(rawMsg).toLowerCase();
+    const isClientError =
+      msgLc.includes('unknown column') ||
+      msgLc.includes('enum') ||
+      msgLc.includes('invalid') ||
+      msgLc.includes('not null') ||
+      msgLc.includes('duplicate') ||
+      msgLc.includes('constraint') ||
+      msgLc.includes('out of range') ||
+      msgLc.includes('incorrect') ||
+      msgLc.includes('truncated') ||
+      msgLc.includes('data too long');
+    const status = isClientError ? 400 : 500;
+    res.status(status).json({
       success: false,
-      message: 'Error interno del servidor'
+      message: rawMsg
     });
   }
 };
@@ -516,6 +826,19 @@ const markDeliveryFailed = async (req, res) => {
       [reason, orderId, messengerId]
     );
 
+    try {
+      const row = await query('SELECT customer_id FROM orders WHERE id = ? LIMIT 1', [orderId]);
+      const customerId = row[0]?.customer_id || null;
+      await eventBus.emit('delivery.incident', {
+        orderId,
+        customerId,
+        incident: 'delivery_failed',
+        notes: reason
+      });
+    } catch (e) {
+      console.warn('⚠️ Error emitiendo evento delivery.incident:', e?.message || e);
+    }
+
     res.json({
       success: true,
       message: 'Entrega marcada como fallida',
@@ -524,6 +847,65 @@ const markDeliveryFailed = async (req, res) => {
 
   } catch (error) {
     console.error('Error marcando entrega fallida:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error interno del servidor'
+    });
+  }
+};
+
+// Marcar pedido como pendiente de comprobante (Messenger)
+const markPendingEvidence = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const messengerId = req.user.id;
+
+    // Verificar que el pedido esté asignado al mensajero y en entrega
+    const orderResult = await query(
+      'SELECT id, messenger_status FROM orders WHERE id = ? AND assigned_messenger_id = ?',
+      [orderId, messengerId]
+    );
+
+    if (!orderResult.length) {
+      return res.status(404).json({
+        success: false,
+        message: 'Pedido no encontrado o no asignado a este mensajero'
+      });
+    }
+
+    // Permitir marcar pendiente si está en reparto
+    if (orderResult[0].messenger_status !== 'in_delivery') {
+      return res.status(400).json({
+        success: false,
+        message: 'El pedido debe estar en entrega para marcarlo como pendiente de comprobante'
+      });
+    }
+
+    // Actualizar flag
+    await query(
+      'UPDATE orders SET is_pending_payment_evidence = TRUE WHERE id = ?',
+      [orderId]
+    );
+
+    // Registrar en tracking (opcional, como nota o evento)
+    try {
+      await query(
+        `UPDATE delivery_tracking 
+         SET delivery_notes = CONCAT(COALESCE(delivery_notes, ''), ' | Pendiente comprobante por Cartera') 
+         WHERE order_id = ? AND messenger_id = ?`,
+        [orderId, messengerId]
+      );
+    } catch (e) {
+      console.warn('No se pudo actualizar nota de tracking:', e);
+    }
+
+    res.json({
+      success: true,
+      message: 'Pedido marcado como pendiente de comprobante. Notifique a Cartera.'
+    });
+
+  } catch (error) {
+    console.error('Error marcando pendiente de comprobante:', error);
     res.status(500).json({
       success: false,
       message: 'Error interno del servidor'
@@ -605,7 +987,7 @@ const uploadEvidence = async (req, res) => {
 
   } catch (error) {
     console.error('Error subiendo evidencia:', error);
-    
+
     // Eliminar archivo si hubo error
     if (req.file && fs.existsSync(req.file.path)) {
       try {
@@ -630,7 +1012,7 @@ const getDailySummary = async (req, res) => {
   try {
     const messengerId = req.user.id;
     const { date } = req.query;
-    
+
     const targetDate = date ? new Date(date) : new Date();
     const dateStr = targetDate.toISOString().split('T')[0];
 
@@ -925,7 +1307,15 @@ const getStats = async (req, res) => {
         (SELECT COALESCE(SUM(dtb.payment_collected), 0)
            FROM delivery_tracking dtb
           WHERE dtb.messenger_id = ?
-            AND DATE(dtb.delivered_at) = ?) AS cashCollectedToday
+            AND DATE(dtb.delivered_at) = ?) AS cashCollectedToday,
+        (SELECT COUNT(*) 
+           FROM delivery_tracking dt5 
+          WHERE dt5.messenger_id = ? 
+            AND dt5.delivered_at IS NOT NULL) AS deliveredAllTime,
+        (SELECT COUNT(*) 
+           FROM orders o_p 
+          WHERE o_p.assigned_messenger_id = ? 
+            AND o_p.messenger_status IN ('assigned', 'accepted', 'in_delivery')) AS pendingCount
       `,
       [
         messengerId, todayStr,
@@ -933,7 +1323,9 @@ const getStats = async (req, res) => {
         messengerId, todayStr,
         messengerId, todayStr,
         messengerId, todayStr,
-        messengerId, todayStr
+        messengerId, todayStr,
+        messengerId, // For deliveredAllTime
+        messengerId  // For pendingCount
       ]
     );
 
@@ -943,7 +1335,9 @@ const getStats = async (req, res) => {
       inDeliveryToday: 0,
       deliveredToday: 0,
       cashToCollectToday: 0,
-      cashCollectedToday: 0
+      cashCollectedToday: 0,
+      deliveredAllTime: 0,
+      pendingCount: 0
     };
     summary.cashGapToday = (summary.cashToCollectToday || 0) - (summary.cashCollectedToday || 0);
 
@@ -1166,7 +1560,7 @@ const declareCashForOrder = async (req, res) => {
     if (!delivered.length) {
       return res.status(400).json({
         success: false,
-        message: 'El pedido no está marcado como entregado por este mensajero'
+        message: 'El pedido no existe, no pertenece al mensajero o no ha sido entregado'
       });
     }
 
@@ -1229,7 +1623,7 @@ const declareCashForOrder = async (req, res) => {
           closingId,
           row.id,
           row.order_number,
-          row.payment_method || 'cash',
+          normalizePay(row.payment_method),
           expectedAmount,
           declaredAmount,
           notes ? `[Declaración mensajero] ${notes}` : null
@@ -1278,10 +1672,31 @@ const acceptCashForOrder = async (req, res) => {
     const { orderId } = req.params;
     const receiverUserId = req.user.id;
 
+    // Bloqueo: Reposición no es cobrable por mensajero
+    try {
+      const pmRow = await query('SELECT payment_method FROM orders WHERE id = ?', [orderId]);
+      const pmv = String(pmRow?.[0]?.payment_method || '').toLowerCase();
+      if (pmv === 'reposicion' || pmv === 'reposición') {
+        return res.status(400).json({
+          success: false,
+          message: 'Reposición: no se acepta efectivo del mensajero para esta factura'
+        });
+      }
+    } catch (_) {
+      // no-op
+    }
+
     // 1) Intentar con un detalle existente (flujo normal si el mensajero ya declaró)
     const existing = await query(
       `
-      SELECT ccd.id AS detail_id, mcc.id AS closing_id, mcc.messenger_id, ccd.collection_status
+      SELECT 
+        ccd.id AS detail_id, 
+        mcc.id AS closing_id, 
+        mcc.messenger_id, 
+        ccd.collection_status,
+        ccd.payment_method,
+        ccd.order_amount,
+        ccd.collected_amount
       FROM cash_closing_details ccd
       JOIN messenger_cash_closings mcc ON mcc.id = ccd.closing_id
       WHERE ccd.order_id = ?
@@ -1292,6 +1707,25 @@ const acceptCashForOrder = async (req, res) => {
     );
 
     if (existing.length) {
+      // Validar que el detalle represente EFECTIVO; si es transferencia sin efectivo, bloquear
+      const det = existing[0];
+      const isCashDetail = String(det.payment_method || '').toLowerCase() === 'cash';
+      const hasCashAmounts = (Number(det.order_amount || 0) > 0) || (Number(det.collected_amount || 0) > 0);
+      if (!isCashDetail && !hasCashAmounts) {
+        return res.status(400).json({
+          success: false,
+          message: 'El pedido no tiene efectivo para entregar (pago fue transferencia).'
+        });
+      }
+      // Idempotencia: si el detalle ya está aceptado, responder OK sin modificar nada
+      if (String(det.collection_status || '').toLowerCase() === 'collected') {
+        return res.json({
+          success: true,
+          message: 'Recepción de efectivo ya aceptada previamente',
+          data: { closing_id: det.closing_id, status: 'completed' }
+        });
+      }
+
       await query(
         `
         UPDATE cash_closing_details 
@@ -1364,6 +1798,7 @@ const acceptCashForOrder = async (req, res) => {
         dt.payment_collected,
         dt.delivery_fee_collected,
         dt.payment_method,
+        dt.delivery_fee_payment_method,
         dt.delivered_at
       FROM orders o
       LEFT JOIN delivery_tracking dt ON dt.order_id = o.id
@@ -1387,7 +1822,17 @@ const acceptCashForOrder = async (req, res) => {
       return res.status(400).json({ success: false, message: 'No se pudo determinar el mensajero del pedido' });
     }
 
-    const expectedAmount = Number(row.payment_collected || 0) + Number(row.delivery_fee_collected || 0);
+    // Solo aceptar EFECTIVO: calcular efectivo real del producto y del flete
+    const cashProduct = (String(row.payment_method || '').toLowerCase() === 'efectivo') ? Number(row.payment_collected || 0) : 0;
+    const cashFee = (String(row.delivery_fee_payment_method || '').toLowerCase() === 'efectivo') ? Number(row.delivery_fee_collected || 0) : 0;
+    const expectedAmountCash = Number(cashProduct + cashFee);
+
+    if (!(expectedAmountCash > 0)) {
+      return res.status(400).json({
+        success: false,
+        message: 'No hay efectivo para aceptar en este pedido (pago fue transferencia).'
+      });
+    }
 
     const deliveredAt = new Date(row.delivered_at);
     const pad = (n) => String(n).padStart(2, '0');
@@ -1411,18 +1856,17 @@ const acceptCashForOrder = async (req, res) => {
     }
 
     // Insertar detalle como aceptado
-    const paymentMethodRow = row.payment_method || 'cash';
+    // Insertar detalle solo por efectivo
     await query(
       `INSERT INTO cash_closing_details (
          closing_id, order_id, order_number, payment_method, order_amount, collected_amount, collection_status, collection_notes, collected_at
-       ) VALUES (?, ?, ?, ?, ?, ?, 'collected', ?, NOW())`,
+       ) VALUES (?, ?, ?, 'cash', ?, ?, 'collected', ?, NOW())`,
       [
         closingId,
         row.order_id,
         row.order_number,
-        paymentMethodRow,
-        expectedAmount,
-        expectedAmount,
+        expectedAmountCash,
+        expectedAmountCash,
         `[Recepción] Aceptado por usuario ID ${receiverUserId} (auto-creado)`
       ]
     );
@@ -1464,7 +1908,19 @@ const acceptCashForOrder = async (req, res) => {
     });
   } catch (error) {
     console.error('Error aceptando efectivo por pedido:', error);
-    return res.status(500).json({ success: false, message: 'Error interno del servidor' });
+    // Exponer mensaje de error para diagnóstico y mapear a 400 si es validación/contenido esperado
+    const rawMsg = (error && (error.sqlMessage || error.message)) || 'Error interno del servidor';
+    const msgLc = String(rawMsg).toLowerCase();
+    const isClientError =
+      msgLc.includes('not found') ||
+      msgLc.includes('no se pudo determinar') ||
+      msgLc.includes('no está marcado') ||
+      msgLc.includes('invalid') ||
+      msgLc.includes('duplicat') || // duplicate key, etc.
+      msgLc.includes('constraint') ||
+      msgLc.includes('rejected');
+    const status = isClientError ? 400 : 500;
+    return res.status(status).json({ success: false, message: rawMsg });
   }
 };
 
@@ -1734,6 +2190,38 @@ const getCashReceiptHtml = async (req, res) => {
   }
 };
 
+/**
+ * POST /api/messenger/adhoc-payments
+ * Registrar recepción de dinero adhoc (crédito cliente, etc)
+ */
+const registerAdhocPayment = async (req, res) => {
+  try {
+    const messengerId = req.user.id;
+    const { amount, description, notes } = req.body;
+    const file = req.file;
+
+    if (!amount) {
+      return res.status(400).json({ success: false, message: 'El monto es requerido' });
+    }
+
+    let evidenceUrl = null;
+    if (file) {
+      evidenceUrl = `/uploads/evidence/${file.filename}`;
+    }
+
+    await query(
+      `INSERT INTO messenger_adhoc_payments (messenger_id, amount, description, evidence_url, notes)
+       VALUES (?, ?, ?, ?, ?)`,
+      [messengerId, amount, description, evidenceUrl, notes]
+    );
+
+    return res.json({ success: true, message: 'Pago registrado correctamente' });
+  } catch (error) {
+    console.error('Error registrando pago adhoc:', error);
+    return res.status(500).json({ success: false, message: 'Error interno del servidor' });
+  }
+};
+
 module.exports = {
   getAssignedOrders,
   acceptOrder,
@@ -1741,6 +2229,7 @@ module.exports = {
   startDelivery,
   completeDelivery,
   markDeliveryFailed,
+  markPendingEvidence,
   uploadEvidence,
   getDailySummary,
   getCashSummary,
@@ -1751,5 +2240,6 @@ module.exports = {
   createCashDelivery,
   getCashDeliveries,
   getCashReceiptHtml,
+  registerAdhocPayment,
   upload // Middleware de multer para subir archivos
 };

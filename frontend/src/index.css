@@ -7,6 +7,16 @@
   body {
     font-family: 'Inter', system-ui, sans-serif;
   }
+  /* Evitar desbordes horizontales inesperados en móvil */
+  html, body {
+    overflow-x: hidden;
+  }
+
+  /* Bloqueo de overscroll durante modo Empacando (móvil/iPad) */
+  body.packing-lock {
+    overscroll-behavior: none; /* evita rebote en iOS y overscroll chaining */
+    touch-action: none;        /* bloquea gestos de desplazamiento; clicks siguen funcionando */
+  }
 }
 
 @layer components {
@@ -53,6 +63,11 @@
   
   .btn-lg {
     @apply h-12 px-8 text-base;
+  }
+
+  /* CTA primario grande para acciones destacadas (Logística) */
+  .btn-cta-primary {
+    @apply inline-flex items-center justify-center h-14 px-8 rounded-full text-base font-semibold bg-gradient-to-r from-primary-600 to-indigo-600 text-white shadow-lg hover:shadow-xl ring-1 ring-indigo-500/20 hover:ring-indigo-400/40 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition-transform duration-200 hover:-translate-y-0.5 disabled:opacity-60 disabled:cursor-not-allowed gap-2;
   }
 
   /* Inputs */
@@ -176,6 +191,33 @@
   .spinner {
     @apply animate-spin rounded-full border-2 border-current border-t-transparent;
   }
+
+}
+
+/* Ajustes globales para pantallas pequeñas */
+@media (max-width: 640px) {
+  /* Chips/Badges más compactos */
+  .badge {
+    padding: 0.125rem 0.375rem; /* ~py-0.5 px-1.5 */
+    font-size: 0.70rem; /* entre text-[11px] y text-xs */
+    line-height: 1rem;
+  }
+  /* Botones medianos más compactos por defecto en móvil */
+  .btn-md {
+    height: 2.25rem; /* 36px */
+    padding-left: 0.75rem; /* px-3 */
+    padding-right: 0.75rem;
+  }
+  /* Tablas compactas en móvil */
+  .table { font-size: 0.80rem; }
+  .table-head { padding-left: 0.5rem; padding-right: 0.5rem; height: 2.25rem; }
+  .table-cell { padding: 0.5rem; }
+  /* Títulos de tarjetas más pequeños */
+  .card-title { font-size: 1.125rem; }
+  /* Secciones de tarjeta más compactas */
+  .card-header { padding: 0.75rem; }
+  .card-content { padding: 0.75rem; }
+  .card-footer { padding: 0.75rem; }
 }
 
 @layer utilities {
@@ -190,5 +232,22 @@
   
   .scrollbar-hide::-webkit-scrollbar {
     display: none;
+  }
+
+  /* Celdas de acciones - tamaño y espaciado base (reemplaza space-x-2) */
+  .actions-cell > * + * {
+    margin-left: 0.5rem; /* equivalente a Tailwind space-x-2 */
+  }
+
+  /* Vista Logística: íconos 30% más grandes y 10% más separados */
+  .actions-lgx > * + * {
+    margin-left: 0.55rem; /* 10% más separación que 0.5rem */
+  }
+  .actions-lgx button.w-4.h-4,
+  .actions-lgx a.w-4.h-4,
+  .actions-lgx div.w-4.h-4,
+  .actions-lgx svg {
+    width: 1.3rem !important;  /* 30% más grande que 1rem */
+    height: 1.3rem !important; /* 30% más grande que 1rem */
   }
 }

@@ -172,36 +172,50 @@ const createCustomerCredit = async (req, res) => {
         const { customer_nit, customer_name, credit_limit, notes } = req.body;
         const userId = req.user.id;
         
-        // Validar datos requeridos
-        if (!customer_nit || !customer_name || !credit_limit) {
+        // Validar datos requeridos (nombre puede ser sobreescrito por el de SIIGO)
+        if (!customer_nit || !credit_limit) {
             return res.status(400).json({
                 success: false,
-                message: 'NIT, nombre del cliente y cupo de crédito son requeridos'
+                message: 'NIT y cupo de crédito son requeridos'
             });
         }
         
-        // Verificar que el NIT no exista
+        // Verificar que el NIT no exista en customer_credit
         const existingCustomer = await query(
             'SELECT id FROM customer_credit WHERE customer_nit = ?',
             [customer_nit]
         );
-        
         if (existingCustomer.length > 0) {
             return res.status(400).json({
                 success: false,
-                message: 'Ya existe un cliente con este NIT'
+                message: 'Ya existe un cliente de crédito con este NIT'
             });
         }
         
-        // Crear cliente de crédito
+        // Validar que el NIT pertenezca a un cliente sincronizado desde SIIGO (tabla customers)
+        const siigoCustomerRows = await query(
+            'SELECT siigo_id, name, commercial_name, identification FROM customers WHERE identification = ? LIMIT 1',
+            [customer_nit]
+        );
+        if (siigoCustomerRows.length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'El NIT indicado no corresponde a un cliente sincronizado desde SIIGO'
+            });
+        }
+        const siigoCustomer = siigoCustomerRows[0];
+        const resolvedName = siigoCustomer.commercial_name && siigoCustomer.commercial_name.trim() !== '' && siigoCustomer.commercial_name.toLowerCase() !== 'no aplica'
+          ? siigoCustomer.commercial_name
+          : (siigoCustomer.name || customer_name);
+        
+        // Crear cliente de crédito usando nombre del sistema
         const insertQuery = `
             INSERT INTO customer_credit (customer_nit, customer_name, credit_limit, current_balance, notes, created_by)
             VALUES (?, ?, ?, 0, ?, ?)
         `;
-        
         const result = await query(insertQuery, [
             customer_nit,
-            customer_name,
+            resolvedName,
             parseFloat(credit_limit),
             notes || null,
             userId

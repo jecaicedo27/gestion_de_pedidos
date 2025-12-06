@@ -71,10 +71,13 @@ const ColombiaHeatMap = ({ height = '700px', showControls = true }) => {
   useEffect(() => {
     // Suscribirse a actualizaciones en tiempo real de pedidos
     const token = authService.getToken && authService.getToken();
-    const backendUrl = process.env.REACT_APP_API_URL || 'http://localhost:3001';
+    const apiBase = process.env.REACT_APP_API_URL || 'http://localhost:3001';
+    const socketBase = (typeof apiBase === 'string' && !apiBase.startsWith('http'))
+      ? window.location.origin
+      : apiBase;
 
     if (!socketRef.current) {
-      const socket = io(backendUrl, {
+      const socket = io(socketBase, {
         transports: ['websocket'],
         withCredentials: true,
         auth: token ? { token } : undefined
@@ -138,7 +141,9 @@ const ColombiaHeatMap = ({ height = '700px', showControls = true }) => {
         throw new Error('No hay token de autenticación');
       }
 
-      const response = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:3001'}/api/heatmap/colombia-sales`, {
+      const apiBase = process.env.REACT_APP_API_URL || 'http://localhost:3001';
+      const apiPath = (typeof apiBase === 'string' && !apiBase.startsWith('http')) ? apiBase : `${apiBase}/api`;
+      const response = await fetch(`${apiPath}/heatmap/colombia-sales`, {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${token}`,

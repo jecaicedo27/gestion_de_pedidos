@@ -1,5 +1,66 @@
 const { pool } = require('../config/database');
 
+async function ensureBaseChangesTable() {
+  try {
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS cartera_base_changes (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        previous_base DECIMAL(12,2) NOT NULL DEFAULT 0,
+        new_base DECIMAL(12,2) NOT NULL DEFAULT 0,
+        changed_by INT NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `);
+  } catch (e) {
+    console.warn('No se pudo asegurar cartera_base_changes:', e.message);
+  }
+}
+
+async function auditBaseChange(prevValue, newValue, userId) {
+  try {
+    await ensureBaseChangesTable();
+    const prev = Number(prevValue || 0) || 0;
+    const next = Number(newValue || 0) || 0;
+    await pool.execute(
+      `INSERT INTO cartera_base_changes (previous_base, new_base, changed_by, created_at) VALUES (?, ?, ?, NOW())`,
+      [prev, next, userId || null]
+    );
+  } catch (e) {
+    console.warn('No se pudo registrar cambio de base:', e.message);
+  }
+}
+
+// Detectar columnas disponibles en system_config para compatibilidad de esquemas
+let schemaState = { checked: false, hasUpdatedBy: false, hasDataType: false, hasUpdatedAt: false, hasCreatedAt: false, hasDescription: false };
+
+async function detectSystemConfigSchema() {
+  if (schemaState.checked) return schemaState;
+  try {
+    const [rows] = await pool.execute(`
+      SELECT COLUMN_NAME
+      FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'system_config'
+    `);
+    const cols = new Set(rows.map(r => r.COLUMN_NAME));
+    schemaState.hasUpdatedBy = cols.has('updated_by');
+    schemaState.hasDataType = cols.has('data_type');
+    schemaState.hasUpdatedAt = cols.has('updated_at');
+    schemaState.hasCreatedAt = cols.has('created_at');
+    schemaState.hasDescription = cols.has('description');
+    schemaState.checked = true;
+  } catch (e) {
+    console.warn('⚠️  No se pudo detectar esquema de system_config:', e.message);
+    // Asumir esquema mínimo para evitar fallos
+    schemaState.hasUpdatedBy = false;
+    schemaState.hasDataType = false;
+    schemaState.hasUpdatedAt = false;
+    schemaState.hasCreatedAt = false;
+    schemaState.hasDescription = false;
+    schemaState.checked = true;
+  }
+  return schemaState;
+}
+
 const systemConfigController = {
   /**
    * GET /api/system-config
@@ -9,8 +70,13 @@ const systemConfigController = {
     try {
       console.log('📋 Obteniendo configuración del sistema...');
       
+      await detectSystemConfigSchema();
+      const partsAll = ['config_key', 'config_value'];
+      if (schemaState.hasDescription) partsAll.push('description');
+      if (schemaState.hasUpdatedAt) partsAll.push('updated_at');
+      const fieldsAll = partsAll.join(', ');
       const [configs] = await pool.execute(`
-        SELECT config_key, config_value, description, updated_at
+        SELECT ${fieldsAll}
         FROM system_config 
         ORDER BY config_key
       `);
@@ -60,6 +126,7 @@ const systemConfigController = {
       
       console.log(`📝 Actualizando ${configs.length} configuraciones...`);
       
+      await detectSystemConfigSchema();
       // Procesar cada configuración
       for (const config of configs) {
         const { config_key, config_value } = config;
@@ -69,6 +136,16 @@ const systemConfigController = {
           continue;
         }
         
+        // Si es la base de cartera, obtener valor previo para auditoría
+        let prevBase = null;
+        let isBaseKey = config_key === 'cartera_base_balance';
+        if (isBaseKey) {
+          try {
+            const [rowPrev] = await pool.execute('SELECT config_value FROM system_config WHERE config_key = ? LIMIT 1', [config_key]);
+            if (rowPrev.length) prevBase = rowPrev[0].config_value;
+          } catch (_) {}
+        }
+        
         // Verificar que la configuración existe
         const [existing] = await pool.execute(
           'SELECT config_key FROM system_config WHERE config_key = ?',
@@ -76,22 +153,34 @@ const systemConfigController = {
         );
         
         if (existing.length === 0) {
-          // Si no existe, crearla
-          await pool.execute(`
-            INSERT INTO system_config (config_key, config_value, description, created_at, updated_at)
-            VALUES (?, ?, ?, NOW(), NOW())
-          `, [config_key, config_value, `Configuración ${config_key}`]);
-          
+          // Si no existe, crearla con columnas dinámicas
+          await detectSystemConfigSchema();
+          const cols = ['config_key', 'config_value'];
+          const vals = [config_key, config_value];
+          const ph = ['?', '?'];
+          if (schemaState.hasDescription) { cols.push('description'); vals.push(`Configuración ${config_key}`); ph.push('?'); }
+          if (schemaState.hasCreatedAt) { cols.push('created_at'); ph.push('NOW()'); }
+          if (schemaState.hasUpdatedAt) { cols.push('updated_at'); ph.push('NOW()'); }
+          if (schemaState.hasUpdatedBy) { cols.push('updated_by'); vals.push(userId); ph.push('?'); }
+          const insertSql = `INSERT INTO system_config (${cols.join(', ')}) VALUES (${ph.join(', ')})`;
+          await pool.execute(insertSql, vals);
           console.log(`✅ Creada configuración ${config_key}: ${config_value}`);
         } else {
-          // Si existe, actualizarla
-          await pool.execute(`
-            UPDATE system_config 
-            SET config_value = ?, updated_at = NOW()
-            WHERE config_key = ?
-          `, [config_value, config_key]);
-          
+          // Si existe, actualizarla con SET dinámico
+          await detectSystemConfigSchema();
+          const setParts = ['config_value = ?'];
+          const params = [config_value];
+          if (schemaState.hasUpdatedAt) setParts.push('updated_at = NOW()');
+          if (schemaState.hasUpdatedBy) { setParts.push('updated_by = ?'); params.push(userId); }
+          const updateSql = `UPDATE system_config SET ${setParts.join(', ')} WHERE config_key = ?`;
+          params.push(config_key);
+          await pool.execute(updateSql, params);
           console.log(`✅ Actualizada configuración ${config_key}: ${config_value}`);
+        }
+
+        // Registrar auditoría si cambia la base
+        if (isBaseKey) {
+          await auditBaseChange(prevBase, config_value, userId);
         }
       }
       
@@ -99,8 +188,11 @@ const systemConfigController = {
       const configKeys = configs.map(c => c.config_key);
       const placeholders = configKeys.map(() => '?').join(',');
       
+      const partsUpd = ['config_key', 'config_value'];
+      if (schemaState.hasUpdatedAt) partsUpd.push('updated_at');
+      const fields = partsUpd.join(', ');
       const [updatedConfigs] = await pool.execute(`
-        SELECT config_key, config_value, updated_at
+        SELECT ${fields}
         FROM system_config 
         WHERE config_key IN (${placeholders})
         ORDER BY config_key
@@ -132,8 +224,13 @@ const systemConfigController = {
     try {
       console.log('📅 Obteniendo fecha de inicio de SIIGO...');
       
+      await detectSystemConfigSchema();
+      const partsSiigo = ['config_key', 'config_value'];
+      if (schemaState.hasDescription) partsSiigo.push('description');
+      if (schemaState.hasUpdatedAt) partsSiigo.push('updated_at');
+      const fieldsSiigo = partsSiigo.join(', ');
       const [configs] = await pool.execute(`
-        SELECT config_key, config_value, description, data_type, updated_at
+        SELECT ${fieldsSiigo}
         FROM system_config 
         WHERE config_key IN ('siigo_start_date', 'siigo_start_date_enabled', 'siigo_historical_warning')
         ORDER BY config_key
@@ -150,7 +247,7 @@ const systemConfigController = {
         switch (config.config_key) {
           case 'siigo_start_date':
             siigoConfig.start_date = config.config_value;
-            siigoConfig.updated_at = config.updated_at;
+            siigoConfig.updated_at = schemaState.hasUpdatedAt ? config.updated_at : null;
             break;
           case 'siigo_start_date_enabled':
             siigoConfig.enabled = config.config_value === 'true';
@@ -228,19 +325,67 @@ const systemConfigController = {
         { key: 'siigo_historical_warning', value: show_warning.toString(), type: 'boolean' }
       ];
       
+      await detectSystemConfigSchema();
       for (const update of updates) {
-        await pool.execute(`
-          UPDATE system_config 
-          SET config_value = ?, updated_by = ?, updated_at = NOW()
-          WHERE config_key = ?
-        `, [update.value, userId, update.key]);
-        
+        // Construir SET dinámico según columnas existentes
+        const setParts = ['config_value = ?'];
+        const params = [update.value];
+        if (schemaState.hasUpdatedBy) {
+          setParts.push('updated_by = ?');
+          params.push(userId);
+        }
+        if (schemaState.hasUpdatedAt) {
+          setParts.push('updated_at = NOW()');
+        }
+        const baseQuery = `UPDATE system_config SET ${setParts.join(', ')} WHERE config_key = ?`;
+        params.push(update.key);
+
+        const [result] = await pool.execute(baseQuery, params);
+
+        if (result.affectedRows === 0) {
+          // Si no existe la fila, crearla respetando el esquema disponible
+          // Construir columnas dinámicas para INSERT
+          const columns = ['config_key', 'config_value'];
+          const values = [update.key, update.value];
+          const placeholders = ['?', '?'];
+          if (schemaState.hasDataType) {
+            columns.push('data_type');
+            values.push(update.type);
+            placeholders.push('?');
+          }
+          if (schemaState.hasDescription) {
+            columns.push('description');
+            values.push(`Configuración ${update.key}`);
+            placeholders.push('?');
+          }
+          if (schemaState.hasCreatedAt) {
+            columns.push('created_at');
+            placeholders.push('NOW()');
+          }
+          if (schemaState.hasUpdatedAt) {
+            columns.push('updated_at');
+            placeholders.push('NOW()');
+          }
+          if (schemaState.hasUpdatedBy) {
+            columns.push('updated_by');
+            values.push(userId);
+            placeholders.push('?');
+          }
+
+          const insertSql = `INSERT INTO system_config (${columns.join(', ')}) VALUES (${placeholders.join(', ')})`;
+          await pool.execute(insertSql, values);
+          
+        }
+
         console.log(`✅ Actualizado ${update.key}: ${update.value}`);
       }
       
       // Obtener la configuración actualizada
+      const partsReturn = ['config_key', 'config_value'];
+      if (schemaState.hasUpdatedAt) partsReturn.push('updated_at');
+      const fieldsReturn = partsReturn.join(', ');
       const [updatedConfigs] = await pool.execute(`
-        SELECT config_key, config_value, updated_at
+        SELECT ${fieldsReturn}
         FROM system_config 
         WHERE config_key IN ('siigo_start_date', 'siigo_start_date_enabled', 'siigo_historical_warning')
       `);
@@ -256,7 +401,7 @@ const systemConfigController = {
         switch (config.config_key) {
           case 'siigo_start_date':
             result.start_date = config.config_value;
-            result.updated_at = config.updated_at;
+            result.updated_at = schemaState.hasUpdatedAt ? config.updated_at : null;
             break;
           case 'siigo_start_date_enabled':
             result.enabled = config.config_value === 'true';
@@ -297,11 +442,12 @@ const systemConfigController = {
       
       console.log(`🔧 Actualizando configuración ${key}: ${value}`);
       
-      // Verificar que la configuración existe
-      const [existing] = await pool.execute(
-        'SELECT config_key, data_type FROM system_config WHERE config_key = ?',
-        [key]
-      );
+      // Verificar que la configuración existe y detectar esquema
+      await detectSystemConfigSchema();
+      const selectSql = schemaState.hasDataType
+        ? 'SELECT config_key, data_type FROM system_config WHERE config_key = ?'
+        : 'SELECT config_key FROM system_config WHERE config_key = ?';
+      const [existing] = await pool.execute(selectSql, [key]);
       
       if (existing.length === 0) {
         return res.status(404).json({
@@ -310,57 +456,79 @@ const systemConfigController = {
         });
       }
       
-      // Validar el valor según el tipo de dato
-      const dataType = existing[0].data_type;
+      // Validar el valor según el tipo de dato (solo si la columna existe)
+      const dataType = schemaState.hasDataType ? existing[0].data_type : null;
       let processedValue = value;
       
-      switch (dataType) {
-        case 'boolean':
-          if (typeof value !== 'boolean') {
-            return res.status(400).json({
-              success: false,
-              message: 'El valor debe ser un booleano'
-            });
-          }
-          processedValue = value.toString();
-          break;
-        case 'number':
-          if (isNaN(value)) {
-            return res.status(400).json({
-              success: false,
-              message: 'El valor debe ser un número'
-            });
-          }
-          processedValue = value.toString();
-          break;
-        case 'json':
-          try {
-            JSON.parse(value);
-            processedValue = typeof value === 'string' ? value : JSON.stringify(value);
-          } catch (e) {
-            return res.status(400).json({
-              success: false,
-              message: 'El valor debe ser un JSON válido'
-            });
-          }
-          break;
-        case 'date':
-          if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-            return res.status(400).json({
-              success: false,
-              message: 'La fecha debe estar en formato YYYY-MM-DD'
-            });
-          }
-          break;
-        // 'string' no necesita validación especial
+      if (dataType) {
+        switch (dataType) {
+          case 'boolean':
+            if (typeof value !== 'boolean') {
+              return res.status(400).json({
+                success: false,
+                message: 'El valor debe ser un booleano'
+              });
+            }
+            processedValue = value.toString();
+            break;
+          case 'number':
+            if (isNaN(value)) {
+              return res.status(400).json({
+                success: false,
+                message: 'El valor debe ser un número'
+              });
+            }
+            processedValue = value.toString();
+            break;
+          case 'json':
+            try {
+              JSON.parse(value);
+              processedValue = typeof value === 'string' ? value : JSON.stringify(value);
+            } catch (e) {
+              return res.status(400).json({
+                success: false,
+                message: 'El valor debe ser un JSON válido'
+              });
+            }
+            break;
+          case 'date':
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+              return res.status(400).json({
+                success: false,
+                message: 'La fecha debe estar en formato YYYY-MM-DD'
+              });
+            }
+            break;
+          // 'string' no necesita validación especial
+        }
+      } else {
+        // Sin información de tipo, almacenar como string para compatibilidad
+        processedValue = typeof value === 'string' ? value : String(value);
       }
       
-      // Actualizar la configuración
-      await pool.execute(`
-        UPDATE system_config 
-        SET config_value = ?, updated_by = ?, updated_at = NOW()
-        WHERE config_key = ?
-      `, [processedValue, userId, key]);
+      // Si es base de cartera, leer valor previo
+      let prevBase = null;
+      const isBaseKey = key === 'cartera_base_balance';
+      if (isBaseKey) {
+        try {
+          const [rowPrev] = await pool.execute('SELECT config_value FROM system_config WHERE config_key = ? LIMIT 1', [key]);
+          if (rowPrev.length) prevBase = rowPrev[0].config_value;
+        } catch (_) {}
+      }
+
+      // Actualizar la configuración respetando el esquema disponible
+      const setParts2 = ['config_value = ?'];
+      const updateParams = [processedValue];
+      if (schemaState.hasUpdatedBy) { setParts2.push('updated_by = ?'); updateParams.push(userId); }
+      if (schemaState.hasUpdatedAt) { setParts2.push('updated_at = NOW()'); }
+      const updateSql = `UPDATE system_config SET ${setParts2.join(', ')} WHERE config_key = ?`;
+      updateParams.push(key);
+      await pool.execute(updateSql, updateParams);
+
+      // Registrar auditoría si corresponde
+      if (isBaseKey) {
+        await auditBaseChange(prevBase, processedValue, userId);
+      }
       
       console.log(`✅ Configuración ${key} actualizada exitosamente`);
       

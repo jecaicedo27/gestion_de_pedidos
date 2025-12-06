@@ -6,6 +6,13 @@ import { orderService } from '../services/api';
 import * as Icons from 'lucide-react';
 import toast from 'react-hot-toast';
 
+// Normaliza método de pago a 'credito' cuando corresponda
+const normalizePaymentMethod = (pm) => {
+  const v = (pm || '').toLowerCase();
+  if (['cliente_credito','credito_cliente','cliente-credito','credito'].includes(v)) return 'credito';
+  return v || '';
+};
+
 const CreateOrderPage = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -111,7 +118,7 @@ const CreateOrderPage = () => {
         customerDepartment: data.customerDepartment,
         customerCity: data.customerCity,
         deliveryMethod: data.deliveryMethod,
-        paymentMethod: data.paymentMethod,
+        paymentMethod: normalizePaymentMethod(data.paymentMethod),
         deliveryDate: data.deliveryDate || null,
         notes: data.notes || null,
         items: data.items.filter(item => item.name && item.quantity > 0 && item.price > 0),

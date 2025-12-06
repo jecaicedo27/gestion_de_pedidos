@@ -2,6 +2,8 @@ const express = require('express');
 const router = express.Router();
 const auth = require('../middleware/auth');
 const carteraController = require('../controllers/carteraController');
+const treasuryController = require('../controllers/treasuryController');
+const movementsController = require('../controllers/movementsController');
 
 // Todas las rutas requieren autenticación y rol de cartera o admin
 // Debug: listado rápido de rutas (solo en desarrollo)
@@ -20,10 +22,101 @@ if (process.env.NODE_ENV !== 'production') {
         '/cash-register/:id/receipt',
         '/handovers/bodega/:date',
         '/handovers/bodega/:date/receipt',
+        '/orders/:id/return-to-billing',
+        '/deposits',
+        '/deposits/candidates',
+        '/deposits/:id/details',
+        '/deposits/:id/close-siigo',
+        '/cash-balance',
+        '/movements',
+        '/movements/:id/approve'
       ],
     });
   });
 }
+
+// Tesorería (Cartera): depósitos y balance
+router.post(
+  '/deposits',
+  auth.authenticateToken,
+  auth.verifyRole(['cartera', 'admin']),
+  treasuryController.createDeposit
+);
+
+router.get(
+  '/deposits',
+  auth.authenticateToken,
+  auth.verifyRole(['cartera', 'admin']),
+  treasuryController.listDeposits
+);
+
+router.get(
+  '/deposits/candidates',
+  auth.authenticateToken,
+  auth.verifyRole(['cartera', 'admin']),
+  treasuryController.getDepositCandidates
+);
+
+// Detalle de consignación: facturas relacionadas (admin/cartera)
+router.get(
+  '/deposits/:id/details',
+  auth.authenticateToken,
+  auth.verifyRole(['cartera', 'admin']),
+  treasuryController.getDepositDetails
+);
+
+// Marcar cierre en Siigo para una consignación
+router.post(
+  '/deposits/:id/close-siigo',
+  auth.authenticateToken,
+  auth.verifyRole(['cartera', 'admin']),
+  treasuryController.closeDepositSiigo
+);
+
+router.get(
+  '/cash-balance',
+  auth.authenticateToken,
+  auth.verifyRole(['cartera', 'admin']),
+  treasuryController.getCashBalance
+);
+
+// Movimientos de Cartera: ingresos extra y retiros
+router.post(
+  '/movements',
+  auth.authenticateToken,
+  auth.verifyRole(['cartera', 'admin']),
+  movementsController.createMovement
+);
+
+router.get(
+  '/movements',
+  auth.authenticateToken,
+  auth.verifyRole(['cartera', 'admin']),
+  movementsController.listMovements
+);
+
+// Aprobación de retiros (solo admin)
+router.post(
+  '/movements/:id/approve',
+  auth.authenticateToken,
+  auth.verifyRole(['admin']),
+  movementsController.approveMovement
+);
+
+// Auditoría (admin y cartera)
+router.get(
+  '/audit/base-changes',
+  auth.authenticateToken,
+  auth.verifyRole(['cartera', 'admin']),
+  treasuryController.listBaseChanges
+);
+
+router.get(
+  '/audit/deposits',
+  auth.authenticateToken,
+  auth.verifyRole(['cartera', 'admin']),
+  treasuryController.listDeposits
+);
 
 // GET /api/cartera/pending - Órdenes entregadas con cobro pendientes de aceptación por cartera
 router.get(
@@ -103,6 +196,48 @@ router.get(
   auth.authenticateToken,
   auth.verifyRole(['cartera', 'admin']),
   carteraController.getBodegaHandoverReceipt
+);
+
+/**
+ * POST /api/cartera/orders/:id/return-to-billing - Devolver pedido a Facturación
+ */
+router.post(
+  '/orders/:id/return-to-billing',
+  auth.authenticateToken,
+  auth.verifyRole(['cartera', 'admin']),
+  carteraController.returnToBilling
+);
+
+// POST /api/cartera/orders/:id/close-siigo - Cerrar en Siigo (marcado interno)
+router.post(
+  '/orders/:id/close-siigo',
+  auth.authenticateToken,
+  auth.verifyRole(['cartera', 'admin']),
+  carteraController.closeOrderInSiigo
+);
+
+// GET /api/cartera/pending-siigo-close - Listado de pedidos sin cerrar en Siigo
+router.get(
+  '/pending-siigo-close',
+  auth.authenticateToken,
+  auth.verifyRole(['cartera', 'admin']),
+  carteraController.getPendingSiigoClose
+);
+
+// GET /api/cartera/tags - Listado de tags disponibles
+router.get(
+  '/tags',
+  auth.authenticateToken,
+  auth.verifyRole(['cartera', 'admin']),
+  carteraController.getTags
+);
+
+// POST /api/cartera/adhoc-payments/:id/accept - Aceptar pago adhoc
+router.post(
+  '/adhoc-payments/:id/accept',
+  auth.authenticateToken,
+  auth.verifyRole(['cartera', 'admin']),
+  carteraController.acceptAdhocPayment
 );
 
 module.exports = router;

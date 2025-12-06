@@ -14,6 +14,12 @@ const { verifyToken, verifyRole } = require('../middleware/auth');
 router.get('/connection/status', siigoController.getConnectionStatus);
 
 /**
+ * GET /api/siigo/summary
+ * Resumen: total de facturas SIIGO vs importadas desde start_date configurada
+ */
+router.get('/summary', siigoController.getImportSummary);
+
+/**
  * GET /api/siigo/invoices
  * Obtener lista de facturas de SIIGO con filtros
  */
@@ -36,6 +42,17 @@ router.post('/import', siigoController.importInvoices);
  * Verificar estado del servicio automático
  */
 router.get('/automation/status', siigoController.getAutomationStatus);
+
+/**
+ * POST /api/siigo/customers
+ * Crear cliente en SIIGO
+ */
+router.post('/customers', siigoController.createCustomer);
+/**
+ * GET /api/siigo/cities?search=
+ * Autocomplete de ciudades (códigos SIIGO)
+ */
+router.get('/cities', siigoController.listCities);
 
 // ============================================================================
 // RUTAS DE PRUEBA Y DESARROLLO

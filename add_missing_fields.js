@@ -37,7 +37,9 @@ async function addMissingFields() {
       "ADD COLUMN carrier_id INT DEFAULT NULL",
       "ADD COLUMN tracking_number VARCHAR(100) DEFAULT NULL",
       "ADD COLUMN logistics_notes TEXT DEFAULT NULL",
-      "ADD COLUMN shipping_date DATETIME DEFAULT NULL"
+      "ADD COLUMN shipping_date DATETIME DEFAULT NULL",
+      "ADD COLUMN electronic_payment_type VARCHAR(50) DEFAULT NULL",
+      "ADD COLUMN electronic_payment_notes VARCHAR(255) DEFAULT NULL"
     ];
     
     for (const field of orderFields) {

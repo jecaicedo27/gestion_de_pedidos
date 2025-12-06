@@ -1,30 +1,43 @@
 import React, { useState } from 'react';
 import * as Icons from 'lucide-react';
-import { useAuth } from '../context/AuthContext';
 import toast from 'react-hot-toast';
+import { useAuth } from '../context/AuthContext';
 import { orderService } from '../services/api';
+import { normalize, getPaymentMethodLabel, getPaymentBadgeClass, getElectronicLabel, getElectronicBadgeClass, resolveElectronicType, detectProviderFromString, getProviderHint, isCreditOrder } from '../utils/payments';
+import { extractRecipientDataFromNotes } from '../utils/recipientExtractor';
 
+/* Helpers de visualización de métodos de pago (producto y envío)
+   Nota: normalize, getPaymentMethodLabel y getPaymentBadgeClass se importan desde utils/payments */
+function getShippingPayLabel(method) {
+  const v = normalize(method);
+  if (v === 'contraentrega' || v === 'por_cobrar') return 'Contraentrega (paga cliente)';
+  if (v === 'contado' || v === 'pagado' || v === 'prepagado') return 'Contado (paga empresa)';
+  if (!v) return 'No especificado';
+  return method;
+}
+function getShippingBadgeClass(method) {
+  const v = normalize(method);
+  if (v === 'contraentrega' || v === 'por_cobrar') return 'bg-orange-100 text-orange-800';
+  if (v === 'contado' || v === 'pagado' || v === 'prepagado') return 'bg-blue-100 text-blue-800';
+  return 'bg-gray-100 text-gray-800';
+}
+
+/* Proveedor de pago electrónico:
+   Usar helpers centralizados de utils/payments:
+   - resolveElectronicType, getElectronicLabel, getElectronicBadgeClass,
+     detectProviderFromString, getProviderHint */
 
 // Componente CustomDropdown para reemplazar select nativo
 const CustomDropdown = ({ value, onChange, options, placeholder, required }) => {
   const [isOpen, setIsOpen] = useState(false);
 
   const handleSelect = (optionValue) => {
-    console.log('🔄 CustomDropdown - Seleccionando:', optionValue);
     onChange(optionValue);
     setIsOpen(false);
   };
 
   const selectedOption = options.find(opt => opt.value === value);
 
-  // Log de depuración para el CustomDropdown
-  console.log('🎯 CustomDropdown - Debug:', {
-    value,
-    valueType: typeof value,
-    options: options.map(opt => ({value: opt.value, label: opt.label})),
-    selectedOption,
-    placeholder
-  });
 
   return (
     <div className="relative">
@@ -67,8 +80,50 @@ const CustomDropdown = ({ value, onChange, options, placeholder, required }) => 
   );
 };
 
+// Helpers robustos para obtener precios desde diferentes formas (unit_price, price, subtotal, total)
+const toMoneyNumber = (v) => {
+  if (v === null || v === undefined) return 0;
+  const s = typeof v === 'number' ? String(v) : String(v).trim();
+  const cleaned = s.replace(/[^0-9.-]/g, '');
+  const n = parseFloat(cleaned);
+  return isNaN(n) ? 0 : n;
+};
+const getUnitPrice = (item) => {
+  const qty = Number(item?.quantity || 1) || 1;
+  const candidates = [
+    item?.unit_price,
+    item?.price,
+    item?.unitPrice,
+    item?.precio,
+    item?.value,
+    (item?.total ?? item?.total_amount)
+      ? toMoneyNumber(item?.total ?? item?.total_amount) / qty
+      : null
+  ];
+  for (const c of candidates) {
+    const n = toMoneyNumber(c);
+    if (n > 0) return n;
+  }
+  // Si todo falla, devolver 0
+  return 0;
+};
+const getSubtotal = (item) => {
+  const qty = Number(item?.quantity || 1) || 1;
+  const candidates = [
+    item?.subtotal,
+    item?.total,
+    item?.total_amount,
+    getUnitPrice(item) * qty
+  ];
+  for (const c of candidates) {
+    const n = toMoneyNumber(c);
+    if (n > 0) return n;
+  }
+  return 0;
+};
+
 const LogisticsModal = ({ isOpen, onClose, order, onProcess }) => {
-  const { token } = useAuth();
+  const { user } = useAuth();
   const [formData, setFormData] = useState({
     shippingMethod: '',
     transportCompany: '',
@@ -85,116 +140,138 @@ const LogisticsModal = ({ isOpen, onClose, order, onProcess }) => {
   const [initialCarrierSet, setInitialCarrierSet] = useState(false);
   // UI antibobos: bloquear/forzar decisiones rápidas para domicilio
   const [lockDeliveryFee, setLockDeliveryFee] = useState(false);
+  // Secciones plegables para reducir ruido visual
+  const [showItems, setShowItems] = useState(false);
+  const [showSiigoNotes, setShowSiigoNotes] = useState(false);
+
+  // Métodos de envío considerados "locales" (no requieren transportadora)
+  // Robustez: aceptar variantes con espacios, guiones y acentos (ej. "Domicilio local", "mensajería urbana", etc.)
+  const LOCAL_METHODS = new Set(['domicilio', 'domicilio_ciudad', 'mensajeria_local', 'mensajeria_urbana', 'domicilio_local']);
+  const normalizeMethod = (s) =>
+    String(s || '')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '') // quitar acentos
+      .replace(/\s+/g, '_') // espacios -> underscore
+      .replace(/-+/g, '_'); // guiones -> underscore
+  const isLocalMethod = (m) => {
+    const v = normalizeMethod(m);
+    if (LOCAL_METHODS.has(v)) return true;
+    // Cualquier "domicilio" que NO sea nacional/internacional se considera local
+    if (v.includes('domicilio') && !v.includes('nacional') && !v.includes('internacional')) return true;
+    // Mensajería urbana/local
+    if (v.includes('mensajeria') && !v.includes('nacional')) return true;
+    return false;
+  };
+
+  // Abrir por defecto las secciones plegables para el rol Logística
+  React.useEffect(() => {
+    if (!isOpen) return;
+    const role = String(user?.role || '').toLowerCase();
+    const hasLogRole = role === 'logistica' || (Array.isArray(user?.roles) && user.roles.some(r => String(r.role_name || '').toLowerCase() === 'logistica'));
+    if (hasLogRole) {
+      setShowItems(true);
+      setShowSiigoNotes(true);
+    }
+  }, [isOpen, user]);
 
   // Función para extraer datos del destinatario desde las observaciones y notas de SIIGO
   const extractRecipientData = (observations, notes) => {
     const data = {};
+    // Unir todo el texto disponible
+    const fullText = [observations, notes].filter(Boolean).join('\n');
     
-    // Función para procesar texto línea por línea
-    const processText = (text) => {
-      if (!text) return;
-      
-      // Normalizar texto para mejor procesamiento
-      const normalizedText = text
-        .replace(/\r\n/g, '\n')
-        .replace(/\r/g, '\n')
-        .replace(/\s+/g, ' ');
-      
-      const lines = normalizedText.split('\n');
-      
-      for (const line of lines) {
-        const trimmedLine = line.trim();
-        if (!trimmedLine) continue;
-        
-        // Buscar NOMBRE con mayor precisión
-        if (trimmedLine.match(/^NOMBRE\s*:/i)) {
-          const nameMatch = trimmedLine.replace(/^NOMBRE\s*:\s*/i, '').trim();
-          if (nameMatch && nameMatch !== 'ESTADO DE PAGO' && !data.name) {
-            data.name = nameMatch;
-          }
-        }
-        // Buscar TELÉFONO
-        else if (trimmedLine.match(/^TEL[ÉE]FONO\s*:/i)) {
-          const phoneMatch = trimmedLine.replace(/^TEL[ÉE]FONO\s*:\s*/i, '').trim();
-          if (phoneMatch && !data.phone) {
-            data.phone = phoneMatch;
-          }
-        }
-        // Buscar DIRECCIÓN  
-        else if (trimmedLine.match(/^DIRECCI[ÓO]N\s*:/i)) {
-          const addressMatch = trimmedLine.replace(/^DIRECCI[ÓO]N\s*:\s*/i, '').trim();
-          if (addressMatch && !data.address) {
-            data.address = addressMatch;
-          }
-        }
-        // Buscar CIUDAD
-        else if (trimmedLine.match(/^CIUDAD\s*:/i)) {
-          const cityMatch = trimmedLine.replace(/^CIUDAD\s*:\s*/i, '').trim();
-          if (cityMatch && !data.city) {
-            data.city = cityMatch;
-          }
-        }
-        // Buscar DEPARTAMENTO
-        else if (trimmedLine.match(/^DEPARTAMENTO\s*:/i)) {
-          const departmentMatch = trimmedLine.replace(/^DEPARTAMENTO\s*:\s*/i, '').trim();
-          if (departmentMatch && !data.department) {
-            data.department = departmentMatch;
-          }
-        }
-        // Buscar NIT
-        else if (trimmedLine.match(/^NIT\s*:/i)) {
-          const nitMatch = trimmedLine.replace(/^NIT\s*:\s*/i, '').trim();
-          if (nitMatch && !data.nit) {
-            data.nit = nitMatch;
-          }
-        }
-        // Buscar FORMA DE PAGO DE ENVIO (específico)
-        else if (trimmedLine.match(/^FORMA\s+DE\s+PAGO\s+DE\s+ENVIO\s*:/i)) {
-          const shippingPaymentMatch = trimmedLine.replace(/^FORMA\s+DE\s+PAGO\s+DE\s+ENVIO\s*:\s*/i, '').trim();
-          if (shippingPaymentMatch && !data.shippingPaymentMethod) {
-            data.shippingPaymentMethod = shippingPaymentMatch;
-          }
-        }
-        // Buscar FORMA DE PAGO o MÉTODO DE PAGO (general)
-        else if (trimmedLine.match(/^(FORMA|M[ÉE]TODO)\s+(DE\s+)?PAGO\s*:/i)) {
-          const paymentMatch = trimmedLine.replace(/^(FORMA|M[ÉE]TODO)\s+(DE\s+)?PAGO\s*:\s*/i, '').trim();
-          if (paymentMatch && !data.paymentMethod) {
-            data.paymentMethod = paymentMatch;
-          }
-        }
-        // Buscar MEDIO DE PAGO
-        else if (trimmedLine.match(/^MEDIO\s+DE\s+PAGO\s*:/i)) {
-          const paymentMatch = trimmedLine.replace(/^MEDIO\s+DE\s+PAGO\s*:\s*/i, '').trim();
-          if (paymentMatch && !data.paymentMethod) {
-            data.paymentMethod = paymentMatch;
-          }
-        }
-      }
+    // Lista de etiquetas conocidas para el lookahead (detenerse si encontramos otra etiqueta)
+    const labelsPattern = '(?:NOMBRE|CLIENTE|NIT|TEL[ÉE]FONO|CELULAR|TEL|CEL|DIRECCI[ÓO]N|DIR|CIUDAD|MUNICIPIO|DESTINO|DEPARTAMENTO|DEPTO|DPTO|DEP|FORMA|MEDIO|M[ÉE]TODO|ESTADO|NOTA)';
+    
+    // Helper para crear regex robusto que busque: ETIQUETA + separador opcional + VALOR + (hasta sgte etiqueta o fin)
+    const extractValue = (keyPattern) => {
+      // Regex explicado:
+      // 1. (?:${keyPattern}) : La clave que buscamos (no capturante)
+      // 2. \s*[:\-]?\s*     : Separador opcional (: o -) y espacios alrededor
+      // 3. (.+?)            : Captura el valor (non-greedy)
+      // 4. Lookahead relajado: permite 0 espacios antes de la siguiente etiqueta para casos pegados
+      const regex = new RegExp(`(?:${keyPattern})\\s*[:\\-]?\\s*(.+?)(?=\\s*(?:${labelsPattern})\\s*[:\\-]|$)`, 'is');
+      const match = fullText.match(regex);
+      return match ? match[1].trim() : null;
     };
 
-    // PRIORIDAD 1: Extraer de observaciones de SIIGO
-    if (observations) {
-      processText(observations);
-    }
+    // Extracciones
     
-    // PRIORIDAD 2: Si no hay nombre en observaciones, buscar en notas tradicionales
-    if (notes && !data.name) {
-      processText(notes);
+    // NOMBRE
+    const name = extractValue('NOMBRE|CLIENTE');
+    if (name && name !== 'ESTADO DE PAGO') data.name = name;
+
+    // TELÉFONO
+    const phone = extractValue('TEL[ÉE]FONO|CELULAR|TEL|CEL');
+    if (phone) data.phone = phone;
+
+    // DIRECCIÓN
+    const address = extractValue('DIRECCI[ÓO]N|DIR');
+    if (address) data.address = address;
+
+    // CIUDAD
+    // Intento 1: Usar extractValue general
+    let city = extractValue('CIUDAD(?:\\s*DESTINO)?|MUNICIPIO|DESTINO');
+    
+    // Intento 2: Regex específico y simple si falla el general (para casos pegados o con formato raro)
+    if (!city) {
+      const mCity = fullText.match(/(?:CIUDAD|MUNICIPIO)\s*[:\-]\s*([^:\n]+?)\s*(?:DIRECCI[ÓO]N|DIR|TEL|CEL|NIT|FORMA|MEDIO|NOTA|$)/i);
+      if (mCity) city = mCity[1];
     }
 
-    // Retornar los datos extraídos (puede estar vacío si no se encuentra información)
+    if (city) {
+      // Limpiar si viene con departamento (ej: "Manizales, Caldas" -> "Manizales")
+      // También limpiar si capturó "MEDELLIN" (por defecto) y queremos asegurar que no sea ruido
+      data.city = city.split(/[,.\-]/)[0].trim();
+    }
+
+    // DEPARTAMENTO
+    let dept = extractValue('DEPARTAMENTO|DEPTO|DPTO|DEP');
+    
+    if (!dept) {
+       const mDep = fullText.match(/(?:DEPARTAMENTO|DEPTO)\s*[:\-]\s*([^:\n]+?)\s*(?:CIUDAD|MUNICIPIO|DIRECCI[ÓO]N|DIR|TEL|CEL|NIT|$)/i);
+       if (mDep) dept = mDep[1];
+    }
+
+    if (dept) {
+      data.department = dept.split(/[,.\-]/)[0].trim();
+    }
+
+    // NIT
+    const nit = extractValue('NIT');
+    if (nit) data.nit = nit;
+
+    // FORMA DE PAGO DE ENVIO
+    const shippingPay = extractValue('FORMA\\s+DE\\s+PAGO\\s+DE\\s+ENVIO');
+    if (shippingPay) data.shippingPaymentMethod = shippingPay;
+
+    // FORMA DE PAGO (General)
+    const payMethod = extractValue('MEDIO\\s+(?:DE\\s+)?PAGO|FORMA\\s+(?:DE\\s+)?PAGO|M[ÉE]TODO\\s+(?:DE\\s+)?PAGO');
+    if (payMethod) data.paymentMethod = payMethod;
+
+    // Detectar proveedor en el texto completo
+    const providerInText = detectProviderFromString(fullText);
+    if (providerInText && !data.electronicProvider) {
+      data.electronicProvider = providerInText;
+    }
+
     return Object.keys(data).length > 0 ? data : null;
   };
 
   // Extraer datos cuando cambie el pedido - priorizar observaciones de SIIGO
   React.useEffect(() => {
     if (order) {
-      const extracted = extractRecipientData(order.siigo_observations, order.notes);
+      const extracted = extractRecipientDataFromNotes([order?.siigo_observations, order?.notes].filter(Boolean).join('\n'));
       setExtractedData(extracted);
+      console.log('LogisticsModal: extractedData (on order change)', extracted);
       
       // Cargar método de envío preseleccionado por el facturador
       setFormData(prev => ({
         ...prev,
+        // Siempre limpiar selección previa al cargar un pedido para evitar preselecciones residuales
+        transportCompany: '',
+        trackingNumber: '',
         shippingMethod: order.delivery_method || '',
         // Cargar automáticamente el método de pago de envío
         // PRIORIDAD 1: Desde la base de datos
@@ -216,6 +293,38 @@ const LogisticsModal = ({ isOpen, onClose, order, onProcess }) => {
       });
     }
   }, [order]);
+
+  // Al abrir el modal, limpiar selección de transportadora/tracking para evitar valores residuales
+  React.useEffect(() => {
+    if (isOpen) {
+      setFormData(prev => ({
+        ...prev,
+        transportCompany: '',
+        trackingNumber: ''
+      }));
+    }
+  }, [isOpen]);
+
+  // Recalcular extracción cuando se abre el modal, por si el estado se montó antes de tener observaciones
+  React.useEffect(() => {
+    if (isOpen && order) {
+      const extracted = extractRecipientDataFromNotes([order?.siigo_observations, order?.notes].filter(Boolean).join('\n'));
+      setExtractedData(extracted);
+      console.log('LogisticsModal: extractedData (on open)', extracted);
+    }
+  }, [isOpen, order]);
+
+  // Recalcular extracción cuando cambien Observaciones/Notas
+  // (cubre el caso donde el padre muta propiedades en el mismo objeto 'order' sin cambiar la referencia)
+  React.useEffect(() => {
+    const keyObs = order?.siigo_observations ?? '';
+    const keyNotes = order?.notes ?? '';
+    if (keyObs || keyNotes) {
+      const extracted = extractRecipientDataFromNotes([keyObs, keyNotes].filter(Boolean).join('\n'));
+      setExtractedData(extracted);
+      console.log('LogisticsModal: extractedData (on obs/notes change)', extracted);
+    }
+  }, [order?.siigo_observations, order?.notes]);
 
   // Estados para métodos de envío dinámicos
   const [shippingMethods, setShippingMethods] = useState([]);
@@ -388,67 +497,21 @@ const LogisticsModal = ({ isOpen, onClose, order, onProcess }) => {
     }
   }, [isOpen]);
 
-  // Efecto separado para preseleccionar la transportadora cuando ya tengamos los carriers cargados
-  React.useEffect(() => {
-    console.log('🔍 Verificando preselección:', {
-      orderExists: !!order,
-      orderId: order?.id,
-      carrierId: order?.carrier_id,
-      carriersListLength: carriersList.length,
-      transportCompaniesLength: transportCompanies.length,
-      initialCarrierSet: initialCarrierSet,
-      currentTransportCompany: formData.transportCompany,
-      shippingMethod: formData.shippingMethod
-    });
-    
-    // SOLO preseleccionar si el método de envío requiere transportadora
-    if (order && order.carrier_id && carriersList.length > 0 && transportCompanies.length > 0 && 
-        formData.shippingMethod && formData.shippingMethod !== 'recoge_bodega' && !initialCarrierSet) {
-      
-      const carrierId = parseInt(order.carrier_id);
-      const selectedCarrier = carriersList.find(c => parseInt(c.id) === carrierId);
-      
-      console.log(`🔎 Buscando carrier ID ${carrierId} en lista:`, carriersList);
-      console.log(`📋 Transportadoras disponibles en dropdown:`, transportCompanies);
-      
-      if (selectedCarrier) {
-        console.log(`✅ Transportadora encontrada: ${selectedCarrier.name} (ID: ${selectedCarrier.id})`);
-        
-        // Verificar que el nombre existe en la lista de transportCompanies
-        if (transportCompanies.includes(selectedCarrier.name)) {
-          console.log(`📦 Preseleccionando transportadora: ${selectedCarrier.name}`);
-          
-          // Actualización inmediata sin setTimeout
-          setFormData(prev => {
-            // Solo actualizar si no está ya establecida
-            if (prev.transportCompany !== selectedCarrier.name) {
-              console.log('🔄 Actualizando transportadora:', {
-                anterior: prev.transportCompany,
-                nueva: selectedCarrier.name
-              });
-              return {
-                ...prev,
-                transportCompany: selectedCarrier.name
-              };
-            }
-            return prev;
-          });
-          setInitialCarrierSet(true);
-          
-        } else {
-          console.log(`⚠️ La transportadora ${selectedCarrier.name} no está en la lista del dropdown`);
-        }
-      } else {
-        console.log(`❌ No se encontró transportadora con ID ${carrierId}`);
-      }
-    }
-  }, [order?.carrier_id, carriersList.length, transportCompanies.length, formData.shippingMethod]); // Agregamos shippingMethod
+  // Política: NO preseleccionar transportadora para evitar errores.
+  // Requiere selección explícita del usuario en el dropdown.
 
-  // Reset initialCarrierSet cuando cambie el pedido
+  // Limpieza automática al cambiar el método de envío: evita que quede “pegada” una transportadora previa
   React.useEffect(() => {
-    console.log('🔄 Reset initialCarrierSet para pedido:', order?.id);
-    setInitialCarrierSet(false);
-  }, [order?.id]);
+    if (!isOpen) return;
+    setFormData(prev => {
+      // Solo limpiar si hay un método seleccionado y existe algún valor previo
+      if (prev.shippingMethod && (prev.transportCompany || prev.trackingNumber)) {
+        return { ...prev, transportCompany: '', trackingNumber: '' };
+      }
+      return prev;
+    });
+  }, [formData.shippingMethod, isOpen]);
+
 
 
   const handleInputChange = (field, value) => {
@@ -465,10 +528,14 @@ const LogisticsModal = ({ isOpen, onClose, order, onProcess }) => {
       toast.error('Debe seleccionar un método de envío');
       return;
     }
+    // Requerir transportadora solo para métodos que NO son locales ni 'recoge_bodega'
+    if (formData.shippingMethod && !isLocalMethod(formData.shippingMethod) && formData.shippingMethod !== 'recoge_bodega' && !formData.transportCompany) {
+      toast.error('Debe seleccionar una transportadora');
+      return;
+    }
 
     // Validación y persistencia del valor de domicilio cuando aplica
-    const localMethods = ['domicilio', 'domicilio_ciudad', 'mensajeria_local', 'mensajeria_urbana'];
-    const isLocal = formData.shippingMethod && localMethods.includes(formData.shippingMethod);
+    const isLocal = isLocalMethod(formData.shippingMethod);
     const isContraentrega = (formData.shippingPaymentMethod || '').toLowerCase() === 'contraentrega';
 
     if (isLocal && isContraentrega && !formData.deliveryFeeExempt) {
@@ -538,6 +605,10 @@ const LogisticsModal = ({ isOpen, onClose, order, onProcess }) => {
       toast.error('Debe seleccionar un método de envío primero');
       return;
     }
+    if (!isLocalMethod(formData.shippingMethod) && formData.shippingMethod !== 'recoge_bodega' && !formData.transportCompany) {
+      toast.error('Debe seleccionar una transportadora');
+      return;
+    }
 
     try {
       setLoading(true);
@@ -548,17 +619,18 @@ const LogisticsModal = ({ isOpen, onClose, order, onProcess }) => {
       form.action = '/api/logistics/generate-guide-html';
       form.target = '_blank';
       
-      // Datos para enviar
+      // Datos para enviar (priorizar datos extraídos de Notas/Observaciones)
+      const combinedNotes = [order.siigo_observations, formData.notes].filter(Boolean).join('\n');
       const formData_guide = {
         orderId: order.id,
         shippingMethod: formData.shippingMethod,
         transportCompany: formData.transportCompany,
-        customerName: order.customer_name,
-        customerPhone: order.customer_phone,
-        customerAddress: order.customer_address,
-        customerCity: order.customer_city,
-        customerDepartment: order.customer_department,
-        notes: formData.notes
+        customerName: extractedData?.name || order.customer_name,
+        customerPhone: extractedData?.phone || order.customer_phone,
+        customerAddress: extractedData?.address || order.customer_address,
+        customerCity: extractedData?.city || order.customer_city,
+        customerDepartment: extractedData?.department || order.customer_department,
+        notes: combinedNotes
       };
       
       // Agregar campos al formulario
@@ -585,11 +657,68 @@ const LogisticsModal = ({ isOpen, onClose, order, onProcess }) => {
     }
   };
 
+  // Indicadores de pago para mostrar estado claro del monto
+  const isTransfer = normalize(order?.payment_method) === 'transferencia';
+  const walletApproved = order?.validation_status === 'approved';
+
+  // Distribución derivada cuando los ítems no traen precios desde backend
+  const derivedBreakdown = React.useMemo(() => {
+    try {
+      const items = Array.isArray(order?.items) ? order.items : [];
+      if (!items.length) return null;
+      const anyVal = items.some((it) => getUnitPrice(it) > 0 || getSubtotal(it) > 0);
+      const total = toMoneyNumber(order?.total_amount ?? order?.total);
+      if (anyVal || !(total > 0)) return null;
+      const sumQty = items.reduce((s, it) => s + (Number(it?.quantity || 1) || 1), 0) || 1;
+      const breakdown = [];
+      let allocated = 0;
+      items.forEach((it, idx) => {
+        const qty = Number(it?.quantity || 1) || 1;
+        const raw = Math.round((total * qty) / sumQty);
+        breakdown[idx] = { unit: Math.round(raw / qty), subtotal: raw };
+        allocated += raw;
+      });
+      if (breakdown.length) {
+        const diff = total - allocated;
+        breakdown[breakdown.length - 1].subtotal += diff;
+        const qtyLast = Number(items[items.length - 1]?.quantity || 1) || 1;
+        breakdown[breakdown.length - 1].unit = Math.round(breakdown[breakdown.length - 1].subtotal / qtyLast);
+      }
+      return breakdown;
+    } catch {
+      return null;
+    }
+  }, [order]);
+
+  // Fallback seguro para render: si extractedData aún es null en este render,
+  // calcular en caliente desde Observaciones/Notas para que la Vista Previa no quede desfasada.
+  const effectiveData = React.useMemo(() => {
+    try {
+      return extractedData || extractRecipientDataFromNotes([order?.siigo_observations, order?.notes].filter(Boolean).join('\n')) || null;
+    } catch {
+      return extractedData || null;
+    }
+  }, [extractedData, order?.siigo_observations, order?.notes]);
+
+  const cityToShow = effectiveData?.city || order?.customer_city || '';
+  const deptToShow = effectiveData?.department || order?.customer_department || '';
+
+  // Debug: verificar qué se está renderizando en la Vista Previa
+  console.log(
+    'LogisticsModal: effectiveData',
+    effectiveData,
+    { customer_city: order?.customer_city, customer_department: order?.customer_department },
+    'order.siigo_observations:',
+    order?.siigo_observations,
+    'order.notes:',
+    order?.notes
+  );
+
   if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" style={{ zIndex: 9999 }}>
-      <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto" style={{ zIndex: 10000 }}>
+      <div className="bg-white rounded-lg shadow-xl max-w-3xl w-full mx-4 max-h-[90vh] overflow-y-auto" style={{ zIndex: 10000 }}>
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-gray-200">
           <div>
@@ -611,50 +740,133 @@ const LogisticsModal = ({ isOpen, onClose, order, onProcess }) => {
         {/* Content */}
         <form onSubmit={handleSubmit} className="p-4">
           <div className="space-y-3">
-            {/* Información del pedido - Más compacta */}
-            <div className="bg-gray-50 p-3 rounded-lg">
-              <h3 className="font-medium text-gray-900 mb-2 text-sm">Información del Pedido</h3>
-              <div className="grid grid-cols-3 gap-2 text-xs">
-                <div>
-                  <span className="text-gray-600">Cliente:</span>
-                  <span className="ml-1 font-medium">{order?.customer_name}</span>
+            {/* Información del pedido - Ordenado */}
+            <div className="bg-gray-50 p-4 rounded-lg">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="font-semibold text-gray-900 text-sm">Información del Pedido</h3>
+                <span className="text-[11px] text-gray-500">#{order?.order_number}</span>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                {/* Columna izquierda */}
+                <div className="space-y-1.5">
+                  <div className="flex">
+                    <div className="w-28 text-gray-500">Cliente</div>
+                    <div className="flex-1 font-medium text-gray-900 truncate">{order?.customer_name}</div>
+                  </div>
+                  <div className="flex">
+                    <div className="w-28 text-gray-500">Teléfono</div>
+                    <div className="flex-1 font-medium text-gray-900">{order?.customer_phone}</div>
+                  </div>
+                  <div className="flex">
+                    <div className="w-28 text-gray-500">Dirección</div>
+                    <div className="flex-1 font-medium text-gray-900">{order?.customer_address}</div>
+                  </div>
                 </div>
-                <div>
-                  <span className="text-gray-600">Teléfono:</span>
-                  <span className="ml-1 font-medium">{order?.customer_phone}</span>
-                </div>
-                <div>
-                  <span className="text-gray-600">Total:</span>
-                  <span className="ml-1 font-medium text-green-600">${order?.total_amount?.toLocaleString('es-CO')}</span>
-                </div>
-                <div className="col-span-2">
-                  <span className="text-gray-600">Dirección:</span>
-                  <span className="ml-1 font-medium">{order?.customer_address}</span>
-                </div>
-                <div>
-                  <span className="text-gray-600">Items:</span>
-                  <span className="ml-1 font-medium">{order?.items?.length || 0} productos</span>
-                </div>
-                <div>
-                  <span className="text-gray-600">Ciudad:</span>
-                  <span className="ml-1 font-medium">{order?.customer_city || 'No especificada'}</span>
-                </div>
-                <div>
-                  <span className="text-gray-600">Depto:</span>
-                  <span className="ml-1 font-medium">{order?.customer_department || 'No especificado'}</span>
+
+                {/* Columna derecha */}
+                <div className="space-y-1.5">
+                  <div className="flex">
+                    <div className="w-28 text-gray-500">Total</div>
+                    <div className="flex-1">
+                      <div className="font-semibold text-green-600">
+                        ${order?.total_amount?.toLocaleString('es-CO')}
+                      </div>
+                      {/* Descripción de monto según proceso de pago */}
+                      <div className="mt-1 flex items-center flex-wrap gap-2">
+                        {isTransfer && (
+                          <span className={`inline-flex items-center rounded-full px-2 py-0.5 ${getPaymentBadgeClass('transferencia')}`}>
+                            Transferencia
+                          </span>
+                        )}
+                        {walletApproved && (
+                          <span className="inline-flex items-center rounded-full px-2 py-0.5 bg-green-100 text-green-800">
+                            Pago validado por Cartera
+                          </span>
+                        )}
+                        {isTransfer && walletApproved && (
+                          <span className="text-[11px] text-green-700">
+                            Pagado por transferencia
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex">
+                    <div className="w-28 text-gray-500">Ciudad</div>
+                    <div className="flex-1 font-medium text-gray-900">{cityToShow || 'No especificada'}</div>
+                  </div>
+                  <div className="flex">
+                    <div className="w-28 text-gray-500">Depto</div>
+                    <div className="flex-1 font-medium text-gray-900">{deptToShow || 'No especificado'}</div>
+                  </div>
+                  <div className="flex">
+                    <div className="w-28 text-gray-500">Items</div>
+                    <div className="flex-1 font-medium text-gray-900">{order?.items?.length || 0} productos</div>
+                  </div>
                 </div>
               </div>
 
-              {/* Link para descargar factura de SIIGO - Más compacto */}
+              {/* Forma de pago resumen para logística (alineado) */}
+              <div className="mt-3 grid grid-cols-12 text-xs">
+                <div className="col-span-12 md:col-span-6 md:pr-3">
+                  <div className="text-gray-500 mb-1">Forma de Pago (Producto)</div>
+                  <div className="flex items-center flex-wrap gap-2">
+                    <span className={`inline-flex items-center rounded-full px-2 py-0.5 ${getPaymentBadgeClass(order?.payment_method || extractedData?.paymentMethod || 'auto')}`}>
+                      {getPaymentMethodLabel(order?.payment_method || extractedData?.paymentMethod)}
+                    </span>
+                    {(() => {
+                      // Nunca mostrar proveedor para clientes a crédito
+                      if (isCreditOrder(order)) {
+                        return null;
+                      }
+
+                      // Resolver exclusivamente con el helper centralizado
+                      const t = resolveElectronicType(order);
+                      if (t) {
+                        return (
+                          <span className={`inline-flex items-center rounded-full px-2 py-0.5 ${getElectronicBadgeClass(t)}`}>
+                            {getElectronicLabel(t)}
+                          </span>
+                        );
+                      }
+
+                      // Solo mostrar placeholder cuando el método de pago es explícitamente electrónico
+                      const pmv = normalize(order?.payment_method || '');
+                      if (pmv.includes('pago') || pmv.includes('electron')) {
+                        return (
+                          <span
+                            className="inline-flex items-center rounded-full px-2 py-0.5 bg-gray-100 text-gray-800"
+                            title="Proveedor no definido"
+                          >
+                            Por definir
+                          </span>
+                        );
+                      }
+
+                      // Para métodos no electrónicos, no mostrar chip de proveedor
+                      return null;
+                    })()}
+                  </div>
+                </div>
+
+                {(order?.shipping_payment_method || extractedData?.shippingPaymentMethod || formData.shippingPaymentMethod) && (
+                  <div className="col-span-12 md:col-span-6 md:pl-3 mt-2 md:mt-0 md:border-l border-gray-200">
+                    <div className="text-gray-500 mb-1">Pago del Envío</div>
+                    <span className={`inline-flex items-center rounded-full px-2 py-0.5 ${getShippingBadgeClass(order?.shipping_payment_method || extractedData?.shippingPaymentMethod || formData.shippingPaymentMethod)}`}>
+                      {getShippingPayLabel(order?.shipping_payment_method || extractedData?.shippingPaymentMethod || formData.shippingPaymentMethod)}
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {/* Link para descargar factura de SIIGO - Compacto */}
               {order?.siigo_public_url && (
-                <div className="mt-2 pt-2 border-t border-gray-200">
+                <div className="mt-3 pt-3 border-t border-gray-200">
                   <div className="flex items-center justify-between bg-blue-50 p-2 rounded border border-blue-200">
                     <div className="flex items-center space-x-2">
                       <Icons.FileText className="w-4 h-4 text-blue-600" />
-                      <div>
-                        <p className="text-xs font-medium text-blue-900">Factura Original SIIGO</p>
-                        <p className="text-xs text-blue-700">Descarga la factura oficial</p>
-                      </div>
+                      <p className="text-xs font-medium text-blue-900">Factura SIIGO</p>
                     </div>
                     <a
                       href={order.siigo_public_url}
@@ -670,126 +882,146 @@ const LogisticsModal = ({ isOpen, onClose, order, onProcess }) => {
               )}
             </div>
 
-            {/* Lista de Items del Pedido */}
+            {/* Lista de Items del Pedido (plegable) */}
             {order?.items && order.items.length > 0 && (
               <div className="bg-white border border-gray-200 rounded-lg">
-                <div className="px-3 py-2 border-b border-gray-200 bg-gray-50">
-                  <h3 className="text-sm font-medium text-gray-900 flex items-center">
+                <button
+                  type="button"
+                  onClick={() => setShowItems(!showItems)}
+                  className="w-full px-3 py-2 border-b border-gray-200 bg-gray-50 flex items-center justify-between"
+                >
+                  <span className="text-sm font-medium text-gray-900 flex items-center">
                     <Icons.Package className="w-3 h-3 mr-1" />
-                    Productos del Pedido ({order.items.length} items)
-                  </h3>
-                </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-xs">
-                    <thead className="bg-gray-50 border-b border-gray-200">
-                      <tr>
-                        <th className="px-2 py-1 text-left font-medium text-gray-700">Producto</th>
-                        <th className="px-2 py-1 text-center font-medium text-gray-700">Cantidad</th>
-                        <th className="px-2 py-1 text-center font-medium text-gray-700">Precio Unit.</th>
-                        <th className="px-2 py-1 text-right font-medium text-gray-700">Subtotal</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-200">
-                      {order.items.map((item, index) => (
-                        <tr key={index} className="hover:bg-gray-50">
-                          <td className="px-2 py-1">
-                            <div>
-                              <p className="font-medium text-gray-900 text-xs">{item.name}</p>
-                              {item.product_description && (
-                                <p className="text-xs text-gray-500 mt-0.5">{item.product_description}</p>
-                              )}
-                              {item.product_code && (
-                                <p className="text-xs text-blue-600 mt-0.5">Código: {item.product_code}</p>
-                              )}
-                            </div>
+                    Productos del Pedido ({order.items.length} {order.items.length === 1 ? 'item' : 'items'})
+                  </span>
+                  <Icons.ChevronDown className={`w-4 h-4 text-gray-500 transition-transform ${showItems ? 'rotate-180' : ''}`} />
+                </button>
+
+                {showItems && (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead className="bg-gray-50 border-b border-gray-200">
+                        <tr>
+                          <th className="px-2 py-1 text-left font-medium text-gray-700">Producto</th>
+                          <th className="px-2 py-1 text-center font-medium text-gray-700">Cantidad</th>
+                          <th className="px-2 py-1 text-center font-medium text-gray-700">Precio Unit.</th>
+                          <th className="px-2 py-1 text-right font-medium text-gray-700">Subtotal</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-200">
+                        {order.items.map((item, index) => (
+                          <tr key={index} className="hover:bg-gray-50">
+                            <td className="px-2 py-1">
+                              <div>
+                                <p className="font-medium text-gray-900 text-xs">{item.name}</p>
+                                {item.product_description && (
+                                  <p className="text-xs text-gray-500 mt-0.5">{item.product_description}</p>
+                                )}
+                                {item.product_code && (
+                                  <p className="text-xs text-blue-600 mt-0.5">Código: {item.product_code}</p>
+                                )}
+                              </div>
+                            </td>
+                            <td className="px-2 py-1 text-center">
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                                {item.quantity} {item.unit || 'und'}
+                              </span>
+                            </td>
+                            <td className="px-2 py-1 text-center">
+                              <span className="text-gray-900 text-xs">
+                                ${(getUnitPrice(item) || derivedBreakdown?.[index]?.unit || 0).toLocaleString('es-CO')}
+                              </span>
+                            </td>
+                            <td className="px-2 py-1 text-right">
+                              <span className="font-medium text-gray-900 text-xs">
+                                ${(getSubtotal(item) || derivedBreakdown?.[index]?.subtotal || 0).toLocaleString('es-CO')}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot className="bg-gray-50 border-t border-gray-200">
+                        <tr>
+                          <td colSpan="3" className="px-2 py-2 text-right font-medium text-gray-900 text-xs">
+                            Total del Pedido:
                           </td>
-                          <td className="px-2 py-1 text-center">
-                            <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-                              {item.quantity} {item.unit || 'und'}
-                            </span>
-                          </td>
-                          <td className="px-2 py-1 text-center">
-                            <span className="text-gray-900 text-xs">
-                              ${parseFloat(item.unit_price || 0).toLocaleString('es-CO')}
-                            </span>
-                          </td>
-                          <td className="px-2 py-1 text-right">
-                            <span className="font-medium text-gray-900 text-xs">
-                              ${parseFloat(item.subtotal || (item.quantity * (item.unit_price || 0))).toLocaleString('es-CO')}
-                            </span>
+                          <td className="px-2 py-2 text-right font-bold text-sm text-green-600">
+                            ${order.total_amount?.toLocaleString('es-CO')}
                           </td>
                         </tr>
-                      ))}
-                    </tbody>
-                    <tfoot className="bg-gray-50 border-t border-gray-200">
-                      <tr>
-                        <td colSpan="3" className="px-2 py-2 text-right font-medium text-gray-900 text-xs">
-                          Total del Pedido:
-                        </td>
-                        <td className="px-2 py-2 text-right font-bold text-sm text-green-600">
-                          ${order.total_amount?.toLocaleString('es-CO')}
-                        </td>
-                      </tr>
-                    </tfoot>
-                  </table>
-                </div>
+                      </tfoot>
+                    </table>
+                  </div>
+                )}
               </div>
             )}
 
-            {/* Notas de la Factura SIIGO - Información consolidada */}
+            {/* Notas de la Factura SIIGO (plegable para reducir ruido visual) */}
             {(order?.siigo_observations || order?.notes) && (
-              <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
-                <h3 className="font-medium text-blue-900 mb-2 flex items-center">
-                  <Icons.FileText className="w-4 h-4 mr-2" />
-                  Notas de la Factura SIIGO
-                </h3>
-                <p className="text-sm text-blue-800 mb-2">
-                  <strong>Información importante acordada con el cliente:</strong>
-                </p>
-                <div className="bg-white p-3 rounded border border-blue-200">
-                  <pre className="text-sm text-gray-700 whitespace-pre-wrap font-sans leading-relaxed">
-                    {(() => {
-                      // Priorizar siigo_observations si existe, sino usar notes
-                      let textToFormat = order.siigo_observations || order.notes || '';
-                      
-                      // Si hay observaciones de SIIGO, formatearlas
-                      if (order.siigo_observations) {
-                        // Lista de campos específicos a identificar y separar
-                        const fieldsToSeparate = [
-                          'OBSERVACIONES SIIGO:',
-                          'ESTADO DE PAGO:',
-                          'MEDIO DE PAGO:',
-                          'FORMA DE PAGO DE ENVIO:',
-                          'NOMBRE:',
-                          'NIT:',
-                          'TELÉFONO:',
-                          'DEPARTAMENTO:',
-                          'CIUDAD:',
-                          'DIRECCIÓN:',
-                          'NOTA:'
-                        ];
-                        
-                        // Separar cada campo específico con un salto de línea
-                        fieldsToSeparate.forEach(field => {
-                          const pattern = new RegExp(`([^\\n])${field.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'g');
-                          textToFormat = textToFormat.replace(pattern, `$1\n${field}`);
-                        });
-                        
-                        // Normalizar saltos de línea y espacios
-                        textToFormat = textToFormat
-                          .replace(/\r\n/g, '\n')
-                          .replace(/\r/g, '\n')
-                          .replace(/\n+/g, '\n')
-                          .split('\n')
-                          .map(line => line.replace(/\s+/g, ' ').trim())
-                          .filter(line => line.length > 0)
-                          .join('\n');
-                      }
-                      
-                      return textToFormat;
-                    })()}
-                  </pre>
-                </div>
+              <div className="bg-blue-50 rounded-lg border border-blue-200">
+                <button
+                  type="button"
+                  onClick={() => setShowSiigoNotes(!showSiigoNotes)}
+                  className="w-full px-4 py-3 flex items-center justify-between"
+                >
+                  <span className="font-medium text-blue-900 flex items-center">
+                    <Icons.FileText className="w-4 h-4 mr-2" />
+                    Notas de la Factura SIIGO
+                  </span>
+                  <Icons.ChevronDown className={`w-4 h-4 text-blue-700 transition-transform ${showSiigoNotes ? 'rotate-180' : ''}`} />
+                </button>
+
+                {showSiigoNotes && (
+                  <div className="px-4 pb-4">
+                    <p className="text-sm text-blue-800 mb-2">
+                      <strong>Información importante acordada con el cliente:</strong>
+                    </p>
+                    <div className="bg-white p-3 rounded border border-blue-200">
+                      <pre className="text-sm text-gray-700 whitespace-pre-wrap font-sans leading-relaxed">
+                        {(() => {
+                          // Priorizar siigo_observations si existe, sino usar notes
+                          let textToFormat = order.siigo_observations || order.notes || '';
+                          
+                          // Si hay observaciones de SIIGO, formatearlas
+                          if (order.siigo_observations) {
+                            // Lista de campos específicos a identificar y separar
+                            const fieldsToSeparate = [
+                              'OBSERVACIONES SIIGO:',
+                              'ESTADO DE PAGO:',
+                              'MEDIO DE PAGO:',
+                              'FORMA DE PAGO DE ENVIO:',
+                              'NOMBRE:',
+                              'NIT:',
+                              'TELÉFONO:',
+                              'DEPARTAMENTO:',
+                              'CIUDAD:',
+                              'DIRECCIÓN:',
+                              'NOTA:'
+                            ];
+                            
+                            // Separar cada campo específico con un salto de línea
+                            fieldsToSeparate.forEach(field => {
+                              const pattern = new RegExp(`([^\\n])${field.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'g');
+                              textToFormat = textToFormat.replace(pattern, `$1\n${field}`);
+                            });
+                            
+                            // Normalizar saltos de línea y espacios
+                            textToFormat = textToFormat
+                              .replace(/\r\n/g, '\n')
+                              .replace(/\r/g, '\n')
+                              .replace(/\n+/g, '\n')
+                              .split('\n')
+                              .map(line => line.replace(/\s+/g, ' ').trim())
+                              .filter(line => line.length > 0)
+                              .join('\n');
+                          }
+                          
+                          return textToFormat;
+                        })()}
+                      </pre>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
@@ -870,23 +1102,27 @@ const LogisticsModal = ({ isOpen, onClose, order, onProcess }) => {
             </div>
 
             {/* Transportadora */}
-            {formData.shippingMethod && formData.shippingMethod !== 'recoge_bodega' && (
+            {formData.shippingMethod && formData.shippingMethod !== 'recoge_bodega' && !isLocalMethod(formData.shippingMethod) && (
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Transportadora
+                  Transportadora <span className="text-red-600">*</span>
                 </label>
                 <CustomDropdown
                   value={formData.transportCompany}
                   onChange={(value) => handleInputChange('transportCompany', value)}
                   options={transportCompanies.map(company => ({ value: company, label: company }))}
-                  placeholder="Seleccionar transportadora"
+                  placeholder="Seleccione transportadora"
+                  required
                 />
+                <p className="text-xs text-gray-500 mt-1">
+                  Selecciona manualmente la transportadora. No se preselecciona ninguna por defecto.
+                </p>
               </div>
             )}
 
 
             {/* Método de Pago de Envío */}
-            {formData.transportCompany && (
+            {(formData.transportCompany || isLocalMethod(formData.shippingMethod)) && (
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Método de Pago de Envío *
@@ -910,7 +1146,7 @@ const LogisticsModal = ({ isOpen, onClose, order, onProcess }) => {
                 </p>
 
                 {/* Campo para valor de domicilio cuando aplica (UI antibobos) */}
-                {(['domicilio','domicilio_ciudad','mensajeria_local','mensajeria_urbana'].includes(formData.shippingMethod)) &&
+                {isLocalMethod(formData.shippingMethod) &&
                  (formData.shippingPaymentMethod === 'contraentrega') && (
                   <div className="mt-3 p-3 border border-orange-200 bg-orange-50 rounded-md">
                     <div className="flex items-center justify-between">
@@ -1087,25 +1323,25 @@ const LogisticsModal = ({ isOpen, onClose, order, onProcess }) => {
                       <tr>
                         <td className="px-4 py-2 font-medium text-gray-700 border-b border-r">Nombre:</td>
                         <td className="px-4 py-2 border-b">
-                          {extractedData?.name || order?.customer_name}
+                          {effectiveData?.name || order?.customer_name}
                         </td>
                       </tr>
                       <tr>
                         <td className="px-4 py-2 font-medium text-gray-700 border-b border-r">Teléfono:</td>
                         <td className="px-4 py-2 border-b">
-                          {extractedData?.phone || order?.customer_phone}
+                          {effectiveData?.phone || order?.customer_phone}
                         </td>
                       </tr>
                       <tr>
                         <td className="px-4 py-2 font-medium text-gray-700 border-b border-r">Dirección:</td>
                         <td className="px-4 py-2 border-b">
-                          {extractedData?.address || order?.customer_address}
+                          {effectiveData?.address || order?.customer_address}
                         </td>
                       </tr>
                       <tr>
                         <td className="px-4 py-2 font-medium text-gray-700 border-b border-r">Ciudad:</td>
                         <td className="px-4 py-2 border-b">
-                          {extractedData?.city || order?.customer_city}, {extractedData?.department || order?.customer_department}
+                          {cityToShow}, {deptToShow}
                         </td>
                       </tr>
                       {extractedData?.nit && (
@@ -1115,17 +1351,17 @@ const LogisticsModal = ({ isOpen, onClose, order, onProcess }) => {
                         </tr>
                       )}
 
-                      {/* Forma de Pago */}
+                      {/* Pago del Envío */}
                       <tr className="bg-yellow-50">
                         <td colSpan="2" className="px-4 py-2 font-semibold text-yellow-900 border-b">
-                          💳 FORMA DE PAGO
+                          💳 PAGO DEL ENVÍO
                         </td>
                       </tr>
                       <tr>
-                        <td className="px-4 py-2 font-medium text-gray-700 border-b border-r">Método de Pago:</td>
+                        <td className="px-4 py-2 font-medium text-gray-700 border-b border-r">Pago del Envío:</td>
                         <td className="px-4 py-2 border-b">
-                          <span className="bg-red-100 text-red-800 px-2 py-1 rounded text-xs font-medium">
-                            {extractedData?.paymentMethod || 'CONTRA ENTREGA'}
+                          <span className={`px-2 py-1 rounded text-xs font-medium ${getShippingBadgeClass(order?.shipping_payment_method || effectiveData?.shippingPaymentMethod || formData.shippingPaymentMethod)}`}>
+                            {getShippingPayLabel(order?.shipping_payment_method || effectiveData?.shippingPaymentMethod || formData.shippingPaymentMethod)}
                           </span>
                         </td>
                       </tr>
@@ -1175,19 +1411,19 @@ const LogisticsModal = ({ isOpen, onClose, order, onProcess }) => {
             >
               Cancelar
             </button>
-            <button
-              type="submit"
-              className="btn btn-primary"
-              disabled={loading || !formData.shippingMethod}
-            >
+              <button
+                type="submit"
+                className="btn-cta-primary"
+                disabled={loading || !formData.shippingMethod}
+              >
               {loading ? (
                 <>
-                  <Icons.Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  <Icons.Loader2 className="w-5 h-5 mr-2 animate-spin" />
                   Procesando...
                 </>
               ) : (
                 <>
-                  <Icons.Truck className="w-4 h-4 mr-2" />
+                  <Icons.Truck className="w-5 h-5 mr-2" />
                   Procesar Envío
                 </>
               )}

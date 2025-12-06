@@ -78,7 +78,7 @@ const login = async (req, res) => {
   }
 };
 
-// Obtener perfil del usuario actual
+// Obtener perfil del usuario actual (incluye roles/permisos si existen tablas avanzadas)
 const getProfile = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -95,9 +95,42 @@ const getProfile = async (req, res) => {
       });
     }
 
+    const user = users[0];
+
+    // Intentar cargar roles/permissions avanzados
+    let roles = [];
+    let permissions = [];
+    try {
+      const rolesCheck = await query("SHOW TABLES LIKE 'roles'");
+      if (rolesCheck.length > 0) {
+        roles = await query(
+          `SELECT r.id as role_id, r.name as role_name, r.display_name as role_display_name, r.color, r.icon
+           FROM user_roles ur
+           JOIN roles r ON ur.role_id = r.id
+           WHERE ur.user_id = ? AND ur.is_active = 1 AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
+           ORDER BY ur.assigned_at ASC`,
+          [userId]
+        );
+        permissions = await query(
+          `SELECT DISTINCT p.name as permission_name, p.display_name as permission_display_name, p.module, p.action, p.resource
+           FROM user_roles ur
+           JOIN role_permissions rp ON ur.role_id = rp.role_id
+           JOIN permissions p ON rp.permission_id = p.id
+           WHERE ur.user_id = ? AND ur.is_active = 1 AND (ur.expires_at IS NULL OR ur.expires_at > NOW())`,
+          [userId]
+        );
+      }
+    } catch (e) {
+      // Ignorar si no existen
+    }
+
     res.json({
       success: true,
-      data: users[0]
+      data: {
+        ...user,
+        roles,
+        permissions
+      }
     });
 
   } catch (error) {

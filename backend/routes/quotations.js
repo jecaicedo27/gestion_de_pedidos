@@ -26,6 +26,9 @@ router.post('/:quotationId/process', generalLimiter, QuotationController.process
 // Crear factura desde cotización
 router.post('/create-invoice', generalLimiter, QuotationController.createInvoice);
 
+// Crear cotización directamente en SIIGO
+router.post('/create-quotation-siigo', generalLimiter, QuotationController.createSiigoQuotation);
+
 // Crear factura directa desde inventario
 router.post('/create-invoice-direct', generalLimiter, QuotationController.createDirectInvoice);
 
@@ -40,5 +43,8 @@ router.post('/:quotationId/generate-siigo', siigoLimiter, QuotationController.ge
 
 // Estadísticas de ChatGPT
 router.get('/admin/chatgpt-stats', QuotationController.getChatGPTStats);
+
+// Sincronización
+router.post('/sync', siigoLimiter, QuotationController.syncQuotations);
 
 module.exports = router;

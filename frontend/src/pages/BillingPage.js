@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   FileText, 
   Search, 
@@ -14,6 +14,7 @@ import {
 import api from '../services/api';
 import SiigoImportModal from '../components/SiigoImportModal';
 import LoadingSpinner from '../components/LoadingSpinner';
+import { io } from 'socket.io-client';
 
 const BillingPage = () => {
   const [activeTab, setActiveTab] = useState('create'); // 'create' o 'siigo'
@@ -23,6 +24,7 @@ const BillingPage = () => {
   const [connectionStatus, setConnectionStatus] = useState(null);
   const [selectedInvoice, setSelectedInvoice] = useState(null);
   const [showImportModal, setShowImportModal] = useState(false);
+  const socketRef = useRef(null);
   
   // Estados para crear pedido
   const [newOrder, setNewOrder] = useState({
@@ -47,6 +49,64 @@ const BillingPage = () => {
     created_end: '',
     search: ''
   });
+
+  // Socket.IO: actualizaciones en tiempo real para facturas SIIGO y pedidos pendientes
+  useEffect(() => {
+    const apiBase = process.env.REACT_APP_API_URL || 'http://localhost:3001';
+    const socketBase = (typeof apiBase === 'string' && !apiBase.startsWith('http'))
+      ? window.location.origin
+      : apiBase;
+
+    const socket = io(socketBase, {
+      path: '/socket.io',
+      withCredentials: true,
+      transports: ['websocket', 'polling']
+    });
+    socketRef.current = socket;
+
+    socket.on('connect', () => {
+      try {
+        socket.emit('join-siigo-updates');
+      } catch {}
+    });
+
+    const refreshInvoices = () => {
+      if (activeTab === 'siigo') {
+        loadInvoices();
+      }
+    };
+
+    socket.on('new-invoice', refreshInvoices);
+    socket.on('invoices-updated', refreshInvoices);
+    socket.on('invoice-updated', refreshInvoices);
+
+    socket.on('order-created', () => {
+      if (activeTab === 'create') {
+        loadPendingOrders();
+      }
+    });
+
+    socket.on('reconnect', () => {
+      try { socket.emit('join-siigo-updates'); } catch {}
+      setTimeout(() => {
+        if (activeTab === 'siigo') loadInvoices();
+        if (activeTab === 'create') loadPendingOrders();
+      }, 500);
+    });
+
+    socket.on('connect_error', (err) => {
+      console.warn('Socket error (BillingPage):', err?.message || err);
+    });
+
+    return () => {
+      socket.off('new-invoice', refreshInvoices);
+      socket.off('invoices-updated', refreshInvoices);
+      socket.off('invoice-updated', refreshInvoices);
+      socket.off('order-created');
+      socket.disconnect();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
 
   useEffect(() => {
     if (activeTab === 'siigo') {
@@ -79,15 +139,35 @@ const BillingPage = () => {
       setLoading(true);
       const response = await api.get('/orders', { 
         params: { 
-          status: 'pendiente',
-          limit: 20,
-          sortBy: 'created_at',
-          sortOrder: 'DESC'
+          status: 'pendiente_por_facturacion',
+          // Orden explícito en backend por número (sufijo) ASC
+          sortBy: 'order_number_numeric',
+          sortOrder: 'ASC',
+          // Traer suficientes registros (el backend ya ordena)
+          limit: 1000,
+          view: 'facturacion'
         }
       });
       
       if (response.data.success) {
-        setOrders(response.data.data.orders || []);
+        const list = response.data.data.orders || [];
+        // Orden de respaldo SOLO en esta vista (Facturación):
+        // - ASC por sufijo numérico de order_number (más antiguos primero)
+        // - Desempate por fecha de factura/creación ASC
+        const toNumber = (s) => {
+          if (!s) return Number.MAX_SAFE_INTEGER;
+          const m = String(s).match(/(\d+)(?!.*\d)/);
+          return m ? parseInt(m[1], 10) : Number.MAX_SAFE_INTEGER;
+        };
+        list.sort((a, b) => {
+          const na = toNumber(a.order_number);
+          const nb = toNumber(b.order_number);
+          if (na !== nb) return na - nb;
+          const da = new Date(a.siigo_invoice_created_at || a.created_at);
+          const db = new Date(b.siigo_invoice_created_at || b.created_at);
+          return da - db;
+        });
+        setOrders(list);
       }
     } catch (error) {
       console.error('Error cargando pedidos:', error);
@@ -193,6 +273,7 @@ const BillingPage = () => {
   const getStatusBadge = (status) => {
     const statusConfig = {
       'pendiente': { color: 'bg-yellow-100 text-yellow-800', icon: Clock, label: 'Pendiente' },
+      'pendiente_por_facturacion': { color: 'bg-yellow-100 text-yellow-800', icon: FileText, label: 'Pendiente por Facturación' },
       'confirmado': { color: 'bg-blue-100 text-blue-800', icon: CheckCircle, label: 'En Cartera' },
       'active': { color: 'bg-green-100 text-green-800', icon: CheckCircle, label: 'Activa' }
     };
@@ -369,6 +450,8 @@ const BillingPage = () => {
                     <option value="transferencia">Transferencia Bancaria</option>
                     <option value="tarjeta_credito">Tarjeta de Crédito</option>
                     <option value="pago_electronico">Pago Electrónico</option>
+                    <option value="publicidad">Publicidad (sin validación)</option>
+                    <option value="reposicion">Reposición (sin validación)</option>
                   </select>
                 </div>
               </div>

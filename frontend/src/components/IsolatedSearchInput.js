@@ -17,7 +17,7 @@ class IsolatedSearchInput extends React.Component {
     if (this.inputRef.current) {
       this.inputRef.current.value = this.props.initialValue || '';
     }
-    
+
     // Mantener foco agresivamente
     this.startFocusProtection();
   }
@@ -63,7 +63,7 @@ class IsolatedSearchInput extends React.Component {
       this.userTyping = false;
       if (this.mounted && this.props.onSearch && typeof this.props.onSearch === 'function') {
         this.props.onSearch(value);
-        
+
         // Devolver el foco al input después de la búsqueda
         setTimeout(() => {
           if (this.inputRef.current) {
@@ -96,7 +96,7 @@ class IsolatedSearchInput extends React.Component {
 
   render() {
     const { placeholder = "Buscar..." } = this.props;
-    
+
     return (
       <div className="relative">
         <Icons.Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4 pointer-events-none" />
@@ -109,8 +109,8 @@ class IsolatedSearchInput extends React.Component {
           onBlur={this.handleBlur}
           autoComplete="off"
           spellCheck="false"
-          className="pl-10 w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-          style={{ 
+          className="pl-10 w-full h-10 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+          style={{
             // Estilos inline para garantizar consistencia
             outline: 'none',
             border: '1px solid #d1d5db',
@@ -119,7 +119,8 @@ class IsolatedSearchInput extends React.Component {
             paddingRight: '0.75rem',
             paddingTop: '0.5rem',
             paddingBottom: '0.5rem',
-            width: '100%'
+            width: '100%',
+            height: '2.5rem'
           }}
         />
       </div>

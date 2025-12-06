@@ -1,19 +1,27 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Bell, X, FileText, AlertCircle, CheckCircle } from 'lucide-react';
+import toast from 'react-hot-toast';
 import { useAuth } from '../context/AuthContext';
-import api from '../services/api';
+import api, { logisticsService } from '../services/api';
+import { io } from 'socket.io-client';
+import audioFeedback from '../utils/audioUtils';
 
 const NotificationSystem = () => {
   const { user } = useAuth();
   const [notifications, setNotifications] = useState([]);
   const [showNotifications, setShowNotifications] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
+  const prevReadyCountRef = useRef(null);
+  // Guardar estado para evitar solapes de polling de SIIGO (previene timeouts y requests concurrentes)
+  const invoicePollInFlightRef = useRef(false);
 
-  // Solo mostrar notificaciones para admin y facturación
-  const canReceiveNotifications = user && (user.role === 'admin' || user.role === 'facturacion');
+  // Permisos por tipo de alerta
+  const canReceiveSiigo = user && (user.role === 'admin' || user.role === 'facturacion');
+  const canReceiveStatusAlerts = !!user && ['admin', 'facturador', 'cartera', 'logistica', 'mensajero', 'empacador', 'empaque'].includes(user.role);
+  const canReceiveAny = !!user && (canReceiveSiigo || canReceiveStatusAlerts);
 
   useEffect(() => {
-    if (!canReceiveNotifications) return;
+    if (!canReceiveSiigo) return;
 
     // Cargar notificaciones iniciales
     loadNotifications();
@@ -24,7 +32,7 @@ const NotificationSystem = () => {
     }, 120000); // 2 minutos en lugar de 30 segundos
 
     return () => clearInterval(interval);
-  }, [canReceiveNotifications]);
+  }, [canReceiveSiigo]);
 
   const loadNotifications = async () => {
     try {
@@ -40,30 +48,54 @@ const NotificationSystem = () => {
   };
 
   const checkForNewInvoices = async () => {
+    if (invoicePollInFlightRef.current) {
+      return;
+    }
+    invoicePollInFlightRef.current = true;
     try {
-      // Obtener facturas desde hoy 12:15 AM
+      // Obtener facturas desde HOY 00:00 (filtrado en backend)
+      const startOfToday = new Date();
+      startOfToday.setHours(0, 0, 0, 0);
+      const startDateStr = startOfToday.toISOString().split('T')[0];
+
       const response = await api.get('/siigo/invoices', {
         params: {
           page: 1,
-          page_size: 5 // Solo las más recientes
-        }
+          page_size: 5, // Solo las más recientes
+          start_date: startDateStr
+        },
+        timeout: 120000
       });
 
       if (response.data.success && response.data.data.results) {
         const newInvoices = response.data.data.results;
-        
+
+        // Limitar a facturas de HOY por si el backend devuelve adicionales
+        const todaysInvoices = newInvoices.filter((invoice) => {
+          const d = invoice?.date || invoice?.created_at || invoice?.document_date;
+          if (!d) return false;
+          const invDate = new Date(d);
+          return invDate >= startOfToday;
+        });
+
+        // Reset diario: si el último chequeo fue de otro día, limpiar deduplicación local
+        const lastCheckISO = localStorage.getItem('last_invoice_check');
+        if (lastCheckISO && new Date(lastCheckISO) < startOfToday) {
+          localStorage.removeItem('processed_invoices');
+        }
+
         // Obtener IDs de facturas ya procesadas
         const processedInvoices = JSON.parse(localStorage.getItem('processed_invoices') || '[]');
         const currentTime = new Date().toISOString();
-        
+
         // Filtrar facturas que no hemos procesado antes
-        const newInvoicesFiltered = newInvoices.filter(invoice => 
+        const newInvoicesFiltered = todaysInvoices.filter(invoice =>
           !processedInvoices.includes(invoice.id)
         );
 
         if (newInvoicesFiltered.length > 0) {
           console.log(`🔔 ${newInvoicesFiltered.length} nueva(s) factura(s) detectada(s)`);
-          
+
           // Crear notificaciones para las nuevas facturas
           const newNotifications = newInvoicesFiltered.map(invoice => ({
             id: `invoice_${invoice.id}`,
@@ -85,7 +117,12 @@ const NotificationSystem = () => {
           setUnreadCount(prev => prev + newNotifications.length);
 
           // Reproducir sonido de notificación
-          playNotificationSound();
+          if (audioFeedback?.isEnabled()) {
+            audioFeedback.playStatusAlert();
+          } else {
+            // Fallback simple beep si el sistema avanzado no está disponible
+            playNotificationSound();
+          }
 
           // Mostrar notificación del navegador si está permitido
           if (Notification.permission === 'granted') {
@@ -100,7 +137,7 @@ const NotificationSystem = () => {
             ...processedInvoices,
             ...newInvoicesFiltered.map(inv => inv.id)
           ].slice(-50); // Mantener solo las últimas 50
-          
+
           localStorage.setItem('processed_invoices', JSON.stringify(updatedProcessedInvoices));
         }
 
@@ -115,35 +152,230 @@ const NotificationSystem = () => {
         return;
       }
       console.error('Error verificando nuevas facturas:', error);
+    } finally {
+      invoicePollInFlightRef.current = false;
     }
   };
+
+  // WebSocket para alertas de cambio de estado de pedidos (tiempo real)
+  const socketRef = useRef(null);
+  const statusToastTsRef = useRef(0);
+  // Deduplicación de eventos de estado recientes (orderId:to_status -> timestamp)
+  const recentStatusRef = useRef(new Map());
+
+  useEffect(() => {
+    if (!canReceiveStatusAlerts) return;
+
+    const apiBase = process.env.REACT_APP_API_URL;
+    const socketBase = (apiBase && /^https?:\/\//.test(apiBase)) ? apiBase : window.location.origin;
+
+    // Evitar múltiples conexiones
+    if (!socketRef.current) {
+      const socket = io(socketBase, { path: '/socket.io', transports: ['websocket', 'polling'], withCredentials: true });
+      socketRef.current = socket;
+
+      socket.on('connect', () => {
+        try {
+          socket.emit('join-orders-updates');
+        } catch (_) { }
+      });
+
+      const shouldNotifyForStatus = (toStatus) => {
+        const map = {
+          revision_cartera: ['cartera', 'facturador', 'admin'],
+          en_logistica: ['logistica', 'admin'],
+          pendiente_empaque: ['logistica', 'admin'],
+          en_preparacion: ['logistica', 'admin'],
+          en_empaque: ['empacador', 'empaque', 'admin', 'logistica'],
+          listo_para_entrega: ['logistica', 'admin'],
+          en_reparto: ['mensajero', 'admin'],
+          enviado: ['mensajero', 'admin'],
+          entregado_transportadora: ['logistica', 'admin']
+        };
+        const targets = map[toStatus] || ['admin']; // por defecto solo admin
+        return targets.includes(user?.role);
+      };
+
+      const handleStatusChanged = (payload) => {
+        try {
+          // Evitar duplicados con Empaque: si estás en /packaging y el estado es 'en_empaque' o 'pendiente_empaque', no notificar aquí.
+          const __toLow = String(payload?.to_status || '').toLowerCase();
+          if ((__toLow === 'en_empaque' || __toLow === 'pendiente_empaque') && typeof window !== 'undefined' && window.location.pathname.includes('/packaging')) {
+            return;
+          }
+          // Throttle global simple para evitar ráfagas de toasts en menos de 3s.
+          const __now = Date.now();
+          if (__now - statusToastTsRef.current < 3000) {
+            return;
+          }
+          statusToastTsRef.current = __now;
+
+          const { orderId, order_number, from_status, to_status, timestamp } = {
+            orderId: payload?.orderId,
+            order_number: payload?.order_number,
+            from_status: payload?.from_status,
+            to_status: payload?.to_status,
+            timestamp: payload?.timestamp || new Date().toISOString()
+          };
+
+          if (!orderId || !to_status) return;
+
+          // Deduplicación: si ya notificamos este (orderId -> to_status) en los últimos 10s, omitir
+          try {
+            const key = `${orderId}:${__toLow}`;
+            const nowTs = Date.now();
+            const lastTs = recentStatusRef.current.get(key);
+            if (lastTs && (nowTs - lastTs) < 10000) {
+              return;
+            }
+            recentStatusRef.current.set(key, nowTs);
+          } catch (_) { }
+
+          // Filtrar por rol según estado destino
+          if (!shouldNotifyForStatus(to_status)) return;
+
+          // Crear notificación local
+          const notif = {
+            id: `status_${orderId}_${Date.now()}`,
+            type: 'status_change',
+            title: 'Cambio de Estado de Pedido',
+            message: `Pedido ${order_number || orderId}: ${from_status || '—'} → ${to_status}`,
+            timestamp,
+            read: false,
+            data: payload
+          };
+
+          setNotifications(prev => {
+            const updated = [notif, ...prev].slice(0, 20);
+            localStorage.setItem('siigo_notifications', JSON.stringify(updated));
+            return updated;
+          });
+          setUnreadCount(prev => prev + 1);
+
+          // Sonido fuerte e identificativo (timbre de alerta de nuevo pedido/estado, no de error)
+          if (audioFeedback?.isEnabled()) {
+            // patrón de alerta claro y agradable
+            audioFeedback.playStatusAlert();
+          }
+
+          // Notificación nativa del navegador (si está permitido)
+          if (Notification.permission === 'granted') {
+            new Notification('Cambio de Estado de Pedido', {
+              body: `Pedido ${order_number || orderId}: ${from_status || '—'} → ${to_status}`,
+              icon: '/favicon.ico'
+            });
+          }
+        } catch (e) {
+          console.warn('Error manejando order-status-changed:', e);
+        }
+      };
+
+      socket.on('order-status-changed', handleStatusChanged);
+
+      socket.on('connect_error', (err) => {
+        console.error('Socket connection error (status alerts):', err?.message || err);
+      });
+
+      return () => {
+        try {
+          socket.off('order-status-changed');
+          socket.disconnect();
+        } catch (e) { }
+        socketRef.current = null;
+      };
+    }
+  }, [canReceiveStatusAlerts, user?.role]);
+
+  // Polling global para ADMIN/LOGÍSTICA: detectar nuevos "listos para entregar"
+  useEffect(() => {
+    const role = String(user?.role || '');
+    const enabled = role === 'admin' || role === 'logistica';
+    if (!enabled) return;
+
+    let disposed = false;
+
+    const checkReadyForDelivery = async () => {
+      try {
+        const resp = await logisticsService.getReadyForDelivery({ _ts: Date.now() });
+        const grouped = resp?.data?.groupedOrders || resp?.groupedOrders || {};
+        const currentCount = Object.values(grouped).reduce((acc, list) => acc + ((list || []).length), 0);
+
+        const prev = prevReadyCountRef.current;
+        prevReadyCountRef.current = currentCount;
+
+        // La primera vez solo inicializamos sin notificar
+        if (prev == null) return;
+
+        if (currentCount > prev) {
+          const diff = currentCount - prev;
+
+          // Notificación visual y sonora
+          toast.success(`${diff} pedido(s) NUEVOS listos para entregar`);
+          if (audioFeedback?.isEnabled()) {
+            try { audioFeedback.playStatusAlert(); } catch (_) { }
+          }
+
+          // Registrar en bandeja de notificaciones
+          const notif = {
+            id: `ready_${Date.now()}`,
+            type: 'status_change',
+            title: 'Nuevos Pedidos Listos',
+            message: `${diff} pedido(s) nuevos listos para entregar`,
+            timestamp: new Date().toISOString(),
+            read: false,
+            data: { delta: diff, total: currentCount }
+          };
+          setNotifications(prevList => {
+            const updated = [notif, ...prevList].slice(0, 20);
+            localStorage.setItem('siigo_notifications', JSON.stringify(updated));
+            return updated;
+          });
+          setUnreadCount(prevU => prevU + 1);
+        }
+      } catch (e) {
+        // Silenciar errores intermitentes
+      }
+    };
+
+    // Chequeo inicial (inicializa contador sin alertar)
+    checkReadyForDelivery();
+
+    const interval = setInterval(() => {
+      if (!disposed) checkReadyForDelivery();
+    }, 15000); // 15s
+
+    return () => {
+      disposed = true;
+      clearInterval(interval);
+    };
+  }, [user?.role]);
 
   const playNotificationSound = () => {
     try {
       // Crear un sonido de notificación usando Web Audio API
       const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-      
+
       // Crear un oscilador para generar el sonido
       const oscillator = audioContext.createOscillator();
       const gainNode = audioContext.createGain();
-      
+
       // Conectar oscilador -> ganancia -> salida
       oscillator.connect(gainNode);
       gainNode.connect(audioContext.destination);
-      
+
       // Configurar el sonido (tono agradable de notificación)
       oscillator.frequency.setValueAtTime(800, audioContext.currentTime); // Frecuencia inicial
       oscillator.frequency.setValueAtTime(600, audioContext.currentTime + 0.1); // Bajar tono
       oscillator.frequency.setValueAtTime(800, audioContext.currentTime + 0.2); // Subir tono
-      
+
       // Configurar volumen con fade out
       gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
       gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.5);
-      
+
       // Reproducir sonido
       oscillator.start(audioContext.currentTime);
       oscillator.stop(audioContext.currentTime + 0.5);
-      
+
       console.log('🔊 Sonido de notificación reproducido');
     } catch (error) {
       console.error('Error reproduciendo sonido de notificación:', error);
@@ -157,10 +389,10 @@ const NotificationSystem = () => {
   };
 
   useEffect(() => {
-    if (canReceiveNotifications) {
+    if (canReceiveAny) {
       requestNotificationPermission();
     }
-  }, [canReceiveNotifications]);
+  }, [canReceiveAny]);
 
   // Función para probar notificaciones (temporal)
   const testNotification = () => {
@@ -181,7 +413,12 @@ const NotificationSystem = () => {
     });
 
     setUnreadCount(prev => prev + 1);
-    playNotificationSound();
+    if (audioFeedback?.isEnabled()) {
+      audioFeedback.playStatusAlert();
+    } else {
+      // Fallback simple beep si el sistema avanzado no está disponible
+      playNotificationSound();
+    }
 
     if (Notification.permission === 'granted') {
       new Notification('Prueba de Notificación', {
@@ -195,7 +432,7 @@ const NotificationSystem = () => {
 
   const markAsRead = (notificationId) => {
     setNotifications(prev => {
-      const updated = prev.map(n => 
+      const updated = prev.map(n =>
         n.id === notificationId ? { ...n, read: true } : n
       );
       localStorage.setItem('siigo_notifications', JSON.stringify(updated));
@@ -231,6 +468,8 @@ const NotificationSystem = () => {
         return <FileText className="w-5 h-5 text-blue-500" />;
       case 'error':
         return <AlertCircle className="w-5 h-5 text-red-500" />;
+      case 'status_change':
+        return <AlertCircle className="w-5 h-5 text-red-600" />;
       case 'success':
         return <CheckCircle className="w-5 h-5 text-green-500" />;
       default:
@@ -252,7 +491,7 @@ const NotificationSystem = () => {
     return `${days}d`;
   };
 
-  if (!canReceiveNotifications) {
+  if (!canReceiveAny) {
     return null;
   }
 
@@ -298,9 +537,8 @@ const NotificationSystem = () => {
               notifications.map((notification) => (
                 <div
                   key={notification.id}
-                  className={`p-4 border-b border-gray-100 hover:bg-gray-50 ${
-                    !notification.read ? 'bg-blue-50' : ''
-                  }`}
+                  className={`p-4 border-b border-gray-100 hover:bg-gray-50 ${!notification.read ? 'bg-blue-50' : ''
+                    }`}
                 >
                   <div className="flex items-start space-x-3">
                     {getNotificationIcon(notification.type)}

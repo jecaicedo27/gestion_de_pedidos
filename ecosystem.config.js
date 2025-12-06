@@ -22,11 +22,13 @@ module.exports = {
       max_memory_restart: '400M',
       env: {
         NODE_ENV: 'production',
-        PORT: 3001
+        PORT: 3001,
+        TZ: 'America/Bogota'
       },
       env_production: {
         NODE_ENV: 'production',
-        PORT: 3001
+        PORT: 3001,
+        TZ: 'America/Bogota'
       },
       // Archivos de log (asegúrate de crear el directorio 'logs' en el root del proyecto)
       error_file: './logs/backend-error.log',

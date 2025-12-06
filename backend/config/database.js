@@ -1,5 +1,8 @@
 const mysql = require('mysql2/promise');
-require('dotenv').config();
+const path = require('path');
+// Cargar variables de entorno desde backend/.env por defecto
+const dotenvPath = process.env.BACKEND_ENV_PATH || path.resolve(__dirname, '../.env');
+require('dotenv').config({ path: dotenvPath });
 
 const dbConfig = {
   host: process.env.DB_HOST || '127.0.0.1',
@@ -8,7 +11,7 @@ const dbConfig = {
   password: process.env.DB_PASSWORD || '',
   database: process.env.DB_NAME || 'gestion_pedidos_dev',
   waitForConnections: true,
-  connectionLimit: 10,
+  connectionLimit: 50,
   queueLimit: 0,
   // mysql2 valid option for initial connection timeout
   connectTimeout: 60000
@@ -33,6 +36,12 @@ const testConnection = async () => {
 // Función para ejecutar queries
 const query = async (sql, params = []) => {
   try {
+    // SHOW/DESCRIBE/EXPLAIN no funcionan bien con prepared statements en MariaDB.
+    // Usar pool.query (no preparado) para estas sentencias.
+    if (/^\s*(SHOW|DESCRIBE|EXPLAIN)\b/i.test(sql)) {
+      const [results] = await pool.query(sql); // no usar params aquí
+      return results;
+    }
     const [results] = await pool.execute(sql, params);
     return results;
   } catch (error) {

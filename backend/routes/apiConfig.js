@@ -29,7 +29,7 @@ const getSiigoCredentials = async (companyId = 1) => {
         configured: false,
         siigo_username: '',
         siigo_access_key: '',
-        siigo_base_url: 'https://api.siigo.com/v1',
+        siigo_base_url: 'https://api.siigo.com',
         webhook_secret: '',
         is_enabled: false
       };
@@ -51,12 +51,17 @@ const getSiigoCredentials = async (companyId = 1) => {
       configured: false,
       siigo_username: '',
       siigo_access_key: '',
-      siigo_base_url: 'https://api.siigo.com/v1',
+      siigo_base_url: 'https://api.siigo.com',
       webhook_secret: '',
       is_enabled: false
     };
   }
 };
+
+// Ping de depuración para validar montaje del router
+router.get('/__ping', (req, res) => {
+  res.json({ ok: true, ts: new Date().toISOString() });
+});
 
 // GET /api/api-config - Obtener configuración de todas las APIs
 router.get('/', auth.authenticateToken, adminOnly, async (req, res) => {
@@ -104,6 +109,7 @@ router.put('/siigo', auth.authenticateToken, adminOnly, async (req, res) => {
     const { siigo_username, siigo_access_key, siigo_base_url, webhook_secret, is_enabled } = req.body;
     const userId = req.user.id;
     const companyId = 1; // Por ahora hardcodeado
+    const baseUrlSanitized = (siigo_base_url || 'https://api.siigo.com').replace(/\/v1\/?$/, '');
 
     // Validación
     if (!siigo_username || !siigo_access_key) {
@@ -133,7 +139,7 @@ router.put('/siigo', auth.authenticateToken, adminOnly, async (req, res) => {
       `, [
         siigo_username,
         encAccessKey,
-        siigo_base_url || 'https://api.siigo.com/v1',
+        baseUrlSanitized,
         encWebhookSecret,
         is_enabled || false,
         userId,
@@ -149,7 +155,7 @@ router.put('/siigo', auth.authenticateToken, adminOnly, async (req, res) => {
         companyId,
         siigo_username,
         encAccessKey,
-        siigo_base_url || 'https://api.siigo.com/v1',
+        baseUrlSanitized,
         encWebhookSecret,
         is_enabled || false,
         userId,
@@ -240,22 +246,96 @@ router.delete('/siigo', auth.authenticateToken, adminOnly, async (req, res) => {
 // POST /api/api-config/siigo/test - Probar conexión SIIGO
 router.post('/siigo/test', auth.authenticateToken, adminOnly, async (req, res) => {
   try {
-    const { siigo_username, siigo_access_key, siigo_base_url } = req.body;
+    console.log('🧪 /api-config/siigo/test recibido', {
+      bodyKeys: Object.keys(req.body || {}),
+      rawBase: req.body?.siigo_base_url
+    });
+    const { siigo_username, siigo_access_key, siigo_base_url, dryRun } = req.body || {};
 
-    if (!siigo_username || !siigo_access_key) {
+    // Permitir usar valores almacenados si el cliente envía valores enmascarados
+    let username = siigo_username;
+    let accessKey = siigo_access_key;
+    let baseUrlRaw = siigo_base_url || 'https://api.siigo.com';
+
+    // Detectar si la clave viene enmascarada o no válida
+    const isMasked = !accessKey || (typeof accessKey === 'string' && (/[\u2022\*]/.test(accessKey) || accessKey.length < 12));
+
+    // Si vienen bullets (•••) o está vacío, intentar cargar credenciales reales
+    if (!username || isMasked) {
+      // 1) Intentar desde system_config (vía configService)
+      try {
+        const cfgUser = await configService.getSecureConfig('siigo_username');
+        const cfgKey = await configService.getSecureConfig('siigo_access_key');
+        if (cfgUser && cfgKey) {
+          username = username || cfgUser;
+          accessKey = (!accessKey || accessKey.includes('•')) ? cfgKey : accessKey;
+          console.log('🔑 Usando credenciales SIIGO desde system_config');
+        }
+      } catch (e) {
+        console.log('⚠️ No se pudo leer system_config:', e.message);
+      }
+
+      // 2) Intentar desde siigo_credentials (tabla directa)
+      if (!username || !accessKey) {
+        try {
+          const [rows] = await pool.execute(
+            'SELECT siigo_username, siigo_access_key, siigo_base_url FROM siigo_credentials WHERE company_id = ? ORDER BY updated_at DESC LIMIT 1',
+            [1]
+          );
+          if (rows && rows.length > 0) {
+            username = username || rows[0].siigo_username;
+            if (!accessKey || accessKey.includes('•')) {
+              try {
+                const encObj = JSON.parse(rows[0].siigo_access_key);
+                accessKey = configService.decrypt(encObj);
+              } catch (e) {
+                // Puede estar en texto plano si viene de migraciones viejas
+                if (typeof rows[0].siigo_access_key === 'string' && rows[0].siigo_access_key.length > 20) {
+                  accessKey = rows[0].siigo_access_key;
+                } else {
+                  console.log('⚠️ No se pudo desencriptar access_key de siigo_credentials:', e.message);
+                }
+              }
+            }
+            if (!siigo_base_url) baseUrlRaw = rows[0].siigo_base_url || baseUrlRaw;
+            console.log('🔑 Usando credenciales SIIGO desde siigo_credentials');
+          }
+        } catch (e) {
+          console.log('⚠️ No se pudo cargar credenciales SIIGO desde BD:', e.message);
+        }
+      }
+
+      // 3) Fallback a variables de entorno
+      if ((!username || !accessKey) && process.env.SIIGO_API_USERNAME && process.env.SIIGO_API_ACCESS_KEY) {
+        username = username || process.env.SIIGO_API_USERNAME;
+        accessKey = (!accessKey || accessKey.includes('•')) ? process.env.SIIGO_API_ACCESS_KEY : accessKey;
+        console.log('🔑 Usando credenciales SIIGO desde variables de entorno');
+      }
+    }
+
+    if (!username || !accessKey) {
       return res.status(400).json({
         success: false,
         message: 'Usuario y Access Key son necesarios para probar la conexión'
       });
     }
 
-    const baseUrl = siigo_base_url || 'https://api.siigo.com/v1';
+    const baseUrl = baseUrlRaw.replace(/\/v1\/?$/, '');
+    console.log('🧪 SIIGO test usando baseUrl:', baseUrl);
+
+    if (dryRun) {
+      return res.json({
+        success: true,
+        message: 'Dry run OK',
+        data: { baseUrl, bodyKeys: Object.keys(req.body || {}) }
+      });
+    }
     
     try {
       // Intentar autenticar con SIIGO
       const authResponse = await axios.post(`${baseUrl}/auth`, {
-        username: siigo_username,
-        access_key: siigo_access_key
+        username,
+        access_key: accessKey
       }, {
         timeout: 10000,
         headers: {
@@ -312,7 +392,7 @@ router.post('/siigo/test', auth.authenticateToken, adminOnly, async (req, res) =
       }
     }
   } catch (error) {
-    console.error('Error probando conexión SIIGO:', error);
+    console.error('Error probando conexión SIIGO:', error?.stack || error);
     res.status(500).json({
       success: false,
       message: 'Error interno del servidor'
@@ -337,6 +417,63 @@ router.get('/siigo/status', auth.authenticateToken, adminOnly, async (req, res) 
     });
   } catch (error) {
     console.error('Error obteniendo estado SIIGO:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error interno del servidor'
+    });
+  }
+});
+
+// GET /api/api-config/siigo/taxes - Obtener configuración de IVA (ID impuesto, tasa, y si precios incluyen IVA)
+router.get('/siigo/taxes', auth.authenticateToken, adminOnly, async (req, res) => {
+  try {
+    const taxId = await configService.getConfig('siigo_tax_iva_id', null);
+    const ivaRateCfg = await configService.getConfig('siigo_iva_rate', '19');
+    const pricesIncludeCfg = await configService.getConfig('siigo_prices_include_tax', false);
+
+    const ivaRate = Number(ivaRateCfg) || 19;
+    const pricesIncludeTax = (pricesIncludeCfg === true || pricesIncludeCfg === 'true' || pricesIncludeCfg === 1 || pricesIncludeCfg === '1');
+
+    res.json({
+      success: true,
+      data: {
+        tax_id: taxId ? Number(taxId) : null,
+        iva_rate: ivaRate,
+        prices_include_tax: pricesIncludeTax
+      }
+    });
+  } catch (error) {
+    console.error('Error obteniendo configuración de IVA SIIGO:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error interno del servidor'
+    });
+  }
+});
+
+// PUT /api/api-config/siigo/taxes - Actualizar configuración de IVA (ID impuesto, tasa, y si precios incluyen IVA)
+router.put('/siigo/taxes', auth.authenticateToken, adminOnly, async (req, res) => {
+  try {
+    const { tax_id, iva_rate, prices_include_tax } = req.body || {};
+
+    // Permitir actualizaciones parciales; validar tipos cuando vengan
+    if (typeof tax_id !== 'undefined' && tax_id !== null && tax_id !== '') {
+      await configService.setConfig('siigo_tax_iva_id', Number(tax_id), 'number', 'ID impuesto IVA 19% de SIIGO');
+    }
+    if (typeof iva_rate !== 'undefined' && iva_rate !== null && iva_rate !== '') {
+      await configService.setConfig('siigo_iva_rate', Number(iva_rate), 'number', 'Tasa IVA (%)');
+    }
+    if (typeof prices_include_tax !== 'undefined') {
+      const val = (prices_include_tax === true || prices_include_tax === 'true' || prices_include_tax === 1 || prices_include_tax === '1');
+      await configService.setConfig('siigo_prices_include_tax', val ? 'true' : 'false', 'boolean', 'Indica si los precios de los ítems ya incluyen IVA');
+    }
+
+    res.json({
+      success: true,
+      message: 'Configuración de IVA para SIIGO actualizada exitosamente'
+    });
+  } catch (error) {
+    console.error('Error actualizando configuración de IVA SIIGO:', error);
     res.status(500).json({
       success: false,
       message: 'Error interno del servidor'

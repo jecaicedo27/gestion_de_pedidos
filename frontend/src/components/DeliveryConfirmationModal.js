@@ -1,10 +1,10 @@
 import React from 'react';
 import * as Icons from 'lucide-react';
 import { format } from 'date-fns';
-import { es } from 'date-fns/locale';
+import es from 'date-fns/locale/es';
+import { computeCollectionAmounts, isCreditOrder } from '../utils/payments';
 
 const DeliveryConfirmationModal = ({ isOpen, onClose, order, onConfirmStart }) => {
-  if (!isOpen || !order) return null;
 
   const handleStartDelivery = () => {
     onConfirmStart(order.id);
@@ -35,7 +35,9 @@ const DeliveryConfirmationModal = ({ isOpen, onClose, order, onConfirmStart }) =
       transferencia: 'Transferencia',
       cliente_credito: 'Crédito',
       pago_electronico: 'Pago Electrónico',
-      contraentrega: 'Contraentrega'
+      contraentrega: 'Contraentrega',
+      publicidad: 'Publicidad',
+      reposicion: 'Reposición'
     };
     const key = (method || '').toLowerCase();
     return map[key] || method || 'No especificado';
@@ -53,6 +55,31 @@ const DeliveryConfirmationModal = ({ isOpen, onClose, order, onConfirmStart }) =
     return map[key] || method || 'No especificado';
   };
 
+  // Helper robusto para dirección: toma el primer campo no vacío y filtra placeholders
+  const getOrderAddress = (o) => {
+    const toText = (v) => {
+      if (v == null) return '';
+      const s = String(v).trim();
+      const low = s.toLowerCase();
+      if (!s || ['undefined','null','n/a','na','sin direccion','sin dirección','no aplica'].includes(low)) return '';
+      return s;
+    };
+    const candidates = [
+      o?.shipping_address,
+      o?.delivery_address,
+      o?.customer_address,
+      o?.address,
+      o?.customerAddress,
+      o?.shippingAddress,
+      o?.deliveryAddress
+    ];
+    for (const c of candidates) {
+      const s = toText(c);
+      if (s) return s;
+    }
+    return '';
+  };
+
   // Normaliza método de pago cuando no viene:
   // 1) Si el envío es contraentrega/por_cobrar, mostrar "contraentrega"
   // 2) Si hay payment_amount o siigo_balance, asumir "contraentrega"
@@ -63,6 +90,27 @@ const DeliveryConfirmationModal = ({ isOpen, onClose, order, onConfirmStart }) =
     || (((Number(order?.total_amount ?? order?.total ?? 0) - Number(order?.paid_amount ?? order?.amount_paid ?? 0)) > 0) ? 'contraentrega' : null);
 
   const itemsCount = Array.isArray(order?.items) ? order.items.length : (order?.items_count ?? order?.itemsCount ?? 0);
+  const amountsBase = computeCollectionAmounts(order);
+
+  // Fallback defensivo (ajustado):
+  // SOLO aplicar cuando exista un saldo explícito de pago mixto (payment_amount/siigo_balance > 0).
+  // Evita forzar cobros por "total - pagado" cuando el método es transferencia y no se requiere pago.
+  const safeAmounts = (() => {
+    const paid = Number(order?.paid_amount ?? order?.amount_paid ?? 0);
+    const paymentAmt = Number(order?.payment_amount ?? order?.siigo_balance ?? 0);
+
+    if (!isCreditOrder(order) && amountsBase.totalDue === 0 && paymentAmt > 0) {
+      const productDue = Math.max(paymentAmt - paid, 0);
+      const shippingDue = amountsBase.shippingDue;
+      return { productDue, shippingDue, totalDue: productDue + shippingDue };
+    }
+    return amountsBase;
+  })();
+
+
+
+
+  if (!isOpen || !order) return null;
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
@@ -98,7 +146,7 @@ const DeliveryConfirmationModal = ({ isOpen, onClose, order, onConfirmStart }) =
               <Icons.MapPin className="w-4 h-4 mr-2" />
               Información de Entrega
             </h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid grid-cols-2 gap-3">
               <div>
                 <p className="text-sm font-medium text-gray-700">Cliente:</p>
                 <p className="text-gray-900">{order.customer_name || order.client_name}</p>
@@ -107,10 +155,10 @@ const DeliveryConfirmationModal = ({ isOpen, onClose, order, onConfirmStart }) =
                 <p className="text-sm font-medium text-gray-700">Teléfono:</p>
                 <p className="text-gray-900">{order.customer_phone || order.client_phone}</p>
               </div>
-              <div className="md:col-span-2">
+              <div className="col-span-2">
                 <p className="text-sm font-medium text-gray-700">Dirección:</p>
                 <p className="text-gray-900 font-medium">
-                  {order.shipping_address || order.delivery_address || 'No especificada'}
+                  {getOrderAddress(order) || 'No especificada'}
                 </p>
               </div>
               <div>
@@ -138,101 +186,74 @@ const DeliveryConfirmationModal = ({ isOpen, onClose, order, onConfirmStart }) =
           </div>
 
           {/* MONTO A COBRAR - SECCIÓN PRINCIPAL */}
-          <div className="bg-gradient-to-r from-red-50 to-red-100 border-2 border-red-200 rounded-lg p-6">
-            <h3 className="font-bold text-red-900 mb-4 flex items-center text-xl">
-              <Icons.DollarSign className="w-6 h-6 mr-2" />
-              💰 MONTO A COBRAR AL CLIENTE
+          <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+            <h3 className="font-bold text-red-900 mb-3 flex items-center text-lg">
+              {safeAmounts.totalDue === 0 ? (
+                <>
+                  <Icons.CheckCircle className="w-6 h-6 mr-2" />
+                  {isCreditOrder(order) ? 'Entrega sin cobro (Cliente a Crédito)' : 'Entrega sin cobro'}
+                </>
+              ) : (
+                <>
+                  <Icons.DollarSign className="w-6 h-6 mr-2" />
+                  Monto a Cobrar al Cliente
+                </>
+              )}
             </h3>
 
             <div className="space-y-4">
               {/* Cálculo del monto a cobrar */}
               {(() => {
-                const shippingPay = (order?.shipping_payment_method || order?.shippingPaymentMethod || '').toLowerCase();
-
-                const total = Number(order?.total_amount ?? order?.total ?? 0);
-                const paidAmount = Number(order?.paid_amount ?? order?.amount_paid ?? 0);
-                const baseProductAmount = Number(order?.payment_amount ?? order?.siigo_balance ?? 0) > 0
-                  ? Number(order?.payment_amount ?? order?.siigo_balance ?? 0)
-                  : total;
-                const productAmount = Math.max(0, baseProductAmount - paidAmount);
-
-                const FREE_SHIPPING_THRESHOLD = 150000;
-                const shouldCollectDeliveryFee = order?.should_collect_delivery_fee === true || order?.should_collect_delivery_fee === 1 || order?.should_collect_delivery_fee === '1';
-                const deliveryExempt = order?.delivery_fee_exempt === true || order?.delivery_fee_exempt === 1 || order?.delivery_fee_exempt === '1';
-                const qualifiesFreeShipping = total >= FREE_SHIPPING_THRESHOLD;
-                const shippingAlreadyPaid = ['contado', 'paid', 'pagado'].includes(shippingPay);
-                const feeApplies = !shippingAlreadyPaid && !qualifiesFreeShipping && !deliveryExempt && (['contraentrega', 'por_cobrar'].includes(shippingPay) || shouldCollectDeliveryFee);
-                const shippingAmount = feeApplies ? Number(order?.delivery_fee || 0) : 0;
-
-                const totalToCollect = productAmount + shippingAmount;
+                const { productDue, shippingDue, totalDue } = safeAmounts;
 
                 return (
                   <>
                     <div className="bg-white rounded-lg p-4 border-2 border-red-300">
                       <div className="text-center mb-4">
-                        <p className="text-4xl font-bold text-red-600 mb-2">
-                          ${totalToCollect.toLocaleString('es-CO')}
+                        <p className="text-3xl font-bold text-red-600 mb-2">
+                          ${totalDue.toLocaleString('es-CO')}
                         </p>
                         <p className="text-lg font-semibold text-red-800">
-                          {totalToCollect > 0 ? 'COBRAR AL CLIENTE' : 'NO COBRAR - YA PAGADO'}
+                          {totalDue > 0
+                            ? 'COBRAR AL CLIENTE'
+                            : (isCreditOrder(order) ? 'NO COBRAR - PEDIDO A CRÉDITO' : 'NO COBRAR - YA PAGADO')}
                         </p>
                       </div>
 
-                      {totalToCollect > 0 && (
+                      {totalDue > 0 && (
                         <div className="border-t pt-3 space-y-2">
-                          {productAmount > 0 && (
+                          {productDue > 0 && (
                             <div className="flex justify-between text-sm">
                               <span className="text-gray-700">Valor productos:</span>
                               <span className="font-semibold text-red-600">
-                                ${productAmount.toLocaleString('es-CO')}
+                                ${productDue.toLocaleString('es-CO')}
                               </span>
                             </div>
                           )}
-                          {shippingAmount > 0 && (
+                          {shippingDue > 0 && (
                             <div className="flex justify-between text-sm">
                               <span className="text-gray-700">Costo envío:</span>
                               <span className="font-semibold text-red-600">
-                                ${shippingAmount.toLocaleString('es-CO')}
+                                ${shippingDue.toLocaleString('es-CO')}
                               </span>
                             </div>
                           )}
                           <div className="border-t pt-2 flex justify-between font-bold">
                             <span>TOTAL A COBRAR:</span>
                             <span className="text-red-600">
-                              ${totalToCollect.toLocaleString('es-CO')}
+                              ${totalDue.toLocaleString('es-CO')}
                             </span>
                           </div>
                         </div>
                       )}
                     </div>
 
-                    {/* Instrucciones de cobro */}
-                    <div className="bg-yellow-50 border border-yellow-200 rounded p-3">
-                      <h4 className="font-semibold text-yellow-800 mb-2 flex items-center">
-                        <Icons.AlertTriangle className="w-4 h-4 mr-1" />
-                        Instrucciones de Cobro:
-                      </h4>
-                      <div className="text-sm text-yellow-700 space-y-1">
-                        {totalToCollect > 0 ? (
-                          <>
-                            <p>• Cobrar exactamente ${totalToCollect.toLocaleString('es-CO')} al cliente</p>
-                            <p>• Aceptar solo efectivo o transferencia confirmada</p>
-                            <p>• Verificar billetes y dar vueltos si es necesario</p>
-                            <p>• Solicitar recibo o comprobante de transferencia</p>
-                          </>
-                        ) : (
-                          <>
-                            <p>• ✅ Este pedido YA ESTÁ PAGADO</p>
-                            <p>• NO cobrar nada al cliente</p>
-                            <p>• Solo entregar los productos</p>
-                          </>
-                        )}
-                      </div>
-                    </div>
+                    
                   </>
                 );
               })()}
             </div>
+
           </div>
 
           {/* Información del Pedido */}
@@ -255,46 +276,24 @@ const DeliveryConfirmationModal = ({ isOpen, onClose, order, onConfirmStart }) =
                 <p className="text-xs text-gray-500">Items</p>
               </div>
               {(() => {
-                const shippingPay = (order?.shipping_payment_method || order?.shippingPaymentMethod || '').toLowerCase();
-
-                const total = Number(order?.total_amount ?? order?.total ?? 0);
-                const paidAmount = Number(order?.paid_amount ?? order?.amount_paid ?? 0);
-                const baseProductAmount = Number(order?.payment_amount ?? order?.siigo_balance ?? 0) > 0
-                  ? Number(order?.payment_amount ?? order?.siigo_balance ?? 0)
-                  : total;
-                const productAmount = Math.max(0, baseProductAmount - paidAmount);
-
-                const FREE_SHIPPING_THRESHOLD = 150000;
-                const shouldCollectDeliveryFee = order?.should_collect_delivery_fee === true || order?.should_collect_delivery_fee === 1 || order?.should_collect_delivery_fee === '1';
-                const deliveryExempt = order?.delivery_fee_exempt === true || order?.delivery_fee_exempt === 1 || order?.delivery_fee_exempt === '1';
-                const qualifiesFreeShipping = total >= FREE_SHIPPING_THRESHOLD;
-                const shippingAlreadyPaid = ['contado', 'paid', 'pagado'].includes(shippingPay);
-                const feeApplies = !shippingAlreadyPaid && !qualifiesFreeShipping && !deliveryExempt && (['contraentrega', 'por_cobrar'].includes(shippingPay) || shouldCollectDeliveryFee);
-                const shippingAmount = feeApplies ? Number(order?.delivery_fee || 0) : 0;
-
-                const totalToCollect = productAmount + shippingAmount;
-
+                const { totalDue } = safeAmounts;
                 return (
                   <div className="bg-white rounded-lg p-3">
                     <p className="text-2xl font-bold text-red-600">
-                      ${totalToCollect.toLocaleString('es-CO')}
+                      ${totalDue.toLocaleString('es-CO')}
                     </p>
-                    <p className="text-xs text-gray-500">A Cobrar</p>
+                    <p className="text-xs text-gray-500">
+                      {totalDue > 0 ? 'A Cobrar' : (isCreditOrder(order) ? 'Sin Cobro (Crédito)' : 'Sin Cobro')}
+                    </p>
                   </div>
                 );
               })()}
               {(() => {
-                const total = Number(order?.total_amount ?? order?.total ?? 0);
-                const paidAmount = Number(order?.paid_amount ?? order?.amount_paid ?? 0);
-                const baseProductAmount = Number(order?.payment_amount ?? order?.siigo_balance ?? 0) > 0
-                  ? Number(order?.payment_amount ?? order?.siigo_balance ?? 0)
-                  : total;
-                const productAmount = Math.max(0, baseProductAmount - paidAmount);
-
+                const { productDue } = safeAmounts;
                 return (
                   <div className="bg-white rounded-lg p-3">
                     <p className="text-2xl font-bold text-purple-600">
-                      ${productAmount.toLocaleString('es-CO')}
+                      ${productDue.toLocaleString('es-CO')}
                     </p>
                     <p className="text-xs text-purple-600 font-semibold">
                       {getPaymentMethodLabel(normalizedPaymentMethod || order.payment_method)}
@@ -304,20 +303,11 @@ const DeliveryConfirmationModal = ({ isOpen, onClose, order, onConfirmStart }) =
                 );
               })()}
               {(() => {
-                const shippingPay = (order?.shipping_payment_method || order?.shippingPaymentMethod || '').toLowerCase();
-                const total = Number(order?.total_amount ?? order?.total ?? 0);
-                const FREE_SHIPPING_THRESHOLD = 150000;
-                const shouldCollectDeliveryFee = order?.should_collect_delivery_fee === true || order?.should_collect_delivery_fee === 1 || order?.should_collect_delivery_fee === '1';
-                const deliveryExempt = order?.delivery_fee_exempt === true || order?.delivery_fee_exempt === 1 || order?.delivery_fee_exempt === '1';
-                const qualifiesFreeShipping = total >= FREE_SHIPPING_THRESHOLD;
-                const shippingAlreadyPaid = ['contado', 'paid', 'pagado'].includes(shippingPay);
-                const feeApplies = !shippingAlreadyPaid && !qualifiesFreeShipping && !deliveryExempt && (['contraentrega', 'por_cobrar'].includes(shippingPay) || shouldCollectDeliveryFee);
-                const shippingAmount = feeApplies ? Number(order?.delivery_fee || 0) : 0;
-
+                const { shippingDue } = safeAmounts;
                 return (
                   <div className="bg-white rounded-lg p-3">
                     <p className="text-2xl font-bold text-orange-600">
-                      ${shippingAmount.toLocaleString('es-CO')}
+                      ${shippingDue.toLocaleString('es-CO')}
                     </p>
                     <p className="text-xs text-orange-600 font-semibold">
                       {getShippingPaymentLabel(order.shipping_payment_method)}
@@ -351,21 +341,7 @@ const DeliveryConfirmationModal = ({ isOpen, onClose, order, onConfirmStart }) =
             </div>
           )}
 
-          {/* Información Adicional de Factura/Notas */}
-          {(order.notes || order.siigo_observations) && (
-            <div className="bg-blue-50 rounded-lg p-4">
-              <h3 className="font-semibold text-blue-900 mb-2 flex items-center">
-                <Icons.StickyNote className="w-4 h-4 mr-2" />
-                Notas del Pedido
-              </h3>
-              {order.notes && (
-                <p className="text-sm text-blue-800 whitespace-pre-wrap">{order.notes}</p>
-              )}
-              {order.siigo_observations && !order.notes && (
-                <p className="text-sm text-blue-800 whitespace-pre-wrap">{order.siigo_observations}</p>
-              )}
-            </div>
-          )}
+          
 
           {/* Productos */}
           {order.items && order.items.length > 0 && (
@@ -389,10 +365,10 @@ const DeliveryConfirmationModal = ({ isOpen, onClose, order, onConfirmStart }) =
                     </div>
                     <div className="text-right">
                       <p className="font-medium text-gray-900">
-                        {item.quantity} x ${item.unit_price?.toLocaleString('es-CO')}
+                        {item.quantity} x ${((item.unit_price ?? item.price ?? 0)).toLocaleString('es-CO')}
                       </p>
                       <p className="text-sm font-semibold text-blue-600">
-                        ${(item.quantity * item.unit_price)?.toLocaleString('es-CO')}
+                        ${(item.quantity * (item.unit_price ?? item.price ?? 0))?.toLocaleString('es-CO')}
                       </p>
                     </div>
                   </div>
@@ -401,21 +377,7 @@ const DeliveryConfirmationModal = ({ isOpen, onClose, order, onConfirmStart }) =
             </div>
           )}
 
-          {/* Advertencia */}
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-            <div className="flex items-start space-x-3">
-              <Icons.Info className="w-5 h-5 text-blue-600 mt-0.5 flex-shrink-0" />
-              <div>
-                <h4 className="font-medium text-blue-900">Antes de iniciar la entrega:</h4>
-                <ul className="mt-2 text-sm text-blue-800 space-y-1">
-                  <li>• Verifica que tienes todos los productos del pedido</li>
-                  <li>• Confirma la dirección de entrega</li>
-                  <li>• Asegúrate de tener contacto directo con el cliente</li>
-                  <li>• Ten listo el método de pago si es necesario cobrar</li>
-                </ul>
-              </div>
-            </div>
-          </div>
+          
         </div>
 
         {/* Footer */}

@@ -52,7 +52,7 @@ const APIConfigPage = () => {
       configured: false,
       enabled: false,
       siigo_username: '',
-      siigo_base_url: 'https://api.siigo.com/v1',
+      siigo_base_url: 'https://api.siigo.com',
       webhook_secret: '',
       updated_at: null,
       status: 'not_configured'
@@ -70,7 +70,7 @@ const APIConfigPage = () => {
     siigo: {
       siigo_username: '',
       siigo_access_key: '',
-      siigo_base_url: 'https://api.siigo.com/v1',
+      siigo_base_url: 'https://api.siigo.com',
       webhook_secret: '',
       is_enabled: true
     },
@@ -145,7 +145,7 @@ const APIConfigPage = () => {
           siigo: {
             siigo_username: data.siigo.siigo_username || '',
             siigo_access_key: data.siigo.siigo_access_key || '', // Backend ya envía asteriscos si existe
-            siigo_base_url: data.siigo.siigo_base_url || 'https://api.siigo.com/v1',
+            siigo_base_url: data.siigo.siigo_base_url || 'https://api.siigo.com',
             webhook_secret: data.siigo.webhook_secret || '', // Backend ya envía asteriscos si existe
             is_enabled: data.siigo.enabled || false
           }
@@ -199,10 +199,12 @@ const APIConfigPage = () => {
       setTesting(true);
       setTestResults(prev => ({ ...prev, siigo: null }));
       
-      const response = await api.post('/api-config/siigo/test', {
-        siigo_username: formData.siigo.siigo_username,
-        siigo_access_key: formData.siigo.siigo_access_key,
-        siigo_base_url: formData.siigo.siigo_base_url
+      const params = new URLSearchParams();
+      params.append('siigo_username', formData.siigo.siigo_username);
+      params.append('siigo_access_key', formData.siigo.siigo_access_key);
+      params.append('siigo_base_url', formData.siigo.siigo_base_url);
+      const response = await api.post('/api-config/siigo/test', params, {
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
       });
       
       if (response.data.success) {
@@ -267,7 +269,7 @@ const APIConfigPage = () => {
           siigo: {
             siigo_username: '',
             siigo_access_key: '',
-            siigo_base_url: 'https://api.siigo.com/v1',
+            siigo_base_url: 'https://api.siigo.com',
             webhook_secret: '',
             is_enabled: true
           }
