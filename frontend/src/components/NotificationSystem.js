@@ -183,6 +183,7 @@ const NotificationSystem = () => {
       const shouldNotifyForStatus = (toStatus) => {
         const map = {
           revision_cartera: ['cartera', 'facturador', 'admin'],
+          pendiente_por_facturacion: ['facturador', 'admin'],
           en_logistica: ['logistica', 'admin'],
           pendiente_empaque: ['logistica', 'admin'],
           en_preparacion: ['logistica', 'admin'],

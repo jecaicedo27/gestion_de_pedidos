@@ -65,22 +65,23 @@ const schemas = {
     customerAddress: Joi.string().min(5).max(255).optional(),
     customerEmail: Joi.string().email().optional(),
     status: Joi.string().valid(
-      'pendiente_facturacion', 
-      'revision_cartera', 
-      'en_logistica', 
-      'en_preparacion', 
-      'listo', 
-      'en_reparto', 
-      'entregado_transportadora', 
-      'entregado_cliente', 
+      'pendiente_facturacion',
+      'revision_cartera',
+      'en_logistica',
+      'en_preparacion',
+      'listo',
+      'en_reparto',
+      'entregado_transportadora',
+      'entregado_cliente',
       'cancelado',
       // Estados legacy para compatibilidad
-      'pendiente', 
-      'confirmado', 
-      'enviado', 
+      'pendiente',
+      'confirmado',
+      'enviado',
       'entregado'
     ).optional(),
-    delivery_method: Joi.string().valid('recoge_bodega', 'recogida_tienda', 'envio_nacional', 'domicilio_ciudad', 'domicilio_nacional', 'envio_internacional', 'envio_especial', 'drone_delivery', 'fast', 'domicilio', 'nacional', 'mensajeria_urbana').optional().allow(''),
+    is_service: Joi.boolean().optional(),
+    delivery_method: Joi.string().valid('recoge_bodega', 'recogida_tienda', 'envio_nacional', 'domicilio_ciudad', 'domicilio_nacional', 'envio_internacional', 'envio_especial', 'drone_delivery', 'fast', 'domicilio', 'nacional', 'mensajeria_urbana').optional().allow('', null),
     // Aceptar también 'credito' (normalizado en frontend) para evitar 400
     payment_method: Joi.string().valid('efectivo', 'transferencia', 'cliente_credito', 'credito', 'pago_electronico', 'contraentrega', 'publicidad', 'reposicion').optional(),
     // Campos adicionales para Facturación cuando se marca "Pago Electrónico"
@@ -101,8 +102,8 @@ const schemas = {
       })
     ).optional(),
     notes: Joi.string().max(2000).optional().allow(''),
-    deliveryDate: Joi.date().optional(),
-    shipping_date: Joi.date().optional(),
+    deliveryDate: Joi.date().optional().allow(null),
+    shipping_date: Joi.date().optional().allow(null),
     delivery_fee_exempt: Joi.boolean().optional(),
     delivery_fee: Joi.number().min(0).optional()
   }),
@@ -141,7 +142,7 @@ const schemas = {
 const validate = (schema) => {
   return (req, res, next) => {
     console.log('🔍 VALIDACIÓN - Datos recibidos:', JSON.stringify(req.body, null, 2));
-    
+
     const { error, value } = schema.validate(req.body, {
       abortEarly: false,
       stripUnknown: true
@@ -149,13 +150,18 @@ const validate = (schema) => {
 
     if (error) {
       console.log('❌ ERROR DE VALIDACIÓN:', error.details);
-      
+
       const errors = error.details.map(detail => ({
         field: detail.path.join('.'),
         message: detail.message
       }));
 
       console.log('📋 Errores formateados:', errors);
+
+      const fs = require('fs');
+      try {
+        fs.writeFileSync('validation_error.log', JSON.stringify({ body: req.body, errors }, null, 2));
+      } catch (e) { }
 
       return res.status(400).json({
         success: false,
@@ -195,9 +201,9 @@ const validate = (schema) => {
               validated: value
             }
           });
-        } catch (e2) {}
+        } catch (e2) { }
       }
-    } catch (e) {}
+    } catch (e) { }
     req.validatedData = value;
     next();
   };

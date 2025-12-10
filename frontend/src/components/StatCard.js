@@ -2,20 +2,22 @@ import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import * as Icons from 'lucide-react';
 
-const StatCard = ({ 
-  title, 
-  value, 
+const StatCard = ({
+  title,
+  value,
   subtitle,
-  icon, 
-  color = 'blue', 
-  clickable = false, 
+  icon,
+  color = 'blue',
+  clickable = false,
   onClick,
-  loading = false 
+  loading = false,
+  children,
+  className = ''
 }) => {
   const navigate = useNavigate();
-  
+
   const IconComponent = Icons[icon] || Icons.Package;
-  
+
   const colorClasses = {
     blue: {
       bg: 'bg-white',
@@ -111,26 +113,18 @@ const StatCard = ({
 
   const classes = colorClasses[color] || colorClasses.blue;
 
-  const handleClick = () => {
-    if (clickable && onClick) {
-      onClick();
-    }
-  };
-
   return (
-    <div 
-      className={`
-        ${classes.bg} ${classes.border} border rounded-lg p-3 sm:p-6 
-        ${clickable ? `cursor-pointer ${classes.hover} transition-all duration-200` : ''}
-      `}
-      onClick={handleClick}
+    <div
+      className={`bg-white rounded-xl shadow-sm border border-gray-100 p-4 sm:p-6 transition-all duration-200 ${clickable ? 'cursor-pointer hover:shadow-md hover:border-blue-200 hover:-translate-y-1' : ''
+        } ${className}`}
+      onClick={clickable ? onClick : undefined}
     >
       <div className="flex flex-col items-center text-center">
         {/* Título */}
         <h3 className={`text-sm sm:text-lg font-medium ${classes.title} mb-2 sm:mb-4`}>
           {title}
         </h3>
-        
+
         {/* Valor principal */}
         <div className="mb-2 sm:mb-4">
           {loading ? (
@@ -143,16 +137,25 @@ const StatCard = ({
             </div>
           )}
         </div>
-        
+
         {/* Subtítulo */}
-        <div className={`text-xs sm:text-sm font-medium ${classes.subtitle} mb-2 sm:mb-4`}>
-          {subtitle}
-        </div>
-        
+        {subtitle && (
+          <div className={`text-xs sm:text-sm font-medium ${classes.subtitle} mb-2 sm:mb-4`}>
+            {subtitle}
+          </div>
+        )}
+
         {/* Ícono */}
-        <div className={`${classes.iconBg} p-2 sm:p-3 rounded-full`}>
+        <div className={`${classes.iconBg} p-2 sm:p-3 rounded-full mb-2`}>
           <IconComponent className={`w-6 h-6 sm:w-8 sm:h-8 ${classes.icon}`} />
         </div>
+
+        {/* Contenido extra (children) */}
+        {children && (
+          <div className="w-full mt-2 pt-2 border-t border-gray-100">
+            {children}
+          </div>
+        )}
       </div>
     </div>
   );

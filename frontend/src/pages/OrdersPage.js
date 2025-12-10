@@ -368,14 +368,22 @@ const OrdersPage = () => {
 
   // Optimistic removal from "Ready for Delivery" groups after state change
 
+  // Ref para mantener los filtros actuales accesibles dentro de closures (sockets/timers)
+  const filtersRef = useRef(filters);
+  useEffect(() => {
+    filtersRef.current = filters;
+  }, [filters]);
+
   // Cargar pedidos - memoizado para evitar re-creaciones innecesarias
-  const loadOrders = useCallback(async (filtersToUse = filters, showLoading = true) => {
+  const loadOrders = useCallback(async (filtersToUse, showLoading = true) => {
+    // Si no se pasan filtros explícitos, usar los actuales del Ref (evita stale closures)
+    const actualFilters = filtersToUse || filtersRef.current;
     try {
       if (showLoading) setLoading(true);
 
       // Determinar si estamos en la vista de cartera o todos los pedidos
       const view = searchParams.get('view');
-      const isWalletView = view === 'cartera' || filtersToUse.status === 'revision_cartera';
+      const isWalletView = view === 'cartera' || actualFilters.status === 'revision_cartera';
       const isAllOrdersView = view === 'todos';
 
       // Si es mensajero o logística/admin con vista de mensajero, usar la vista de mensajero
@@ -425,11 +433,11 @@ const OrdersPage = () => {
         }
       } else {
         // Preparar filtros - si es vista "todos", eliminar filtro de estado
-        let finalFilters = { ...filtersToUse };
+        let finalFilters = { ...actualFilters };
         if (isAllOrdersView) {
           // Forzar LIFO (último primero) solo en vista "Todos los Pedidos"
           // Enviar explícitamente view='todos' al backend para permitir a Cartera ver todo el histórico
-          finalFilters = { ...filtersToUse, view: 'todos', status: '', sortBy: 'created_at', sortOrder: 'DESC', limit: 100 };
+          finalFilters = { ...actualFilters, view: 'todos', status: '', sortBy: 'created_at', sortOrder: 'DESC', limit: 100 };
           console.log('📋 Vista "Todos los Pedidos" - mostrando pedidos sin filtrar por estado (LIFO) y limit=100');
         }
 
@@ -1034,6 +1042,23 @@ const OrdersPage = () => {
         const number = payload?.order_number || payload?.orderId || '';
         const id = Number(payload?.orderId || 0) || null;
         const logisticsStatusFilter = (searchParams.get('status') || '').toLowerCase();
+        const currentView = searchParams.get('view') || '';
+
+        // NUEVO: Si llega a pendiente_por_facturacion (importación desde SIIGO), agregar incrementalmente
+        if (to === 'pendiente_por_facturacion' && !from) {
+          console.log('📦 Nuevo pedido importado desde SIIGO:', number);
+          // Si estamos en vista de facturación, agregar el pedido a la lista sin recargar todo
+          if (currentView === 'facturacion' || logisticsStatusFilter === 'pendiente_por_facturacion') {
+            // Obtener solo ese pedido y agregarlo a la lista (sin recargar todo)
+            fetchOrderById(id).then((orderObj) => {
+              if (orderObj) {
+                upsertOrderInList(orderObj);
+                console.log('✅ Pedido agregado a la lista sin recargar página');
+              }
+            });
+          }
+          return;
+        }
 
         // Vista de logística activa: actualizar incrementalmente SIN recargar toda la lista
         if (isLogisticsViewActive() && !modalOpenRef.current) {
@@ -2369,6 +2394,11 @@ const OrdersPage = () => {
                               ? `Entregado a ${order.carrier_name}`
                               : getStatusLabel(order.status)}
                         </span>
+                        {(order.is_service === 1 || order.is_service === true) && (
+                          <span className="inline-flex px-2 py-1 text-xs font-semibold rounded-full bg-blue-100 text-blue-800">
+                            Servicio
+                          </span>
+                        )}
                         {(order.is_pending_payment_evidence === true || order.is_pending_payment_evidence === 1 || order.is_pending_payment_evidence === '1') && (
                           <span className="block text-xs font-bold text-red-600 mt-1">
                             Falta subir comprobante
@@ -2895,9 +2925,16 @@ const OrdersPage = () => {
                         <div className="text-xs sm:text-sm text-gray-900 whitespace-normal break-words">{row.customer_name}</div>
                       </td>
                       <td className="px-2 py-1 hidden lg:table-cell">
-                        <span className="px-2 py-1 text-xs font-semibold rounded-full bg-purple-100 text-purple-800">
-                          {row.status}
-                        </span>
+                        <div className="flex flex-col items-start gap-1">
+                          <span className="px-2 py-1 text-xs font-semibold rounded-full bg-purple-100 text-purple-800">
+                            {row.status}
+                          </span>
+                          {(row.is_service === 1 || row.is_service === true) && (
+                            <span className="px-2 py-1 text-xs font-semibold rounded-full bg-blue-100 text-blue-800">
+                              Servicio
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="px-2 py-1 hidden lg:table-cell">
                         {(() => {
@@ -2987,31 +3024,69 @@ const OrdersPage = () => {
               </div>
 
               {/* Evidencia de pago (si existe y es transferencia/electrónico) */}
-              {siigoCloseModal.order?.payment_evidence_path && (
-                <div className="border rounded p-2 bg-gray-50">
-                  <p className="text-xs font-medium text-gray-700 mb-2">Comprobante de Pago:</p>
-                  <div className="relative h-48 w-full bg-gray-200 rounded overflow-hidden flex items-center justify-center">
-                    <img
-                      src={siigoCloseModal.order.payment_evidence_path.startsWith('http')
-                        ? siigoCloseModal.order.payment_evidence_path
-                        : `/uploads/${siigoCloseModal.order.payment_evidence_path}`}
-                      alt="Comprobante"
-                      className="max-h-full max-w-full object-contain"
-                      onError={(e) => { e.target.onerror = null; e.target.src = 'https://via.placeholder.com/300?text=Error+imagen'; }}
-                    />
+              {/* Evidencia de pago (si existe y es transferencia/electrónico) */}
+              {(() => {
+                const raw = siigoCloseModal.order?.payment_evidence_path;
+                if (!raw) return null;
+
+                console.log('🖼️ Debug Evidencia Raw:', raw);
+
+                let paths = [];
+                try {
+                  const parsed = JSON.parse(raw);
+                  if (Array.isArray(parsed)) paths = parsed;
+                  else paths = [raw];
+                } catch {
+                  if (raw.includes(',')) paths = raw.split(',').map(s => s.trim());
+                  else paths = [raw];
+                }
+                paths = paths.filter(p => p && p !== 'null' && p !== 'undefined');
+
+                console.log('🖼️ Debug Evidencia Parsed:', paths);
+
+                if (paths.length === 0) return null;
+
+                return (
+                  <div className="border rounded p-2 bg-gray-50">
+                    <p className="text-xs font-medium text-gray-700 mb-2">Comprobante(s) de Pago:</p>
+                    <div className="flex flex-col gap-2">
+                      {paths.map((path, idx) => {
+                        // Limpiar path para evitar dobles slashes o prefijos incorrectos
+                        let cleanPath = path;
+                        if (cleanPath.startsWith('/')) cleanPath = cleanPath.slice(1);
+                        if (cleanPath.startsWith('uploads/')) cleanPath = cleanPath.replace('uploads/', '');
+
+                        // Construir URL final
+                        const src = path.startsWith('http') ? path : `/uploads/${cleanPath}`;
+                        console.log(`🖼️ Debug Image ${idx} Src:`, src);
+
+                        return (
+                          <div key={idx} className="relative h-48 w-full bg-gray-200 rounded overflow-hidden flex items-center justify-center group">
+                            <img
+                              src={src}
+                              alt={`Comprobante ${idx + 1}`}
+                              className="max-h-full max-w-full object-contain"
+                              onError={(e) => {
+                                console.error('❌ Error cargando imagen:', src);
+                                e.target.onerror = null;
+                                e.target.src = 'https://via.placeholder.com/300?text=Error+imagen';
+                              }}
+                            />
+                            <a
+                              href={src}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-0 group-hover:bg-opacity-30 transition-all opacity-0 group-hover:opacity-100"
+                            >
+                              <span className="bg-white text-gray-900 text-xs px-2 py-1 rounded shadow">Ver original</span>
+                            </a>
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
-                  <a
-                    href={siigoCloseModal.order.payment_evidence_path.startsWith('http')
-                      ? siigoCloseModal.order.payment_evidence_path
-                      : `/uploads/${siigoCloseModal.order.payment_evidence_path}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-xs text-blue-600 hover:underline mt-1 inline-block"
-                  >
-                    Ver imagen completa
-                  </a>
-                </div>
-              )}
+                );
+              })()}
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Método de Pago</label>

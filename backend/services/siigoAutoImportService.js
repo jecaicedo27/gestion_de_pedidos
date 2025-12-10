@@ -17,10 +17,10 @@ class SiigoAutoImportService {
 
     this.isRunning = true;
     console.log('🚀 Iniciando sistema de importación automática SIIGO');
-    
+
     // Cargar facturas existentes para evitar duplicados
     await this.loadExistingInvoices();
-    
+
     // Iniciar ciclo de monitoreo
     this.startMonitoringCycle();
   }
@@ -31,7 +31,7 @@ class SiigoAutoImportService {
       const response = await axios.get('http://localhost:3001/api/siigo/invoices?page_size=100&enrich=false', {
         timeout: 30000
       });
-      
+
       if (response.data.success && response.data.data && response.data.data.results) {
         const results = response.data.data.results;
         // Registrar todas como conocidas para evitar duplicados
@@ -53,28 +53,28 @@ class SiigoAutoImportService {
   }
 
   startMonitoringCycle() {
-    // Verificar cada 2 minutos (más frecuente que el polling del frontend)
+    // Verificar cada 30 segundos para importación rápida sin saturar SIIGO
     setInterval(async () => {
       if (!this.isRunning) return;
-      
+
       try {
         await this.checkForNewInvoices();
         await this.processImportQueue();
       } catch (error) {
         console.error('❌ Error en ciclo de monitoreo:', error.message);
       }
-    }, 120000); // 2 minutos
+    }, 30000); // 30 segundos
   }
 
   async checkForNewInvoices() {
     try {
       console.log('🔍 Verificando nuevas/pending facturas...');
       this.lastCheck = new Date();
-      
+
       const response = await axios.get('http://localhost:3001/api/siigo/invoices?page_size=100&enrich=false', {
         timeout: 30000
       });
-      
+
       if (!response.data.success || !response.data.data || !response.data.data.results) {
         return;
       }
@@ -108,7 +108,7 @@ class SiigoAutoImportService {
     console.log(`📋 Procesando ${this.importQueue.length} facturas en cola...`);
 
     // Procesar hasta N facturas a la vez (configurable) para no sobrecargar
-    const batchSize = parseInt(process.env.SIIGO_AUTO_IMPORT_BATCH || '3', 10);
+    const batchSize = parseInt(process.env.SIIGO_AUTO_IMPORT_BATCH || '1', 10);
     const toProcess = this.importQueue.splice(0, batchSize);
 
     const results = await Promise.allSettled(
@@ -137,7 +137,7 @@ class SiigoAutoImportService {
 
   async importInvoiceAutomatically(item) {
     const { invoice } = item;
-    
+
     console.log(`📥 Importando automáticamente factura ${invoice.number} (ID: ${invoice.id})`);
 
     try {
@@ -151,7 +151,7 @@ class SiigoAutoImportService {
 
       if (importResponse.data.success) {
         console.log(`✅ Factura ${invoice.number} importada exitosamente como pedido #${importResponse.data.orderId}`);
-        
+
         // Enviar notificación de éxito
         await this.sendImportSuccessNotification(invoice, importResponse.data.orderId);
       } else {

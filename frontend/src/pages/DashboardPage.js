@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { orderService, analyticsService, messengerService, siigoService } from '../services/api';
+import { getLocalISOString } from '../utils/dateUtils';
 import StatCard from '../components/StatCard';
 import DashboardCard from '../components/DashboardCard';
 import DashboardAlerts from '../components/DashboardAlerts';
@@ -54,7 +55,10 @@ const DashboardPage = () => {
   const [deliveries, setDeliveries] = useState([]);
   const [deliveriesPagination, setDeliveriesPagination] = useState({ page: 1, page_size: 10, total: 0, pages: 0 });
   const [messengerLoading, setMessengerLoading] = useState(false);
-  const [dateRange, setDateRange] = useState({ from: '', to: '' });
+  const [dateRange, setDateRange] = useState({
+    from: getLocalISOString().slice(0, 10),
+    to: getLocalISOString().slice(0, 10)
+  });
   const messengerSectionRef = useRef(null);
 
   // Pestañas para vista de Mensajero: 'resumen' o 'ready'
@@ -599,7 +603,54 @@ const DashboardPage = () => {
             clickable={true}
             onClick={() => handleStatusCardClick('entregados')}
             loading={loading}
-          />
+            className="md:col-span-2"
+          >
+            {/* Desglose de entregas */}
+            {!loading && (
+              <div className="text-xs text-left w-full mt-3 pt-3 border-t border-gray-100 grid grid-cols-2 gap-4">
+                {/* Por método */}
+                {dashboardData?.deliveredByMethod?.length > 0 && (
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wider text-gray-400 font-bold mb-2">Por Método</p>
+                    <div className="space-y-1.5">
+                      {dashboardData.deliveredByMethod.map((item, idx) => (
+                        <div key={idx} className="flex justify-between items-center group">
+                          <span className="text-gray-600 group-hover:text-gray-900 transition-colors capitalize">
+                            {item.method === 'mensajeria_urbana' ? 'Mensajería' : item.method.replace(/_/g, ' ')}
+                          </span>
+                          <span className="font-bold text-gray-800 bg-gray-50 px-1.5 py-0.5 rounded text-[10px] border border-gray-100">
+                            {item.count}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Por mensajero */}
+                {dashboardData?.deliveredByMessenger?.length > 0 && (
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wider text-gray-400 font-bold mb-2">Por Mensajero</p>
+                    <div className="space-y-1.5 max-h-40 overflow-y-auto custom-scrollbar pr-1">
+                      {dashboardData.deliveredByMessenger.map((item, idx) => (
+                        <div key={idx} className="flex justify-between items-center group">
+                          <div className="flex items-center min-w-0">
+                            <div className="w-1.5 h-1.5 rounded-full bg-green-400 mr-2 flex-shrink-0"></div>
+                            <span className="text-gray-600 group-hover:text-gray-900 transition-colors truncate" title={item.full_name}>
+                              {item.full_name.split(' ')[0]} {item.full_name.split(' ')[1]?.charAt(0)}.
+                            </span>
+                          </div>
+                          <span className="font-bold text-gray-800 bg-gray-50 px-1.5 py-0.5 rounded text-[10px] border border-gray-100">
+                            {item.count}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </StatCard>
         </div>
       )}
 

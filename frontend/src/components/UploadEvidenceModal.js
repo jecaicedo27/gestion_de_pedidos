@@ -9,10 +9,18 @@ const UploadEvidenceModal = ({ isOpen, onClose, order, onSuccess }) => {
     const [previewUrl, setPreviewUrl] = useState(null);
     const [isDragging, setIsDragging] = useState(false);
 
+    // Estados para pago mixto
+    const [paymentType, setPaymentType] = useState('full'); // 'full' o 'mixed'
+    const [transferAmount, setTransferAmount] = useState('');
+    const [cashAmount, setCashAmount] = useState('');
+
     React.useEffect(() => {
         if (!isOpen) {
             setFile(null);
             setPreviewUrl(null);
+            setPaymentType('full');
+            setTransferAmount('');
+            setCashAmount('');
             return;
         }
 
@@ -92,16 +100,46 @@ const UploadEvidenceModal = ({ isOpen, onClose, order, onSuccess }) => {
         }
     };
 
-    if (!isOpen) return null;
-
     const handleUpload = async () => {
         if (!file || !order) return;
+
+        // Validaciones para pago mixto
+        if (paymentType === 'mixed') {
+            const transfer = parseFloat(transferAmount || 0);
+            const cash = parseFloat(cashAmount || 0);
+            const total = parseFloat(order.total_amount || 0);
+
+            if (!transferAmount || transfer <= 0) {
+                toast.error('Por favor ingresa el monto transferido');
+                return;
+            }
+
+            if (!cashAmount || cash <= 0) {
+                toast.error('Por favor ingresa el monto en efectivo');
+                return;
+            }
+
+            const sumTotal = transfer + cash;
+            const tolerance = total * 0.02; // 2% tolerancia
+
+            if (Math.abs(sumTotal - total) > tolerance) {
+                toast.error(`La suma de los montos ($${sumTotal.toLocaleString()}) debe ser igual al total del pedido ($${total.toLocaleString()})`);
+                return;
+            }
+        }
 
         try {
             setLoading(true);
             const formData = new FormData();
             // Backend espera el campo 'photo' (ver logistics.js middleware optionalPhotoUpload)
             formData.append('photo', file);
+
+            // Agregar datos de pago si es mixto
+            if (paymentType === 'mixed') {
+                formData.append('paymentType', 'mixed');
+                formData.append('transferAmount', transferAmount);
+                formData.append('cashAmount', cashAmount);
+            }
 
             await logisticsService.uploadPaymentEvidence(order.id, formData);
             toast.success('Comprobante subido exitosamente');
@@ -114,6 +152,8 @@ const UploadEvidenceModal = ({ isOpen, onClose, order, onSuccess }) => {
             setLoading(false);
         }
     };
+
+    if (!isOpen) return null;
 
     return (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 transition-all duration-300">
@@ -203,6 +243,112 @@ const UploadEvidenceModal = ({ isOpen, onClose, order, onSuccess }) => {
                             </label>
                         </div>
                     </div>
+
+                    {/* Selector de tipo de pago */}
+                    <div className="mb-4">
+                        <label className="block text-sm font-semibold text-gray-700 mb-3">
+                            Tipo de Pago
+                        </label>
+                        <div className="flex gap-3">
+                            <label className="flex-1 cursor-pointer">
+                                <input
+                                    type="radio"
+                                    name="paymentType"
+                                    value="full"
+                                    checked={paymentType === 'full'}
+                                    onChange={() => setPaymentType('full')}
+                                    className="sr-only"
+                                />
+                                <div className={`p-3 rounded-lg border-2 transition-all ${paymentType === 'full'
+                                    ? 'border-primary-500 bg-primary-50 shadow-sm'
+                                    : 'border-gray-200 hover:border-gray-300'
+                                    }`}>
+                                    <p className="text-sm font-medium text-gray-900">Transferencia Completa</p>
+                                    <p className="text-xs text-gray-500 mt-0.5">Cliente pagó todo por transferencia</p>
+                                </div>
+                            </label>
+                            <label className="flex-1 cursor-pointer">
+                                <input
+                                    type="radio"
+                                    name="paymentType"
+                                    value="mixed"
+                                    checked={paymentType === 'mixed'}
+                                    onChange={() => setPaymentType('mixed')}
+                                    className="sr-only"
+                                />
+                                <div className={`p-3 rounded-lg border-2 transition-all ${paymentType === 'mixed'
+                                    ? 'border-primary-500 bg-primary-50 shadow-sm'
+                                    : 'border-gray-200 hover:border-gray-300'
+                                    }`}>
+                                    <p className="text-sm font-medium text-gray-900">Pago Mixto</p>
+                                    <p className="text-xs text-gray-500 mt-0.5">Transferencia + Efectivo</p>
+                                </div>
+                            </label>
+                        </div>
+                    </div>
+
+                    {/* Campos de monto para pago mixto */}
+                    {paymentType === 'mixed' && (
+                        <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                            <div className="grid grid-cols-2 gap-4 mb-3">
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                                        Monto Transferido *
+                                    </label>
+                                    <input
+                                        type="number"
+                                        value={transferAmount}
+                                        onChange={(e) => {
+                                            setTransferAmount(e.target.value);
+                                            // Auto-calcular efectivo
+                                            if (e.target.value) {
+                                                const remaining = parseFloat(order?.total_amount || 0) - parseFloat(e.target.value || 0);
+                                                setCashAmount(remaining > 0 ? remaining.toString() : '0');
+                                            }
+                                        }}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
+                                        min="0"
+                                        step="0.01"
+                                        placeholder="0.00"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                                        Monto en Efectivo *
+                                    </label>
+                                    <input
+                                        type="number"
+                                        value={cashAmount}
+                                        onChange={(e) => setCashAmount(e.target.value)}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
+                                        min="0"
+                                        step="0.01"
+                                        placeholder="0.00"
+                                    />
+                                </div>
+                            </div>
+                            <div className="flex items-center justify-between text-sm">
+                                <div>
+                                    <span className="text-gray-600">Total pedido:</span>
+                                    <span className="ml-2 font-semibold text-gray-900">
+                                        ${parseFloat(order?.total_amount || 0).toLocaleString('es-CO')}
+                                    </span>
+                                </div>
+                                <div>
+                                    <span className="text-gray-600">Suma actual:</span>
+                                    <span className={`ml-2 font-semibold ${Math.abs((parseFloat(transferAmount || 0) + parseFloat(cashAmount || 0)) - parseFloat(order?.total_amount || 0)) <= (parseFloat(order?.total_amount || 0) * 0.02)
+                                        ? 'text-green-600'
+                                        : 'text-red-600'
+                                        }`}>
+                                        ${(parseFloat(transferAmount || 0) + parseFloat(cashAmount || 0)).toLocaleString('es-CO')}
+                                    </span>
+                                </div>
+                            </div>
+                            <p className="text-xs text-gray-500 mt-2">
+                                El mensajero cobrará el monto en efectivo al entregar
+                            </p>
+                        </div>
+                    )}
 
                     {/* Actions */}
                     <div className="flex justify-end gap-3 pt-2">

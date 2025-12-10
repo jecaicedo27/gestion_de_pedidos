@@ -73,6 +73,14 @@ router.post(
   treasuryController.closeDepositSiigo
 );
 
+// Subir/Actualizar evidencia de consignación
+router.post(
+  '/deposits/:id/evidence',
+  auth.authenticateToken,
+  auth.verifyRole(['cartera', 'admin']),
+  treasuryController.updateDepositEvidence
+);
+
 router.get(
   '/cash-balance',
   auth.authenticateToken,

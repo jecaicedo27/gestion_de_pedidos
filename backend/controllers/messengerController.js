@@ -432,7 +432,7 @@ const completeDelivery = async (req, res) => {
       transferDate,
       // Entrega con confianza
       trustedDelivery,
-      authorizedByUserId,
+      authorizedByName,
       trustNote,
       // Flag de pendiente de comprobante (failsafe)
       isPendingEvidence
@@ -640,10 +640,26 @@ const completeDelivery = async (req, res) => {
         }
       }
 
-      // Failsafe: Si el frontend indica que está pendiente de comprobante, asegurarlo en BD
-      if (isPendingEvidence === true || String(isPendingEvidence) === 'true') {
+      // Auto-marcar como pendiente de comprobante cuando:
+      // 1. Es transferencia/mixto sin comprobante subido
+      // 2. No es entrega con confianza (esos van a revision_cartera)
+      const hasPaymentProof = !!(order.payment_evidence_path && String(order.payment_evidence_path).trim() !== '');
+      const needsPaymentProof = (
+        (productPayMethod === 'transferencia' ||
+          (productPayMethod === 'mixto' && Number(transferAmount || 0) > 0)) &&
+        !hasPaymentProof &&
+        !isTrusted
+      );
+
+      // También marcar si el frontend lo indica explícitamente (compatibilidad)
+      const shouldMarkPending = needsPaymentProof ||
+        isPendingEvidence === true ||
+        String(isPendingEvidence) === 'true';
+
+      if (shouldMarkPending) {
         try {
           await query('UPDATE orders SET is_pending_payment_evidence = 1 WHERE id = ?', [orderId]);
+          console.log(`✅ Pedido ${orderId} marcado como pendiente de comprobante (${productPayMethod} sin foto)`);
         } catch (e) {
           console.warn('No se pudo asegurar flag is_pending_payment_evidence:', e.message);
         }
@@ -722,7 +738,7 @@ const completeDelivery = async (req, res) => {
         latitude || null,
         longitude || null,
         isTrusted ? 1 : 0,
-        authorizedByUserId || null,
+        authorizedByName || null,
         (trustNote ?? (req.body && req.body.trustNote) ?? null),
         orderId,
         trackingMessengerId

@@ -4,6 +4,7 @@ import toast from 'react-hot-toast';
 import { useAuth } from '../context/AuthContext';
 import { walletService } from '../services/api';
 import { computeCollectionAmounts } from '../utils/payments';
+import MultiplePaymentEvidenceUpload from './MultiplePaymentEvidenceUpload';
 
 // Zona de carga que permite: pegar (Ctrl+V), arrastrar y seleccionar archivo
 // Sólo acepta imágenes; valida tamaño (<= 5MB) y muestra estado
@@ -25,7 +26,7 @@ const UploadDropzone = ({
   useEffect(() => {
     if (autoFocus && zoneRef.current) {
       const id = setTimeout(() => {
-        try { zoneRef.current.focus(); } catch (_) {}
+        try { zoneRef.current.focus(); } catch (_) { }
       }, 120);
       return () => clearTimeout(id);
     }
@@ -70,16 +71,16 @@ const UploadDropzone = ({
         contentEditable
         suppressContentEditableWarning
         spellCheck={false}
-        onInput={(e) => { try { e.currentTarget.textContent = ''; } catch (_) {} }}
+        onInput={(e) => { try { e.currentTarget.textContent = ''; } catch (_) { } }}
         onDrop={onDrop}
         onDragOver={onDragOver}
         onFocus={(e) => {
           // Opcional: al enfocar, seleccionar visualmente para indicar que ya puedes pegar
-          e.currentTarget.classList.add('ring-2','ring-blue-500');
+          e.currentTarget.classList.add('ring-2', 'ring-blue-500');
           if (typeof onFocusExtra === 'function') onFocusExtra();
         }}
         onBlur={(e) => {
-          e.currentTarget.classList.remove('ring-2','ring-blue-500');
+          e.currentTarget.classList.remove('ring-2', 'ring-blue-500');
         }}
         className="flex flex-col items-center justify-center w-full px-3 py-6 border-2 border-dashed rounded-md cursor-pointer bg-white hover:bg-gray-50 border-gray-300 focus:outline-none"
         role="button"
@@ -129,7 +130,8 @@ const WalletValidationModal = ({ isOpen, onClose, order, onValidate }) => {
   const { user } = useAuth();
   const [loading, setLoading] = useState(false);
   // Zona activa para pegado global: 'transfer' o 'cash'
-  const [activeDropzone, setActiveDropzone] = useState('transfer');
+  const [activeDropzone, setActiveDropzone] = useState(null); // 'transfer' | 'cash'
+  const [evidenceCount, setEvidenceCount] = useState(0);
   const modalRef = useRef(null);
   const pasteCatcherRef = useRef(null);
   // Evitar duplicados de pegado (varios listeners pueden dispararse)
@@ -173,11 +175,11 @@ const WalletValidationModal = ({ isOpen, onClose, order, onValidate }) => {
   useEffect(() => {
     if (isOpen) {
       const idA = setTimeout(() => {
-        try { modalRef.current && modalRef.current.focus(); } catch (_) {}
+        try { modalRef.current && modalRef.current.focus(); } catch (_) { }
       }, 0);
       // Foco inicial + refuerzo para el catcher oculto (algunos navegadores mueven el foco)
-      const idB = setTimeout(() => { try { pasteCatcherRef.current && pasteCatcherRef.current.focus(); } catch (_) {} }, 50);
-      const idC = setTimeout(() => { try { pasteCatcherRef.current && pasteCatcherRef.current.focus(); } catch (_) {} }, 300);
+      const idB = setTimeout(() => { try { pasteCatcherRef.current && pasteCatcherRef.current.focus(); } catch (_) { } }, 50);
+      const idC = setTimeout(() => { try { pasteCatcherRef.current && pasteCatcherRef.current.focus(); } catch (_) { } }, 300);
       return () => { clearTimeout(idA); clearTimeout(idB); clearTimeout(idC); };
     }
   }, [isOpen]);
@@ -293,7 +295,7 @@ const WalletValidationModal = ({ isOpen, onClose, order, onValidate }) => {
     return false;
   };
 
-  
+
 
 
 
@@ -302,7 +304,7 @@ const WalletValidationModal = ({ isOpen, onClose, order, onValidate }) => {
     if (!isOpen) {
       // Si cerramos, quitar cualquier handler global previo
       if (typeof window !== 'undefined' && window.__walletPasteHandler) {
-        try { window.removeEventListener('paste', window.__walletPasteHandler, true); } catch (_) {}
+        try { window.removeEventListener('paste', window.__walletPasteHandler, true); } catch (_) { }
         window.__walletPasteHandler = null;
       }
       return;
@@ -310,7 +312,7 @@ const WalletValidationModal = ({ isOpen, onClose, order, onValidate }) => {
 
     // Antes de agregar, eliminar cualquier handler colgado por HMR/StrictMode
     if (typeof window !== 'undefined' && window.__walletPasteHandler) {
-      try { window.removeEventListener('paste', window.__walletPasteHandler, true); } catch (_) {}
+      try { window.removeEventListener('paste', window.__walletPasteHandler, true); } catch (_) { }
       window.__walletPasteHandler = null;
     }
 
@@ -318,37 +320,37 @@ const WalletValidationModal = ({ isOpen, onClose, order, onValidate }) => {
       // Guard instantáneo por ráfagas (múltiples listeners o múltiples eventos del mismo pegado)
       if (typeof window !== 'undefined') {
         if (window.__walletPasteInFlight) {
-          try { e.preventDefault(); e.stopPropagation(); } catch (_) {}
+          try { e.preventDefault(); e.stopPropagation(); } catch (_) { }
           return;
         }
         window.__walletPasteInFlight = true;
-        setTimeout(() => { try { window.__walletPasteInFlight = false; } catch (_) {} }, 150);
+        setTimeout(() => { try { window.__walletPasteInFlight = false; } catch (_) { } }, 150);
       }
 
       if (recentlyHandledPaste()) {
-        try { e.preventDefault(); e.stopPropagation(); } catch (_) {}
+        try { e.preventDefault(); e.stopPropagation(); } catch (_) { }
         return;
       }
       const ok = await handleClipboardImage(e);
       if (ok) {
-        try { e.preventDefault(); e.stopPropagation(); } catch (_) {}
+        try { e.preventDefault(); e.stopPropagation(); } catch (_) { }
       }
     };
 
-    if (typeof window !== 'undefined') {
-      window.__walletPasteHandler = handlePasteCapture;
-      window.addEventListener('paste', handlePasteCapture, true);
-    }
+    // if (typeof window !== 'undefined') {
+    //   window.__walletPasteHandler = handlePasteCapture;
+    //   window.addEventListener('paste', handlePasteCapture, true);
+    // }
 
-    return () => {
-      if (typeof window !== 'undefined' && window.__walletPasteHandler) {
-        try { window.removeEventListener('paste', window.__walletPasteHandler, true); } catch (_) {}
-        window.__walletPasteHandler = null;
-      }
-    };
+    // return () => {
+    //   if (typeof window !== 'undefined' && window.__walletPasteHandler) {
+    //     try { window.removeEventListener('paste', window.__walletPasteHandler, true); } catch (_) { }
+    //     window.__walletPasteHandler = null;
+    //   }
+    // };
   }, [isOpen, activeDropzone]);
 
-  
+
 
   // Cálculo de montos a cobrar para decidir si mostrar campos de transferencia
   const { productDue, shippingDue, totalDue } = computeCollectionAmounts(order || {});
@@ -395,7 +397,7 @@ const WalletValidationModal = ({ isOpen, onClose, order, onValidate }) => {
   }, [user, order]);
   const [customerCredit, setCustomerCredit] = useState(null);
   const [loadingCredit, setLoadingCredit] = useState(false);
-  
+
   // FUNCIONES DE TRADUCCIÓN UNIVERSALES
   const getPaymentMethodLabel = (method) => {
     const v = (method || '').toString().toLowerCase();
@@ -448,7 +450,7 @@ const WalletValidationModal = ({ isOpen, onClose, order, onValidate }) => {
       } else if (typeof v === 'string') {
         // Soportar formatos: 'YYYY-MM-DD', 'YYYY-MM-DD HH:mm:ss', ISO, etc.
         if (/^\d{4}-\d{2}-\d{2}$/.test(v)) {
-          const [y,m,dd] = v.split('-').map(Number);
+          const [y, m, dd] = v.split('-').map(Number);
           d = new Date(y, m - 1, dd);
         } else {
           d = new Date(v.replace(' ', 'T'));
@@ -513,7 +515,7 @@ const WalletValidationModal = ({ isOpen, onClose, order, onValidate }) => {
     const tol = Math.max(minTol, relTol);
     return Math.min(tol, 5000);
   };
-  
+
   const [formData, setFormData] = useState({
     // Para transferencias y efectivo
     paymentProofImage: null,
@@ -528,25 +530,25 @@ const WalletValidationModal = ({ isOpen, onClose, order, onValidate }) => {
       return `${year}-${month}-${day}`;
     })(),
     bankName: '',
-    
+
     // Para pagos mixtos (efectivo + transferencia)
     paymentType: 'single', // 'single' o 'mixed'
     transferredAmount: '', // Iniciar vacío, no con 0
     cashAmount: '', // Iniciar vacío, no con 0
     cashProofImage: null,
     cashByMessenger: false, // ✅ Cartera indica que el efectivo lo cobra el mensajero
-    
+
     // Para validación de crédito
     creditApproved: false,
-    
+
     // Notas generales
     validationNotes: '',
-    
+
     // Estado de validación
     validationType: 'approved' // 'approved' o 'rejected'
   });
 
-  
+
 
   // Cargar información de crédito del cliente si el método de pago es cliente_credito
   useEffect(() => {
@@ -596,7 +598,7 @@ const WalletValidationModal = ({ isOpen, onClose, order, onValidate }) => {
           'Authorization': `Bearer ${localStorage.getItem('token')}`
         }
       });
-      
+
       if (response.ok) {
         const data = await response.json();
         setCustomerCredit(data.data || null);
@@ -645,13 +647,13 @@ const WalletValidationModal = ({ isOpen, onClose, order, onValidate }) => {
         toast.error('Solo se permiten archivos de imagen');
         return;
       }
-      
+
       // Validar tamaño (máximo 5MB)
       if (file.size > 5 * 1024 * 1024) {
         toast.error('El archivo no puede ser mayor a 5MB');
         return;
       }
-      
+
       setFormData(prev => ({
         ...prev,
         paymentProofImage: file
@@ -661,12 +663,12 @@ const WalletValidationModal = ({ isOpen, onClose, order, onValidate }) => {
 
   const validateForm = () => {
     const pm = normalizePaymentMethod(order?.payment_method);
-    
+
     // Si no hay cobro pendiente, omitir validaciones de transferencia SOLO para roles distintos a cartera
     if (pm === 'transferencia' && !requiresPayment && !isWalletValidator) {
       return true;
     }
-    
+
     if (pm === 'transferencia') {
       if (formData.paymentType === 'mixed') {
         // VALIDACIÓN ULTRA-ESTRICTA PARA PAGO MIXTO (TRANSFERENCIA + EFECTIVO)
@@ -674,29 +676,29 @@ const WalletValidationModal = ({ isOpen, onClose, order, onValidate }) => {
         const transferredAmount = parseFloat(formData.transferredAmount || 0);
         const cashAmount = parseFloat(formData.cashAmount || 0);
         const totalPaid = transferredAmount + cashAmount;
-        
+
         // Validación de campos obligatorios primero
         if (!formData.transferredAmount || formData.transferredAmount === '') {
           toast.error('❌ CAMPO OBLIGATORIO: Debe ingresar el monto transferido');
           return false;
         }
-        
+
         if (!formData.cashAmount || formData.cashAmount === '') {
           toast.error('❌ CAMPO OBLIGATORIO: Debe ingresar el monto en efectivo');
           return false;
         }
-        
+
         // Validación de montos válidos (no negativos, no cero)
         if (transferredAmount <= 0) {
           toast.error('❌ MONTO INVÁLIDO: El monto transferido debe ser mayor a cero');
           return false;
         }
-        
+
         if (cashAmount <= 0) {
           toast.error('❌ MONTO INVÁLIDO: El monto en efectivo debe ser mayor a cero');
           return false;
         }
-        
+
         // Validación de suma con tolerancia (redondeos)
         const diffMixed = Math.abs(totalPaid - orderTotal);
         if (diffMixed > getAllowedTolerance(orderTotal)) {
@@ -727,22 +729,22 @@ const WalletValidationModal = ({ isOpen, onClose, order, onValidate }) => {
           }
           return false;
         }
-        
+
         // Validación de comprobantes
-        if (!formData.paymentProofImage) {
-          toast.error('❌ COMPROBANTE FALTANTE: Debe subir el comprobante de transferencia');
+        if (evidenceCount === 0) {
+          toast.error('❌ COMPROBANTE FALTANTE: Debe subir al menos un comprobante de transferencia');
           return false;
         }
-        
+
         // Comprobante de efectivo: ya no es obligatorio en pago mixto (lo dejamos opcional para todos los roles)
         // if (!formData.cashProofImage) { ... } // Eliminado según requerimiento
-        
+
         // Validación de datos de transferencia
         if (isWalletValidator && !formData.paymentReference.trim()) {
           toast.error('❌ REFERENCIA FALTANTE: Debe ingresar la referencia de la transferencia');
           return false;
         }
-        
+
         if (isWalletValidator && !formData.bankName.trim()) {
           toast.error('❌ BANCO FALTANTE: Debe seleccionar el banco de origen');
           return false;
@@ -751,19 +753,19 @@ const WalletValidationModal = ({ isOpen, onClose, order, onValidate }) => {
         // VALIDACIÓN ULTRA-ESTRICTA DE MONTO PARA TRANSFERENCIA COMPLETA
         const orderTotal = parseFloat(order.total_amount || 0);
         const paymentAmount = parseFloat(formData.paymentAmount || 0);
-        
+
         // Validación de campo obligatorio
         if (!formData.paymentAmount || formData.paymentAmount === '') {
           toast.error('❌ CAMPO OBLIGATORIO: Debe ingresar el monto transferido');
           return false;
         }
-        
+
         // Validación de monto válido (no negativo, no cero)
         if (paymentAmount <= 0) {
           toast.error('❌ MONTO INVÁLIDO: El monto transferido debe ser mayor a cero');
           return false;
         }
-        
+
         // Validación de monto con tolerancia (redondeos)
         const diff = Math.abs(paymentAmount - orderTotal);
         if (diff > getAllowedTolerance(orderTotal)) {
@@ -789,25 +791,26 @@ const WalletValidationModal = ({ isOpen, onClose, order, onValidate }) => {
           }
           return false;
         }
-        
+
         // Validaciones adicionales obligatorias
-        if (!formData.paymentProofImage) {
-          toast.error('❌ COMPROBANTE FALTANTE: Debe subir el comprobante de transferencia');
+        // Validaciones adicionales obligatorias
+        if (evidenceCount === 0) {
+          toast.error('❌ COMPROBANTE FALTANTE: Debe subir al menos un comprobante de transferencia');
           return false;
         }
-        
+
         if (isWalletValidator && !formData.paymentReference.trim()) {
           toast.error('❌ REFERENCIA FALTANTE: Debe ingresar la referencia de la transferencia');
           return false;
         }
-        
+
         if (isWalletValidator && !formData.bankName.trim()) {
           toast.error('❌ BANCO FALTANTE: Debe seleccionar el banco de origen');
           return false;
         }
       }
     }
-    
+
     // Pago electrónico (Bold/MercadoPago): comprobante y proveedor obligatorios
     if (pm === 'pago_electronico') {
       if (!formData.paymentProofImage) {
@@ -833,7 +836,7 @@ const WalletValidationModal = ({ isOpen, onClose, order, onValidate }) => {
         return false;
       }
     }
-    
+
     if (pm === 'cliente_credito' || pm === 'credito') {
       // Política: si el cliente no tiene cupo asignado o no alcanza, Cartera decide.
       // No bloqueamos la aprobación; solo mostramos advertencias informativas.
@@ -855,11 +858,15 @@ const WalletValidationModal = ({ isOpen, onClose, order, onValidate }) => {
         return true;
       }
     }
-    
+
     return true;
   };
 
   const handleValidate = async (validationType = 'approved') => {
+    if (validationType === 'approved' && filesSelectedCount > 0 && evidenceCount === 0) {
+      toast.error('Tiene archivos seleccionados sin subir. Por favor haga clic en "Subir X archivo(s)" antes de validar.');
+      return;
+    }
     // Para rechazos, solo validamos que haya notas
     if (validationType === 'rejected') {
       if (!formData.validationNotes.trim()) {
@@ -870,92 +877,96 @@ const WalletValidationModal = ({ isOpen, onClose, order, onValidate }) => {
       // Para aprobaciones, validamos el formulario completo
       if (!validateForm()) return;
     }
-    
+
     setLoading(true);
     try {
-    const formDataToSend = new FormData();
-    const pm = normalizePaymentMethod(order.payment_method);
-    
-    // Datos básicos
-    formDataToSend.append('orderId', order.id);
-    formDataToSend.append('paymentMethod', order.payment_method);
-    formDataToSend.append('validationType', validationType);
-    // Inyectar nota técnica si Cartera marca que el efectivo lo cobra el mensajero
-    const notesWithFlag = formData.cashByMessenger
-      ? `${formData.validationNotes || ''} [cash_pending_by_messenger]`
-      : formData.validationNotes;
-    formDataToSend.append('validationNotes', notesWithFlag);
-    
-    // Solo agregar datos de pago si es aprobación
-    if (validationType === 'approved') {
-      // Para transferencias
-      if (pm === 'transferencia') {
-        formDataToSend.append('paymentType', formData.paymentType);
-        
-        if (formData.paymentType === 'mixed') {
-          // Pago mixto
-          const mixedCash = formData.cashByMessenger
-            ? (parseFloat(order.total_amount || 0) - parseFloat(formData.transferredAmount || 0) || 0)
-            : formData.cashAmount;
-          formDataToSend.append('transferredAmount', formData.transferredAmount);
-          formDataToSend.append('cashAmount', mixedCash);
-          if (formData.cashByMessenger) formDataToSend.append('cashByMessenger', 'true');
-          
+      const formDataToSend = new FormData();
+      const pm = normalizePaymentMethod(order.payment_method);
+
+      // Datos básicos
+      formDataToSend.append('orderId', order.id);
+      formDataToSend.append('paymentMethod', order.payment_method);
+      formDataToSend.append('validationType', validationType);
+      // Inyectar nota técnica si Cartera marca que el efectivo lo cobra el mensajero
+      const notesWithFlag = formData.cashByMessenger
+        ? `${formData.validationNotes || ''} [cash_pending_by_messenger]`
+        : formData.validationNotes;
+      formDataToSend.append('validationNotes', notesWithFlag);
+
+      // Solo agregar datos de pago si es aprobación
+      if (validationType === 'approved') {
+        // Para transferencias
+        if (pm === 'transferencia') {
+          formDataToSend.append('paymentType', formData.paymentType);
+
+          if (formData.paymentType === 'mixed') {
+            // Pago mixto
+            const mixedCash = formData.cashByMessenger
+              ? (parseFloat(order.total_amount || 0) - parseFloat(formData.transferredAmount || 0) || 0)
+              : formData.cashAmount;
+            formDataToSend.append('transferredAmount', formData.transferredAmount);
+            formDataToSend.append('cashAmount', mixedCash);
+            if (formData.cashByMessenger) formDataToSend.append('cashByMessenger', 'true');
+
+            if (formData.paymentProofImage) {
+              formDataToSend.append('paymentProofImage', formData.paymentProofImage);
+            }
+            if (formData.cashProofImage) {
+              formDataToSend.append('cashProofImage', formData.cashProofImage);
+            }
+          } else {
+            // Pago simple
+            formDataToSend.append('paymentAmount', formData.paymentAmount);
+
+            if (formData.paymentProofImage) {
+              formDataToSend.append('paymentProofImage', formData.paymentProofImage);
+            }
+          }
+
+          formDataToSend.append('paymentReference', formData.paymentReference);
+          formDataToSend.append('paymentDate', formData.paymentDate);
+          formDataToSend.append('bankName', formData.bankName);
+        }
+
+        // Para pago electrónico (Bold/MercadoPago)
+        if (pm === 'pago_electronico') {
           if (formData.paymentProofImage) {
             formDataToSend.append('paymentProofImage', formData.paymentProofImage);
           }
-          if (formData.cashProofImage) {
-            formDataToSend.append('cashProofImage', formData.cashProofImage);
-          }
-        } else {
-          // Pago simple
-          formDataToSend.append('paymentAmount', formData.paymentAmount);
-          
+          // Enviar referencia, fecha y proveedor (bankName usado como canal)
+          formDataToSend.append('paymentReference', formData.paymentReference);
+          formDataToSend.append('paymentDate', formData.paymentDate);
+          formDataToSend.append('bankName', formData.bankName);
+          // Registrar monto (total del pedido)
+          formDataToSend.append('paymentAmount', formData.paymentAmount || order.total_amount);
+        }
+
+        // Para efectivo
+        if (pm === 'efectivo') {
           if (formData.paymentProofImage) {
             formDataToSend.append('paymentProofImage', formData.paymentProofImage);
           }
+          formDataToSend.append('paymentAmount', formData.paymentAmount || order.total_amount);
+          formDataToSend.append('paymentDate', formData.paymentDate);
         }
-        
-        formDataToSend.append('paymentReference', formData.paymentReference);
-        formDataToSend.append('paymentDate', formData.paymentDate);
-        formDataToSend.append('bankName', formData.bankName);
-      }
-      
-      // Para pago electrónico (Bold/MercadoPago)
-      if (pm === 'pago_electronico') {
-        if (formData.paymentProofImage) {
-          formDataToSend.append('paymentProofImage', formData.paymentProofImage);
+
+        // Para crédito
+        if (pm === 'cliente_credito' || pm === 'credito') {
+          formDataToSend.append('creditApproved', formData.creditApproved);
+          formDataToSend.append('customerCreditLimit', customerCredit?.credit_limit || 0);
+          formDataToSend.append('customerCurrentBalance', customerCredit?.current_balance || 0);
         }
-        // Enviar referencia, fecha y proveedor (bankName usado como canal)
-        formDataToSend.append('paymentReference', formData.paymentReference);
-        formDataToSend.append('paymentDate', formData.paymentDate);
-        formDataToSend.append('bankName', formData.bankName);
-        // Registrar monto (total del pedido)
-        formDataToSend.append('paymentAmount', formData.paymentAmount || order.total_amount);
       }
 
-      // Para efectivo
-      if (pm === 'efectivo') {
-        if (formData.paymentProofImage) {
-          formDataToSend.append('paymentProofImage', formData.paymentProofImage);
-        }
-        formDataToSend.append('paymentAmount', formData.paymentAmount || order.total_amount);
-        formDataToSend.append('paymentDate', formData.paymentDate);
-      }
-      
-      // Para crédito
-      if (pm === 'cliente_credito' || pm === 'credito') {
-        formDataToSend.append('creditApproved', formData.creditApproved);
-        formDataToSend.append('customerCreditLimit', customerCredit?.credit_limit || 0);
-        formDataToSend.append('customerCurrentBalance', customerCredit?.current_balance || 0);
-      }
-    }
-      
       await onValidate(formDataToSend);
       onClose();
-      
+
       if (validationType === 'approved') {
-        toast.success('Pago validado y enviado a logística exitosamente');
+        if (order.is_service) {
+          toast.success('Pago validado exitosamente');
+        } else {
+          toast.success('Pago validado y enviado a logística exitosamente');
+        }
       } else {
         toast.success('Pedido marcado como no apto para logística');
       }
@@ -982,13 +993,13 @@ const WalletValidationModal = ({ isOpen, onClose, order, onValidate }) => {
   };
 
   const canApproveCredit = () => {
-    if (!customerCredit || !['cliente_credito','credito'].includes((order?.payment_method||'').toLowerCase())) return false;
+    if (!customerCredit || !['cliente_credito', 'credito'].includes((order?.payment_method || '').toLowerCase())) return false;
     return (customerCredit.status === 'active') &&
       (parseFloat(order.total_amount || 0) <= parseFloat(customerCredit.available_credit || 0));
   };
 
   const getCreditStatus = () => {
-    if (!customerCredit || !['cliente_credito','credito'].includes((order?.payment_method||'').toLowerCase())) return null;
+    if (!customerCredit || !['cliente_credito', 'credito'].includes((order?.payment_method || '').toLowerCase())) return null;
     const orderAmount = parseFloat(order.total_amount || 0);
     const availableCredit = customerCredit.available_credit;
     return {
@@ -998,11 +1009,13 @@ const WalletValidationModal = ({ isOpen, onClose, order, onValidate }) => {
     };
   };
 
+  const [filesSelectedCount, setFilesSelectedCount] = useState(0);
+
   const isElectronic = normalizePaymentMethod(order?.payment_method) === 'pago_electronico';
   const approveDisabled = loading || (
     isElectronic && isWalletValidator && (
       !formData.paymentProofImage ||
-      !['bold','mercadopago'].includes((formData.bankName || '').toLowerCase()) ||
+      !['bold', 'mercadopago'].includes((formData.bankName || '').toLowerCase()) ||
       !formData.paymentReference.trim()
     )
   );
@@ -1032,6 +1045,7 @@ const WalletValidationModal = ({ isOpen, onClose, order, onValidate }) => {
           aria-hidden="true"
           style={{ position: 'absolute', width: 1, height: 1, opacity: 0, pointerEvents: 'none' }}
         />
+        */}
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-gray-200">
           <div>
@@ -1077,11 +1091,11 @@ const WalletValidationModal = ({ isOpen, onClose, order, onValidate }) => {
                     className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                     required
                   />
-                    {formData.paymentProofImage && (
-                      <p className="text-xs text-green-600 mt-1">
-                        Archivo: {formData.paymentProofImage.name}
-                      </p>
-                    )}
+                  {formData.paymentProofImage && (
+                    <p className="text-xs text-green-600 mt-1">
+                      Archivo: {formData.paymentProofImage.name}
+                    </p>
+                  )}
                 </div>
 
                 <div>
@@ -1116,7 +1130,7 @@ const WalletValidationModal = ({ isOpen, onClose, order, onValidate }) => {
               </div>
             </div>
           )}
-          
+
 
           {/* Información del pedido */}
           <div className="bg-gray-50 rounded-lg p-4 mb-6">
@@ -1137,13 +1151,13 @@ const WalletValidationModal = ({ isOpen, onClose, order, onValidate }) => {
               <div>
                 <span className="text-gray-600">Método de Entrega:</span>
                 <span className="ml-2 font-medium">
-                  {getDeliveryMethodLabel(order.delivery_method)}
+                  {order.is_service ? 'Servicio (Sin envío)' : getDeliveryMethodLabel(order.delivery_method)}
                 </span>
               </div>
               <div>
                 <span className="text-gray-600">Fecha de Envío:</span>
                 <span className="ml-2 font-medium">
-                  {getShippingDateLabel(order)}
+                  {order.is_service ? 'N/A' : getShippingDateLabel(order)}
                 </span>
               </div>
               <div className="col-span-2">
@@ -1168,7 +1182,7 @@ const WalletValidationModal = ({ isOpen, onClose, order, onValidate }) => {
 
           {/* Formulario según tipo de pago */}
           <div className="space-y-6">
-            
+
             {/* Para Transferencias */}
             {normalizePaymentMethod(order.payment_method) === 'transferencia' && (requiresPayment || isWalletValidator) && (
               <>
@@ -1204,16 +1218,18 @@ const WalletValidationModal = ({ isOpen, onClose, order, onValidate }) => {
                 {formData.paymentType === 'single' ? (
                   // Pago Simple - Solo Transferencia
                   <>
-                    <UploadDropzone
-                      label="Comprobante de Transferencia *"
-                      file={formData.paymentProofImage}
-                      onFile={(f) => handleInputChange('paymentProofImage', f)}
-                      required
-                      hint={'Pega (Ctrl+V) o usa "Pegar desde portapapeles"; tambien puedes arrastrar o usar el boton "Seleccionar archivo"'}
-                      onFocusExtra={() => setActiveDropzone('transfer')}
-                      showPasteButton
-                      onPasteClick={() => handleClipboardReadViaAPI({ preventDefault: () => {} })}
-                    />
+                    <div className="mb-4">
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Comprobantes de Pago *
+                      </label>
+                      <MultiplePaymentEvidenceUpload
+                        orderId={order?.id}
+                        onUploadComplete={() => {
+                          // El conteo se actualiza vía onEvidencesChange
+                        }}
+                        onEvidencesChange={(count) => setEvidenceCount(count)}
+                      />
+                    </div>
 
                     <div className={`grid grid-cols-2 gap-4 ${!isWalletValidator ? 'hidden' : ''}`}>
                       <div>
@@ -1229,7 +1245,7 @@ const WalletValidationModal = ({ isOpen, onClose, order, onValidate }) => {
                           required
                         />
                       </div>
-                      
+
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-2">
                           Destino dinero *
@@ -1248,11 +1264,10 @@ const WalletValidationModal = ({ isOpen, onClose, order, onValidate }) => {
                     </div>
 
                     {/* Validación visual del monto */}
-                    <div className={`p-4 rounded-lg border-2 ${
-                      singlePaymentWithinTolerance
-                        ? 'bg-green-50 border-green-300'
-                        : 'bg-red-50 border-red-300'
-                    }`}>
+                    <div className={`p-4 rounded-lg border-2 ${singlePaymentWithinTolerance
+                      ? 'bg-green-50 border-green-300'
+                      : 'bg-red-50 border-red-300'
+                      }`}>
                       <div className="flex items-center justify-between mb-2">
                         <h4 className="font-medium text-gray-900">Validación de Monto</h4>
                         {singlePaymentWithinTolerance ? (
@@ -1268,21 +1283,19 @@ const WalletValidationModal = ({ isOpen, onClose, order, onValidate }) => {
                         </div>
                         <div>
                           <span className="text-gray-600">Monto Transferido:</span>
-                          <p className={`font-medium ${
-                            singlePaymentWithinTolerance
-                              ? 'text-green-600'
-                              : 'text-red-600'
-                          }`}>
+                          <p className={`font-medium ${singlePaymentWithinTolerance
+                            ? 'text-green-600'
+                            : 'text-red-600'
+                            }`}>
                             ${formatAmount(formData.paymentAmount)}
                           </p>
                         </div>
                         <div>
                           <span className="text-gray-600">Diferencia:</span>
-                          <p className={`font-medium ${
-                            singlePaymentWithinTolerance
-                              ? 'text-green-600'
-                              : 'text-red-600'
-                          }`}>
+                          <p className={`font-medium ${singlePaymentWithinTolerance
+                            ? 'text-green-600'
+                            : 'text-red-600'
+                            }`}>
                             ${formatAmount(Math.abs(parseFloat(order.total_amount || 0) - parseFloat(formData.paymentAmount || 0)))}
                           </p>
                         </div>
@@ -1312,11 +1325,10 @@ const WalletValidationModal = ({ isOpen, onClose, order, onValidate }) => {
                             const value = e.target.value === '' ? '' : e.target.value;
                             handleInputChange('paymentAmount', value);
                           }}
-                          className={`w-full px-3 py-2 border-2 rounded-md focus:outline-none focus:ring-2 ${
-                            singlePaymentWithinTolerance && formData.paymentAmount !== ''
-                              ? 'border-green-300 focus:ring-green-500 bg-green-50'
-                              : 'border-red-300 focus:ring-red-500 bg-red-50'
-                          }`}
+                          className={`w-full px-3 py-2 border-2 rounded-md focus:outline-none focus:ring-2 ${singlePaymentWithinTolerance && formData.paymentAmount !== ''
+                            ? 'border-green-300 focus:ring-green-500 bg-green-50'
+                            : 'border-red-300 focus:ring-red-500 bg-red-50'
+                            }`}
                           min="0"
                           step="0.01"
                           placeholder={`Debe ser: ${formatAmount(order.total_amount)}`}
@@ -1335,7 +1347,7 @@ const WalletValidationModal = ({ isOpen, onClose, order, onValidate }) => {
                           )}
                         </div>
                       </div>
-                      
+
                       <div className="flex flex-col">
                         <div className="h-12 flex flex-col justify-start">
                           <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -1362,9 +1374,8 @@ const WalletValidationModal = ({ isOpen, onClose, order, onValidate }) => {
                   // Pago Mixto - Transferencia + Efectivo
                   <>
                     {/* Validación de Montos */}
-                    <div className={`p-4 rounded-lg border ${
-                      isMixedWithinTolerance ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'
-                    }`}>
+                    <div className={`p-4 rounded-lg border ${isMixedWithinTolerance ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'
+                      }`}>
                       <div className="flex items-center justify-between mb-2">
                         <h4 className="font-medium text-gray-900">Validación de Montos</h4>
                         {isMixedWithinTolerance ? (
@@ -1380,17 +1391,15 @@ const WalletValidationModal = ({ isOpen, onClose, order, onValidate }) => {
                         </div>
                         <div>
                           <span className="text-gray-600">Total Pagado:</span>
-                          <p className={`font-medium ${
-                            isMixedWithinTolerance ? 'text-green-600' : 'text-red-600'
-                          }`}>
+                          <p className={`font-medium ${isMixedWithinTolerance ? 'text-green-600' : 'text-red-600'
+                            }`}>
                             ${formatAmount(totalPaidMixed)}
                           </p>
                         </div>
                         <div>
                           <span className="text-gray-600">Diferencia:</span>
-                          <p className={`font-medium ${
-                            isMixedWithinTolerance ? 'text-green-600' : 'text-red-600'
-                          }`}>
+                          <p className={`font-medium ${isMixedWithinTolerance ? 'text-green-600' : 'text-red-600'
+                            }`}>
                             ${formatAmount(orderTotal - totalPaidMixed)}
                           </p>
                         </div>
@@ -1406,7 +1415,7 @@ const WalletValidationModal = ({ isOpen, onClose, order, onValidate }) => {
                     <div className="grid grid-cols-2 gap-4">
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-2">
-                          Monto Transferido * 
+                          Monto Transferido *
                         </label>
                         <input
                           type="number"
@@ -1428,7 +1437,7 @@ const WalletValidationModal = ({ isOpen, onClose, order, onValidate }) => {
                         </label>
                         <input
                           type="number"
-                          value={formData.cashByMessenger ? (parseFloat(order?.total_amount||0) - parseFloat(formData.transferredAmount||0) || 0) : formData.cashAmount}
+                          value={formData.cashByMessenger ? (parseFloat(order?.total_amount || 0) - parseFloat(formData.transferredAmount || 0) || 0) : formData.cashAmount}
                           onChange={(e) => {
                             const value = e.target.value === '' ? '' : e.target.value;
                             handleInputChange('cashAmount', value);
@@ -1459,16 +1468,20 @@ const WalletValidationModal = ({ isOpen, onClose, order, onValidate }) => {
                     </div>
 
                     {/* Comprobante de Transferencia */}
-                    <UploadDropzone
-                      label="Comprobante de Transferencia *"
-                      file={formData.paymentProofImage}
-                      onFile={(f) => handleInputChange('paymentProofImage', f)}
-                      required
-                      hint={'Pega (Ctrl+V) o usa "Pegar desde portapapeles"; tambien puedes arrastrar o usar el boton "Seleccionar archivo"'}
-                      onFocusExtra={() => setActiveDropzone('transfer')}
-                      showPasteButton
-                      onPasteClick={() => handleClipboardReadViaAPI({ preventDefault: () => {} })}
-                    />
+                    {/* Comprobantes de Pago (Múltiples) */}
+                    <div className="mb-4">
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Comprobantes de Pago *
+                      </label>
+                      <MultiplePaymentEvidenceUpload
+                        orderId={order?.id}
+                        onUploadComplete={() => {
+                          // El conteo se actualiza vía onEvidencesChange
+                        }}
+                        onEvidencesChange={(count) => setEvidenceCount(count)}
+                        onFilesSelected={setFilesSelectedCount}
+                      />
+                    </div>
 
                     {/* Comprobante de Efectivo: para Cartera/Admin ya no se solicita ni se muestra */}
                     {!isWalletValidator && (
@@ -1480,7 +1493,7 @@ const WalletValidationModal = ({ isOpen, onClose, order, onValidate }) => {
                         hint={'Pega (Ctrl+V) o usa "Pegar desde portapapeles"; tambien puedes arrastrar o usar el boton "Seleccionar archivo"'}
                         onFocusExtra={() => setActiveDropzone('cash')}
                         showPasteButton
-                        onPasteClick={() => handleClipboardReadViaAPI({ preventDefault: () => {} })}
+                        onPasteClick={() => handleClipboardReadViaAPI({ preventDefault: () => { } })}
                       />
                     )}
 
@@ -1499,7 +1512,7 @@ const WalletValidationModal = ({ isOpen, onClose, order, onValidate }) => {
                           required
                         />
                       </div>
-                      
+
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-2">
                           Destino dinero *
@@ -1517,9 +1530,9 @@ const WalletValidationModal = ({ isOpen, onClose, order, onValidate }) => {
                       </div>
                     </div>
 
-                      <div className={!isWalletValidator ? 'hidden' : ''}>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                          Fecha de Transferencia
+                    <div className={!isWalletValidator ? 'hidden' : ''}>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Fecha de Transferencia
                       </label>
                       <input
                         type="date"
@@ -1544,7 +1557,7 @@ const WalletValidationModal = ({ isOpen, onClose, order, onValidate }) => {
                   hint={'Pega (Ctrl+V) o usa "Pegar desde portapapeles"; tambien puedes arrastrar o usar el boton "Seleccionar archivo"'}
                   onFocusExtra={() => setActiveDropzone('transfer')}
                   showPasteButton
-                  onPasteClick={() => handleClipboardReadViaAPI({ preventDefault: () => {} })}
+                  onPasteClick={() => handleClipboardReadViaAPI({ preventDefault: () => { } })}
                 />
 
                 <div className={`grid grid-cols-2 gap-4 ${!isWalletValidator ? 'hidden' : ''}`}>
@@ -1637,7 +1650,7 @@ const WalletValidationModal = ({ isOpen, onClose, order, onValidate }) => {
                   hint={'Pega (Ctrl+V) o usa "Pegar desde portapapeles"; tambien puedes arrastrar o usar el boton "Seleccionar archivo"'}
                   onFocusExtra={() => setActiveDropzone('cash')}
                   showPasteButton
-                  onPasteClick={() => handleClipboardReadViaAPI({ preventDefault: () => {} })}
+                  onPasteClick={() => handleClipboardReadViaAPI({ preventDefault: () => { } })}
                 />
                 <p className="text-xs text-gray-500 mt-1">
                   Suba una foto del dinero recibido o del recibo de pago
@@ -1646,7 +1659,7 @@ const WalletValidationModal = ({ isOpen, onClose, order, onValidate }) => {
             )}
 
             {/* Para Cliente a Crédito */}
-            {['cliente_credito','credito'].includes(normalizePaymentMethod(order.payment_method)) && (
+            {['cliente_credito', 'credito'].includes(normalizePaymentMethod(order.payment_method)) && (
               <div>
                 {loadingCredit ? (
                   <div className="flex items-center justify-center py-8">
@@ -1673,24 +1686,22 @@ const WalletValidationModal = ({ isOpen, onClose, order, onValidate }) => {
                       </div>
                       <div>
                         <span className="text-blue-700">Cupo Disponible:</span>
-                        <span className={`ml-2 font-medium ${
-                          customerCredit.available_credit >= parseFloat(order.total_amount || 0)
-                            ? 'text-green-600' 
-                            : 'text-red-600'
-                        }`}>
+                        <span className={`ml-2 font-medium ${customerCredit.available_credit >= parseFloat(order.total_amount || 0)
+                          ? 'text-green-600'
+                          : 'text-red-600'
+                          }`}>
                           ${customerCredit.available_credit?.toLocaleString('es-CO')}
                         </span>
                       </div>
                       <div>
                         <span className="text-blue-700">Estado:</span>
-                        <span className={`ml-2 font-medium capitalize ${
-                          customerCredit.status === 'active' ? 'text-green-600' : 'text-red-600'
-                        }`}>
+                        <span className={`ml-2 font-medium capitalize ${customerCredit.status === 'active' ? 'text-green-600' : 'text-red-600'
+                          }`}>
                           {customerCredit.status}
                         </span>
                       </div>
                     </div>
-                    
+
                     {canApproveCredit() ? (
                       <div className="mt-4 p-3 bg-green-100 border border-green-300 rounded">
                         <div className="flex items-center">
@@ -1746,6 +1757,7 @@ const WalletValidationModal = ({ isOpen, onClose, order, onValidate }) => {
           </div>
         </div>
 
+
         {/* Footer */}
         <div className="flex items-center justify-between p-6 border-t border-gray-200 bg-gray-50">
           <button
@@ -1755,7 +1767,7 @@ const WalletValidationModal = ({ isOpen, onClose, order, onValidate }) => {
           >
             Cancelar
           </button>
-          
+
           <div className="flex space-x-3">
             <button
               onClick={() => handleValidate('rejected')}
@@ -1769,12 +1781,12 @@ const WalletValidationModal = ({ isOpen, onClose, order, onValidate }) => {
               )}
               No es posible pasar a Logística
             </button>
-            
-              <button
-                onClick={() => handleValidate('approved')}
-                disabled={approveDisabled}
-                className="flex items-center px-6 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 disabled:opacity-50"
-              >
+
+            <button
+              onClick={() => handleValidate('approved')}
+              disabled={approveDisabled}
+              className="flex items-center px-6 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 disabled:opacity-50"
+            >
               {loading ? (
                 <Icons.Loader2 className="w-4 h-4 mr-2 animate-spin" />
               ) : (

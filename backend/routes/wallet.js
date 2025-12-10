@@ -7,65 +7,65 @@ const walletController = require('../controllers/walletController');
 router.use(verifyToken);
 
 // Obtener información de crédito de un cliente
-router.get('/customer-credit/:customerName', 
-  verifyRole(['cartera', 'admin']), 
+router.get('/customer-credit/:customerName',
+  verifyRole(['cartera', 'admin']),
   walletController.getCustomerCredit
 );
 
 // Validar pago y enviar a logística
-router.post('/validate-payment', 
-  verifyRole(['cartera', 'admin', 'facturador']), 
+router.post('/validate-payment',
+  verifyRole(['cartera', 'admin', 'facturador']),
   walletController.validatePayment
 );
 
 // Obtener historial de validaciones de un pedido
-router.get('/validation-history/:orderId', 
-  verifyRole(['cartera', 'admin']), 
+router.get('/validation-history/:orderId',
+  verifyRole(['cartera', 'admin']),
   walletController.getValidationHistory
 );
 
 // Obtener lista de clientes con crédito
-router.get('/credit-customers', 
-  verifyRole(['cartera', 'admin']), 
+router.get('/credit-customers',
+  verifyRole(['cartera', 'admin']),
   walletController.getCreditCustomers
 );
 
 // Crear o actualizar cliente con crédito
-router.post('/credit-customers', 
-  verifyRole(['cartera', 'admin']), 
+router.post('/credit-customers',
+  verifyRole(['cartera', 'admin']),
   walletController.upsertCreditCustomer
 );
 
 // Obtener pedidos pendientes de validación en cartera
-router.get('/orders', 
-  verifyRole(['cartera', 'admin']), 
+router.get('/orders',
+  verifyRole(['cartera', 'admin']),
   walletController.getWalletOrders
 );
 
 // Obtener estadísticas de cartera
-router.get('/stats', 
-  verifyRole(['cartera', 'admin']), 
+router.get('/stats',
+  verifyRole(['cartera', 'admin']),
   walletController.getWalletStats
 );
 
 // Nueva ruta: Forzar refresco de saldos SIIGO para un cliente
-router.post('/refresh-balance/:customerNit', 
-  verifyRole(['cartera', 'admin']), 
+router.post('/refresh-balance/:customerNit',
+  verifyRole(['cartera', 'admin']),
   async (req, res) => {
     try {
       const { customerNit } = req.params;
       const siigoRefreshService = require('../services/siigoRefreshService');
-      
+
       console.log(`🔄 [ROUTE] Forzando refresco de saldos para NIT: ${customerNit}`);
-      
+
       const siigoData = await siigoRefreshService.getCustomerBalanceWithRefresh(customerNit, true);
-      
+
       res.json({
         success: true,
         data: siigoData,
         message: 'Saldos refrescados exitosamente desde SIIGO'
       });
-      
+
     } catch (error) {
       console.error('❌ Error en refresco forzado SIIGO:', error);
       res.status(500).json({
@@ -78,22 +78,22 @@ router.post('/refresh-balance/:customerNit',
 );
 
 // Nueva ruta: Refresco masivo de todos los clientes activos
-router.post('/refresh-all', 
-  verifyRole(['admin']), 
+router.post('/refresh-all',
+  verifyRole(['admin']),
   async (req, res) => {
     try {
       const siigoRefreshService = require('../services/siigoRefreshService');
-      
+
       console.log('🔄 [ROUTE] Iniciando refresco masivo de clientes');
-      
+
       const results = await siigoRefreshService.refreshAllActiveCustomers();
-      
+
       res.json({
         success: true,
         data: results,
         message: `Refresco masivo completado: ${results.length} clientes procesados`
       });
-      
+
     } catch (error) {
       console.error('❌ Error en refresco masivo:', error);
       res.status(500).json({
@@ -106,24 +106,24 @@ router.post('/refresh-all',
 );
 
 // Nueva ruta: Detectar nuevas facturas en SIIGO
-router.get('/detect-new-invoices', 
-  verifyRole(['cartera', 'admin']), 
+router.get('/detect-new-invoices',
+  verifyRole(['cartera', 'admin']),
   async (req, res) => {
     try {
       const { since } = req.query;
       const siigoRefreshService = require('../services/siigoRefreshService');
-      
+
       console.log('🔍 [ROUTE] Detectando nuevas facturas en SIIGO');
-      
+
       const sinceDate = since ? new Date(since) : new Date(Date.now() - 10 * 60 * 1000);
       const newInvoices = await siigoRefreshService.detectNewInvoices(sinceDate);
-      
+
       res.json({
         success: true,
         data: newInvoices,
         message: `${newInvoices.length} nuevas facturas encontradas`
       });
-      
+
     } catch (error) {
       console.error('❌ Error detectando nuevas facturas:', error);
       res.status(500).json({
@@ -133,6 +133,27 @@ router.get('/detect-new-invoices',
       });
     }
   }
+);
+
+
+
+// Rutas para gestión de múltiples comprobantes
+router.post('/payment-evidences',
+  verifyToken,
+  verifyRole(['cartera', 'admin', 'facturador']),
+  walletController.uploadPaymentEvidences
+);
+
+router.get('/payment-evidences/:orderId',
+  verifyToken,
+  verifyRole(['cartera', 'admin', 'facturador']),
+  walletController.getPaymentEvidences
+);
+
+router.delete('/payment-evidences/:id',
+  verifyToken,
+  verifyRole(['cartera', 'admin']),
+  walletController.deletePaymentEvidence
 );
 
 module.exports = router;

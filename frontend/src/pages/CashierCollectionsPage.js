@@ -3,6 +3,7 @@ import api, { carteraService, messengerService, treasuryService, userService, sy
 import * as Icons from 'lucide-react';
 import toast from 'react-hot-toast';
 import { getPaymentMethodLabel, getPaymentBadgeClass } from '../utils/payments';
+import { getLocalISOString } from '../utils/dateUtils';
 import ExtraIncomeModal from '../components/ExtraIncomeModal';
 import CashWithdrawalModal from '../components/CashWithdrawalModal';
 
@@ -36,7 +37,9 @@ const CashierCollectionsPage = () => {
   const [depositOpen, setDepositOpen] = useState(false);
   const [extraOpen, setExtraOpen] = useState(false);
   const [withdrawOpen, setWithdrawOpen] = useState(false);
-  const [depositForm, setDepositForm] = useState({ amount: '', bank_name: '', reference_number: '', reason_code: '', reason_text: '', deposited_at: new Date().toISOString().slice(0, 10), notes: '', evidence: null });
+  const [depositForm, setDepositForm] = useState({ amount: '', bank_name: '', reference_number: '', reason_code: '', reason_text: '', deposited_at: getLocalISOString().slice(0, 16), notes: '', evidence: null });
+
+
   const [depositDetails, setDepositDetails] = useState({});
   const [depositSearch, setDepositSearch] = useState('');
   const [tolerance, setTolerance] = useState(300);
@@ -589,12 +592,12 @@ const CashierCollectionsPage = () => {
                         <td className="px-4 py-2">
                           <span
                             className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${h.status === 'completed'
-                                ? 'bg-green-100 text-green-800'
-                                : h.status === 'partial'
-                                  ? 'bg-yellow-100 text-yellow-800'
-                                  : h.status === 'discrepancy'
-                                    ? 'bg-red-100 text-red-800'
-                                    : 'bg-gray-100 text-gray-800'
+                              ? 'bg-green-100 text-green-800'
+                              : h.status === 'partial'
+                                ? 'bg-yellow-100 text-yellow-800'
+                                : h.status === 'discrepancy'
+                                  ? 'bg-red-100 text-red-800'
+                                  : 'bg-gray-100 text-gray-800'
                               }`}
                           >
                             {h.status}
@@ -698,10 +701,10 @@ const CashierCollectionsPage = () => {
                                         <td className="px-4 py-2 text-sm">
                                           <span
                                             className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${it.collection_status === 'collected'
-                                                ? 'bg-green-100 text-green-800'
-                                                : it.collection_status === 'partial'
-                                                  ? 'bg-yellow-100 text-yellow-800'
-                                                  : 'bg-gray-100 text-gray-800'
+                                              ? 'bg-green-100 text-green-800'
+                                              : it.collection_status === 'partial'
+                                                ? 'bg-yellow-100 text-yellow-800'
+                                                : 'bg-gray-100 text-gray-800'
                                               }`}
                                           >
                                             {it.collection_status || 'pending'}
@@ -823,7 +826,7 @@ const CashierCollectionsPage = () => {
                   </div>
                   <div>
                     <label className="block text-sm mb-1">Fecha</label>
-                    <input type="date" value={depositForm.deposited_at} onChange={e => setDepositForm(f => ({ ...f, deposited_at: e.target.value }))} className="w-full px-3 py-2 border rounded" />
+                    <input type="datetime-local" value={depositForm.deposited_at} onChange={e => setDepositForm(f => ({ ...f, deposited_at: e.target.value }))} className="w-full px-3 py-2 border rounded" />
                   </div>
                   <div>
                     <label className="block text-sm mb-1">Notas</label>
@@ -930,6 +933,7 @@ const CashierCollectionsPage = () => {
                   try {
                     const amt = Number(depositForm.amount || 0);
                     if (!(amt > 0)) return toast.error('Ingresa un monto válido');
+                    if (!depositForm.evidence) return toast.error('Debes adjuntar la evidencia (imagen/PDF) obligatoriamente');
                     const detailsArr = Object.entries(depositDetails || {})
                       .map(([order_id, assigned_amount]) => ({ order_id: Number(order_id), assigned_amount: Number(assigned_amount || 0) }))
                       .filter(d => d.order_id && d.assigned_amount > 0);
@@ -939,7 +943,7 @@ const CashierCollectionsPage = () => {
                     await treasuryService.createDeposit({ ...depositForm, details: detailsArr });
                     toast.success('Consignación registrada');
                     setDepositOpen(false);
-                    setDepositForm({ amount: '', bank_name: '', reference_number: '', reason_code: '', reason_text: '', deposited_at: new Date().toISOString().slice(0, 10), notes: '', evidence: null });
+                    setDepositForm({ amount: '', bank_name: '', reference_number: '', reason_code: '', reason_text: '', deposited_at: getLocalISOString().slice(0, 16), notes: '', evidence: null });
                     setDepositDetails({});
                     setDepositSearch('');
                     await loadBalance();

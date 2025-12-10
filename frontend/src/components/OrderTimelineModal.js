@@ -221,6 +221,19 @@ const OrderTimelineModal = ({ isOpen, onClose, order }) => {
                   <div><span className="text-gray-500">Método de Pago:</span> <span className="font-medium">{timeline.context?.payment_method}</span></div>
                   <div><span className="text-gray-500">Monto:</span> <span className="font-medium">${Number(timeline.context?.total_amount || 0).toLocaleString('es-CO')}</span></div>
                 </div>
+
+                {/* Indicador de Servicio */}
+                {timeline.context?.is_service === 1 && (
+                  <div className="mb-4 p-3 rounded border border-blue-300 bg-blue-50 text-blue-800">
+                    <div className="flex items-center gap-2">
+                      <Icons.Briefcase className="w-4 h-4" />
+                      <span className="font-semibold">Pedido de Servicio</span>
+                    </div>
+                    <div className="mt-1 text-xs md:text-sm">
+                      Este pedido fue procesado como un servicio (sin logística).
+                    </div>
+                  </div>
+                )}
                 {/* Motivo de Gestión Especial */}
                 {(() => {
                   const status = timeline?.context?.status || order?.status;

@@ -824,7 +824,7 @@ export const treasuryService = {
     if (reference_number) form.append('reference_number', reference_number);
     if (reason_code) form.append('reason_code', reason_code);
     if (reason_text) form.append('reason_text', reason_text);
-    if (deposited_at) form.append('deposited_at', new Date(deposited_at).toISOString());
+    if (deposited_at) form.append('deposited_at', typeof deposited_at === 'string' ? deposited_at : new Date(deposited_at).toISOString());
     if (notes) form.append('notes', notes);
     if (evidence) form.append('evidence', evidence);
     if (Array.isArray(details) && details.length > 0) {
@@ -864,6 +864,15 @@ export const treasuryAdminService = {
   // Marcar/Desmarcar consignación como cerrada en Siigo
   setDepositSiigoClosed: async (id, closed = true) => {
     const response = await api.post(`/cartera/deposits/${encodeURIComponent(id)}/close-siigo`, { closed });
+    return response.data;
+  },
+  // Subir/Actualizar evidencia
+  uploadDepositEvidence: async (id, file) => {
+    const form = new FormData();
+    form.append('evidence', file);
+    const response = await api.post(`/cartera/deposits/${encodeURIComponent(id)}/evidence`, form, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    });
     return response.data;
   }
 };

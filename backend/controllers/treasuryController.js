@@ -453,9 +453,41 @@ const closeDepositSiigo = async (req, res) => {
   }
 };
 
+// POST /api/cartera/deposits/:id/evidence - Subir/Actualizar evidencia de consignación
+const updateDepositEvidence = async (req, res) => {
+  try {
+    const id = Number(req.params?.id || 0);
+    if (!id) {
+      return res.status(400).json({ success: false, message: 'ID de consignación inválido' });
+    }
+
+    const file = req.file || null;
+    if (!file) {
+      return res.status(400).json({ success: false, message: 'No se ha subido ningún archivo' });
+    }
+
+    const evidenceFile = file.filename;
+
+    await query(
+      `UPDATE cartera_deposits SET evidence_file = ? WHERE id = ?`,
+      [evidenceFile, id]
+    );
+
+    return res.json({
+      success: true,
+      message: 'Evidencia actualizada correctamente',
+      data: { evidence_file: evidenceFile }
+    });
+  } catch (error) {
+    console.error('Error actualizando evidencia de consignación:', error);
+    return res.status(500).json({ success: false, message: 'Error interno del servidor' });
+  }
+};
+
 module.exports = {
   uploadDeposit,
   createDeposit: [uploadDeposit.single('evidence'), createDeposit],
+  updateDepositEvidence: [uploadDeposit.single('evidence'), updateDepositEvidence],
   listDeposits,
   getCashBalance,
   listBaseChanges,

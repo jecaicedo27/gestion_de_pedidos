@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import * as Icons from 'lucide-react';
 import toast from 'react-hot-toast';
+import { getLocalISOString } from '../utils/dateUtils';
 import { useAuth } from '../context/AuthContext';
 
 const ContraentregaModal = ({ isOpen, onClose, order, onConfirm }) => {
@@ -33,8 +34,8 @@ const ContraentregaModal = ({ isOpen, onClose, order, onConfirm }) => {
       const fromOrder = (order?.electronic_payment_type || order?.payment_provider || '').toString().trim();
       const detected = detectProviderFromStringLocal(order?.notes || '');
       const bank = (fromOrder || detected || 'otro').toLowerCase();
-      const ref = `auto-${Date.now()}`;
-      const dateStr = new Date().toISOString().slice(0, 10);
+      const ref = `auto - ${Date.now()} `;
+      const dateStr = getLocalISOString().slice(0, 10);
       setFormData(prev => ({
         ...prev,
         transferenceBank: bank,
@@ -74,13 +75,13 @@ const ContraentregaModal = ({ isOpen, onClose, order, onConfirm }) => {
         ...(formData.actualPaymentMethod === 'transferencia' && {
           transferenceReference: formData.transferenceReference,
           transferenceBank: formData.transferenceBank,
-          transferenceDate: formData.transferenceDate || new Date().toISOString().split('T')[0]
+          transferenceDate: formData.transferenceDate || getLocalISOString().slice(0, 10)
         })
       };
 
       await onConfirm(paymentData);
       onClose();
-      
+
       if (formData.actualPaymentMethod === 'efectivo') {
         toast.success('Pago en efectivo registrado. Se agregó al total del mensajero.');
       } else {
@@ -323,7 +324,7 @@ const ContraentregaModal = ({ isOpen, onClose, order, onConfirm }) => {
           >
             Cancelar
           </button>
-          
+
           {isMessengerView && (
             <button
               onClick={handleConfirmPayment}

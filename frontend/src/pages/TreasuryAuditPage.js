@@ -1,14 +1,63 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { format } from 'date-fns';
 import { treasuryAdminService } from '../services/api';
 import * as Icons from 'lucide-react';
 import toast from 'react-hot-toast';
+import { useAuth } from '../context/AuthContext';
 
 // Componente para mostrar evidencia (imagen o PDF) con diagnóstico
-const EvidenceViewer = ({ file }) => {
+const EvidenceViewer = ({ file, depositId, onUploadSuccess }) => {
   const [imgError, setImgError] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const { isAdmin } = useAuth();
+
+  const handleFileChange = async (e) => {
+    const selectedFile = e.target.files[0];
+    if (!selectedFile) return;
+
+    if (!depositId) {
+      toast.error('No hay ID de depósito para subir evidencia');
+      return;
+    }
+
+    try {
+      setUploading(true);
+      await treasuryAdminService.uploadDepositEvidence(depositId, selectedFile);
+      toast.success('Evidencia subida correctamente');
+      if (onUploadSuccess) onUploadSuccess();
+    } catch (error) {
+      console.error(error);
+      toast.error('Error subiendo evidencia');
+    } finally {
+      setUploading(false);
+    }
+  };
+
   try {
     const f = String(file || '').trim();
-    if (!f) return <div className="text-sm text-gray-500">Sin evidencia adjunta</div>;
+
+    // Si no hay archivo, mostrar input para subir (SOLO ADMIN)
+    if (!f) {
+      return (
+        <div className="text-sm text-gray-500 border border-dashed border-gray-300 rounded p-4 text-center">
+          <p className="mb-2">Sin evidencia adjunta</p>
+          {isAdmin() && (
+            <label className={`cursor-pointer inline-flex items-center px-3 py-1.5 bg-blue-50 text-blue-700 rounded text-xs font-medium hover:bg-blue-100 ${uploading ? 'opacity-50 pointer-events-none' : ''}`}>
+              <Icons.Upload className="w-3 h-3 mr-1" />
+              {uploading ? 'Subiendo...' : 'Subir evidencia'}
+              <input
+                type="file"
+                className="hidden"
+                accept="image/*,application/pdf"
+                onChange={handleFileChange}
+                disabled={uploading}
+              />
+            </label>
+          )}
+        </div>
+      );
+    }
+
     const src = `/uploads/deposits/${encodeURIComponent(f)}`;
     const isPdf = f.toLowerCase().endsWith('.pdf');
     return (
@@ -33,7 +82,7 @@ const EvidenceViewer = ({ file }) => {
             onError={() => setImgError(true)}
           />
         )}
-        <div className="mt-1 text-xs">
+        <div className="mt-2 flex items-center justify-between text-xs">
           <a
             className="text-blue-600 hover:text-blue-800 underline"
             href={src}
@@ -42,15 +91,28 @@ const EvidenceViewer = ({ file }) => {
           >
             Abrir en pestaña nueva
           </a>
+
+          {isAdmin() && (
+            <label className={`cursor-pointer text-gray-500 hover:text-gray-700 underline ml-4 ${uploading ? 'opacity-50 pointer-events-none' : ''}`}>
+              {uploading ? 'Actualizando...' : 'Cambiar archivo'}
+              <input
+                type="file"
+                className="hidden"
+                accept="image/*,application/pdf"
+                onChange={handleFileChange}
+                disabled={uploading}
+              />
+            </label>
+          )}
         </div>
       </div>
     );
   } catch {
-    return <div className="text-sm text-gray-500">Sin evidencia adjunta</div>;
+    return <div className="text-sm text-gray-500">Error visualizando evidencia</div>;
   }
 };
 
-const DepositExpansionRow = ({ d, details }) => {
+const DepositExpansionRow = ({ d, details, onRefresh }) => {
   const items = details?.items || [];
   const totals = details?.totals || {};
   const file = (details?.header?.evidence_file || d?.evidence_file) || '';
@@ -75,7 +137,7 @@ const DepositExpansionRow = ({ d, details }) => {
                   <tr key={it.order_id}>
                     <td className="px-2 py-1 font-medium">{it.order_number}</td>
                     <td className="px-2 py-1 text-gray-700 truncate max-w-[420px]">{it.customer_name || '-'}</td>
-                    <td className="px-2 py-1 text-gray-500">{it.invoice_date ? new Date(it.invoice_date).toLocaleDateString('es-CO') : '-'}</td>
+                    <td className="px-2 py-1 text-gray-500">{it.invoice_date ? format(new Date(it.invoice_date), 'dd/MM/yyyy') : '-'}</td>
                     <td className="px-2 py-1 text-right">
                       {Number(it.assigned_amount || 0).toLocaleString('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 })}
                     </td>
@@ -116,7 +178,7 @@ const DepositExpansionRow = ({ d, details }) => {
           </div>
           <div className="mt-3 md:mt-0 md:col-span-4">
             <div className="text-xs text-gray-500 mb-1">Evidencia</div>
-            <EvidenceViewer file={file} />
+            <EvidenceViewer file={file} depositId={d.id} onUploadSuccess={onRefresh} />
           </div>
         </div>
       </td>
@@ -289,7 +351,7 @@ const TreasuryAuditPage = () => {
                   {deposits.map((d) => (
                     <React.Fragment key={d.id}>
                       <tr className={`${d.siigo_closed ? 'bg-emerald-50 hover:bg-emerald-100' : 'hover:bg-gray-50'}`}>
-                        <td className="px-4 py-2 text-sm">{d.deposited_at ? new Date(d.deposited_at).toLocaleString('es-CO') : '-'}</td>
+                        <td className="px-4 py-2 text-sm">{d.deposited_at ? format(new Date(d.deposited_at), 'dd/MM/yyyy hh:mm a') : '-'}</td>
                         <td className="px-4 py-2 text-right text-sm font-semibold">{fmt(d.amount)}</td>
                         <td className="px-4 py-2 text-sm">{d.bank_name || '-'}</td>
                         <td className="px-4 py-2 text-sm">{d.reference_number || '-'}</td>
@@ -342,7 +404,7 @@ const TreasuryAuditPage = () => {
                               </td>
                             </tr>
                           )
-                          : <DepositExpansionRow d={d} details={depositDetailsMap[d.id]} />
+                          : <DepositExpansionRow d={d} details={depositDetailsMap[d.id]} onRefresh={loadData} />
                       )}
                     </React.Fragment>
                   ))}
@@ -378,7 +440,7 @@ const TreasuryAuditPage = () => {
                 <tbody className="bg-white divide-y divide-gray-200">
                   {baseChanges.map((r) => (
                     <tr key={r.id} className="hover:bg-gray-50">
-                      <td className="px-4 py-2 text-sm">{r.created_at ? new Date(r.created_at).toLocaleString('es-CO') : '-'}</td>
+                      <td className="px-4 py-2 text-sm">{r.created_at ? format(new Date(r.created_at), 'dd/MM/yyyy hh:mm a') : '-'}</td>
                       <td className="px-4 py-2 text-right text-sm">{fmt(r.previous_base)}</td>
                       <td className="px-4 py-2 text-right text-sm font-semibold">{fmt(r.new_base)}</td>
                       <td className="px-4 py-2 text-sm">{r.changed_by ? `ID ${r.changed_by}` : '-'}</td>

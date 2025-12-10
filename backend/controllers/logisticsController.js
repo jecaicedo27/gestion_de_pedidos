@@ -2107,7 +2107,7 @@ const uploadPaymentEvidence = async (req, res) => {
 
     // Verificar que el pedido existe
     const orderResult = await query(
-      'SELECT id, order_number, status FROM orders WHERE id = ?',
+      'SELECT id, order_number, status, total_amount FROM orders WHERE id = ?',
       [id]
     );
 
@@ -2118,33 +2118,79 @@ const uploadPaymentEvidence = async (req, res) => {
       });
     }
 
+    const order = orderResult[0];
     const relativePath = '/uploads/delivery_evidence/' + req.file.filename;
 
-    // Actualizar pedido: guardar ruta y limpiar flag de pendiente
-    await query(
-      `UPDATE orders 
-       SET payment_evidence_path = ?, 
-           is_pending_payment_evidence = FALSE,
-           updated_at = NOW()
-       WHERE id = ?`,
-      [relativePath, id]
-    );
+    // Extraer datos de pago mixto del request
+    const paymentType = req.body.paymentType || 'full';
+    const transferAmount = parseFloat(req.body.transferAmount || 0);
+    const cashAmount = parseFloat(req.body.cashAmount || 0);
 
-    // Registrar en el historial
-    await query(
-      `INSERT INTO order_history (order_id, action, description, created_at) 
-       VALUES (?, 'payment_evidence_uploaded', 'Evidencia de pago subida por Cartera', NOW())`,
-      [id]
-    );
+    // Si es pago mixto, actualizar campos adicionales
+    if (paymentType === 'mixed' && transferAmount > 0 && cashAmount > 0) {
+      console.log('[uploadPaymentEvidence] Pago mixto detectado:', {
+        orderId: id,
+        transferAmount,
+        cashAmount,
+        total: order.total_amount
+      });
+
+      await query(
+        `UPDATE orders 
+         SET payment_evidence_path = ?, 
+             is_pending_payment_evidence = FALSE,
+             payment_method = 'transferencia',
+             requires_payment = 1,
+             payment_amount = ?,
+             paid_amount = ?,
+             updated_at = NOW()
+         WHERE id = ?`,
+        [relativePath, cashAmount, transferAmount, id]
+      );
+
+      await query(
+        `INSERT INTO order_history (order_id, action, description, created_at) 
+         VALUES (?, 'payment_evidence_uploaded', ?, NOW())`,
+        [id, `Pago mixto registrado - Transferencia: $${transferAmount.toLocaleString()} / Efectivo pendiente: $${cashAmount.toLocaleString()}`]
+      );
+    } else {
+      // Pago completo por transferencia
+      await query(
+        `UPDATE orders 
+         SET payment_evidence_path = ?, 
+             is_pending_payment_evidence = FALSE,
+             payment_method = 'transferencia',
+             requires_payment = 0,
+             payment_amount = 0,
+             paid_amount = ?,
+             updated_at = NOW()
+         WHERE id = ?`,
+        [relativePath, order.total_amount, id]
+      );
+
+      await query(
+        `INSERT INTO order_history (order_id, action, description, created_at) 
+         VALUES (?, 'payment_evidence_uploaded', 'Evidencia de pago subida - Transferencia completa', NOW())`,
+        [id]
+      );
+    }
 
     // Emitir evento de actualización
-    emitStatusChange(id, orderResult[0].order_number, orderResult[0].status, orderResult[0].status);
+    emitStatusChange(id, order.order_number, order.status, order.status);
 
     res.json({
       success: true,
-      message: 'Comprobante subido exitosamente',
+      message: paymentType === 'mixed'
+        ? `Comprobante subido - Mensajero cobrará $${cashAmount.toLocaleString()} en efectivo`
+        : 'Comprobante subido - Pago completo',
       data: {
-        payment_evidence_path: relativePath
+        payment_evidence_path: relativePath,
+        paymentType,
+        ...(paymentType === 'mixed' && {
+          transferAmount,
+          cashAmount,
+          requires_payment: true
+        })
       }
     });
 

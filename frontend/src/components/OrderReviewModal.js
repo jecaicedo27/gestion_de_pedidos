@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { getLocalISOString } from '../utils/dateUtils';
 import * as Icons from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useAuth } from '../context/AuthContext';
@@ -6,7 +7,7 @@ import { useAuth } from '../context/AuthContext';
 // Normaliza método de pago a 'credito' cuando corresponda
 const normalizePaymentMethod = (pm) => {
   const v = (pm || '').toLowerCase();
-  if (['cliente_credito','credito_cliente','cliente-credito','credito'].includes(v)) return 'credito';
+  if (['cliente_credito', 'credito_cliente', 'cliente-credito', 'credito'].includes(v)) return 'credito';
   return v || '';
 };
 
@@ -36,7 +37,7 @@ const CustomDropdown = ({ value, onChange, options, placeholder, required }) => 
       </button>
 
       {isOpen && (
-        <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-300 rounded-md shadow-lg z-50 max-h-60 overflow-auto">
+        <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-300 rounded-md shadow-lg z-50 max-h-96 overflow-auto">
           {options.map((option) => (
             <button
               key={option.value}
@@ -69,7 +70,8 @@ const OrderReviewModal = ({ isOpen, onClose, order, onConfirm }) => {
     electronic_payment_notes: '', // Notas para "otro" medio electrónico
     shipping_payment_method: 'contado', // contado o contraentrega
     shipping_date: '', // Fecha de envío para logística
-    notes: ''
+    notes: '',
+    is_service: false // Nuevo flag para pedidos de solo servicio
   });
 
   const [loading, setLoading] = useState(false);
@@ -79,7 +81,7 @@ const OrderReviewModal = ({ isOpen, onClose, order, onConfirm }) => {
     if (order && isOpen) {
       // Calcular fecha de envío por defecto (hoy - mismo día)
       const today = new Date();
-      const defaultShippingDate = today.toISOString().split('T')[0];
+      const defaultShippingDate = getLocalISOString().slice(0, 10);
 
       setFormData({
         delivery_method: '',  // Siempre vacío para forzar selección manual
@@ -88,7 +90,8 @@ const OrderReviewModal = ({ isOpen, onClose, order, onConfirm }) => {
         electronic_payment_notes: '', // Resetear notas de pago electrónico
         shipping_payment_method: 'contado',
         shipping_date: order.shipping_date || defaultShippingDate,
-        notes: order.notes || ''
+        notes: order.notes || '',
+        is_service: order.is_service || false
       });
     }
   }, [order, isOpen]);
@@ -168,16 +171,55 @@ const OrderReviewModal = ({ isOpen, onClose, order, onConfirm }) => {
   };
 
   const handleInputChange = (field, value) => {
-    setFormData(prev => ({
-      ...prev,
-      [field]: value
-    }));
+    setFormData(prev => {
+      const updates = { ...prev, [field]: value };
+
+      // Si se marca como servicio, limpiar campos de envío
+      if (field === 'is_service' && value === true) {
+        updates.delivery_method = '';
+        updates.shipping_date = '';
+      }
+      // Si se desmarca servicio, restaurar fecha por defecto si está vacía
+      if (field === 'is_service' && value === false && !updates.shipping_date) {
+        updates.shipping_date = getLocalISOString().slice(0, 10);
+      }
+
+      return updates;
+    });
   };
 
   const handleSendToWallet = async () => {
     // Validar método de pago y fecha de envío
     if (!formData.payment_method) {
       toast.error('Debe seleccionar un método de pago');
+      return;
+    }
+
+    // Si es servicio, enviar directo a cartera sin validar envío
+    if (formData.is_service) {
+      setLoading(true);
+      try {
+        const dataToSend = {
+          orderId: order.id,
+          payment_method: normalizePaymentMethod(formData.payment_method),
+          electronic_payment_type: formData.electronic_payment_type,
+          electronic_payment_notes: formData.electronic_payment_notes,
+          shipping_date: null, // No aplica
+          delivery_method: null, // No aplica
+          notes: formData.notes,
+          action: 'send_to_wallet',
+          is_service: true
+        };
+
+        await onConfirm(dataToSend);
+        onClose();
+        toast.success('Pedido de servicio enviado a cartera para validación');
+      } catch (error) {
+        console.error('Error enviando servicio a cartera:', error);
+        toast.error('Error enviando pedido a cartera');
+      } finally {
+        setLoading(false);
+      }
       return;
     }
 
@@ -216,7 +258,7 @@ const OrderReviewModal = ({ isOpen, onClose, order, onConfirm }) => {
     }
 
     // Si es Publicidad o Reposición, pasa directo a Logística (sin validación de Cartera)
-    if (['publicidad','reposicion'].includes(formData.payment_method)) {
+    if (['publicidad', 'reposicion'].includes(formData.payment_method)) {
       if (!formData.delivery_method) {
         toast.error('Para Publicidad/Reposición debe seleccionar un método de envío para enviarlo a Logística');
         return;
@@ -338,6 +380,11 @@ const OrderReviewModal = ({ isOpen, onClose, order, onConfirm }) => {
       return;
     }
 
+    if (formData.is_service) {
+      toast.error('Los pedidos de servicio no se envían a logística, deben ir a Cartera.');
+      return;
+    }
+
     // Reglas de negocio
     const pmNorm = normalizePaymentMethod(formData.payment_method);
     if (pmNorm === 'transferencia' || pmNorm === 'pago_electronico' || pmNorm === 'credito') {
@@ -377,13 +424,17 @@ const OrderReviewModal = ({ isOpen, onClose, order, onConfirm }) => {
       toast.error('Debe seleccionar un método de pago');
       return;
     }
-    if (!formData.delivery_method) {
-      toast.error('Debe seleccionar un método de envío');
-      return;
-    }
-    if (!formData.shipping_date) {
-      toast.error('Debe seleccionar una fecha de envío');
-      return;
+
+    // Validación para pedidos normales (no servicio)
+    if (!formData.is_service) {
+      if (!formData.delivery_method) {
+        toast.error('Debe seleccionar un método de envío');
+        return;
+      }
+      if (!formData.shipping_date) {
+        toast.error('Debe seleccionar una fecha de envío');
+        return;
+      }
     }
 
     // Validaciones específicas para pago electrónico
@@ -411,6 +462,10 @@ const OrderReviewModal = ({ isOpen, onClose, order, onConfirm }) => {
         successMessage = pmNorm === 'contraentrega'
           ? 'Pedido contraentrega enviado a Logística. El mensajero recibe el dinero y lo entrega a Cartera.'
           : 'Pedido (Publicidad/Reposición) enviado a Logística.';
+      } else if (formData.is_service) {
+        // Pedido de servicio => directo a Cartera
+        actionType = 'send_to_wallet';
+        successMessage = 'Pedido de servicio enviado a Cartera para validación.';
       } else if (pmNorm === 'efectivo' && (isPickupDelivery(formData.delivery_method) || isLocalDelivery(formData.delivery_method))) {
         // Efectivo + Recoge en Bodega ó Domicilio/Mensajería local => Logística/Mensajero cobra y luego concilia con Cartera
         actionType = 'send_to_logistics';
@@ -430,13 +485,14 @@ const OrderReviewModal = ({ isOpen, onClose, order, onConfirm }) => {
       const dataToSend = {
         orderId: order.id,
         payment_method: pmNorm,
-        delivery_method: formData.delivery_method,
+        delivery_method: formData.is_service ? null : formData.delivery_method,
         electronic_payment_type: formData.electronic_payment_type,
         electronic_payment_notes: formData.electronic_payment_notes,
-        shipping_date: formData.shipping_date,
+        shipping_date: formData.is_service ? null : formData.shipping_date,
         notes: formData.notes,
         action: actionType,
-        auto_processed: true
+        auto_processed: true,
+        is_service: formData.is_service
       };
 
       await onConfirm(dataToSend);
@@ -477,12 +533,17 @@ const OrderReviewModal = ({ isOpen, onClose, order, onConfirm }) => {
     }
 
     // Recomendación basada en reglas de negocio actualizadas
-    if (formData.payment_method === 'contraentrega' || ['publicidad','reposicion'].includes(formData.payment_method)) {
+    if (formData.payment_method === 'contraentrega' || ['publicidad', 'reposicion'].includes(formData.payment_method)) {
       return {
         action: 'logistics',
         reason: formData.payment_method === 'contraentrega'
           ? 'Pago contraentrega: pasa directo a Logística. El mensajero recibe el dinero y lo entrega a Cartera.'
           : 'Pedido de Publicidad/Reposición: pasa directo a Logística, no requiere validación de Cartera.'
+      };
+    } else if (formData.is_service) {
+      return {
+        action: 'wallet',
+        reason: 'Pedido de servicio: pasa a Cartera para validación (sin logística).'
       };
     } else if (formData.payment_method === 'efectivo' && (isPickupDelivery(formData.delivery_method) || isLocalDelivery(formData.delivery_method))) {
       return {
@@ -713,6 +774,25 @@ const OrderReviewModal = ({ isOpen, onClose, order, onConfirm }) => {
             </div>
           )}
 
+          {/* Checkbox Procesar como Servicio */}
+          <div className="bg-purple-50 border border-purple-200 rounded-lg p-4 mb-4">
+            <label className="flex items-center space-x-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={formData.is_service}
+                onChange={(e) => handleInputChange('is_service', e.target.checked)}
+                className="form-checkbox h-5 w-5 text-purple-600 rounded focus:ring-purple-500 border-gray-300"
+              />
+              <div>
+                <span className="text-gray-900 font-medium">Procesar como servicio</span>
+                <p className="text-xs text-gray-500">
+                  Seleccione esta opción si el pedido no requiere envío físico (ej. fletes, servicios).
+                  Se omitirán los datos de logística.
+                </p>
+              </div>
+            </label>
+          </div>
+
           {/* Formulario de configuración */}
           <div className="space-y-6">
             {/* Método de pago - Dropdown Personalizado */}
@@ -729,26 +809,28 @@ const OrderReviewModal = ({ isOpen, onClose, order, onConfirm }) => {
               />
             </div>
 
-            {/* Método de Envío - Dropdown Personalizado */}
-            <div className="relative">
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                <Icons.Truck className="w-4 h-4 inline mr-1" />
-                Método de Envío *
-              </label>
-              <CustomDropdown
-                value={formData.delivery_method}
-                onChange={(value) => handleInputChange('delivery_method', value)}
-                options={deliveryMethods}
-                placeholder="Seleccionar método de envío"
-                required
-              />
-              <p className="text-xs text-gray-500 mt-1">
-                {deliveryMethods.length > 0
-                  ? 'Seleccione el método de envío que se usará para este pedido'
-                  : 'Cargando métodos de envío...'
-                }
-              </p>
-            </div>
+            {/* Método de Envío - Dropdown Personalizado (Oculto si es servicio) */}
+            {!formData.is_service && (
+              <div className="relative">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  <Icons.Truck className="w-4 h-4 inline mr-1" />
+                  Método de Envío *
+                </label>
+                <CustomDropdown
+                  value={formData.delivery_method}
+                  onChange={(value) => handleInputChange('delivery_method', value)}
+                  options={deliveryMethods}
+                  placeholder="Seleccionar método de envío"
+                  required
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  {deliveryMethods.length > 0
+                    ? 'Seleccione el método de envío que se usará para este pedido'
+                    : 'Cargando métodos de envío...'
+                  }
+                </p>
+              </div>
+            )}
 
             {/* Opciones de Pago Electrónico - Solo visible cuando se selecciona pago_electronico */}
             {formData.payment_method === 'pago_electronico' && (
@@ -809,35 +891,35 @@ const OrderReviewModal = ({ isOpen, onClose, order, onConfirm }) => {
               </div>
             )}
 
-            {/* Fecha de envío - Siempre visible para programación */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2 flex items-center">
-                <Icons.Calendar className="w-4 h-4 mr-2 text-blue-600" />
-                Fecha de Envío *
-              </label>
-              <input
-                type="date"
-                value={formData.shipping_date}
-                onChange={(e) => handleInputChange('shipping_date', e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                required
-              />
-              <p className="text-xs text-gray-500 mt-1">
-                Esta fecha será crucial para que logística programe el envío
-              </p>
-            </div>
+            {/* Fecha de Envío (Oculto si es servicio) */}
+            {!formData.is_service && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  <Icons.Calendar className="w-4 h-4 inline mr-1" />
+                  Fecha de Envío *
+                </label>
+                <input
+                  type="date"
+                  value={formData.shipping_date}
+                  onChange={(e) => handleInputChange('shipping_date', e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  required
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Fecha programada para que logística despache el pedido
+                </p>
+              </div>
+            )}
 
             {/* Recomendación del sistema */}
             {recommendation && (
-              <div className={`p-4 rounded-lg border ${
-                recommendation.action === 'wallet'
-                  ? 'bg-blue-50 border-blue-200'
-                  : 'bg-green-50 border-green-200'
-              }`}>
+              <div className={`p-4 rounded-lg border ${recommendation.action === 'wallet'
+                ? 'bg-blue-50 border-blue-200'
+                : 'bg-green-50 border-green-200'
+                }`}>
                 <div className="flex items-start">
-                  <Icons.Info className={`w-5 h-5 mt-0.5 mr-3 ${
-                    recommendation.action === 'wallet' ? 'text-blue-500' : 'text-green-500'
-                  }`} />
+                  <Icons.Info className={`w-5 h-5 mt-0.5 mr-3 ${recommendation.action === 'wallet' ? 'text-blue-500' : 'text-green-500'
+                    }`} />
                   <div>
                     <h4 className="font-medium text-gray-900 mb-1">
                       Recomendación del Sistema
@@ -869,7 +951,7 @@ const OrderReviewModal = ({ isOpen, onClose, order, onConfirm }) => {
               // Para admin y facturador: un solo botón que aplica reglas de negocio automáticas
               <button
                 onClick={handleProcessOrder}
-                disabled={loading || !formData.payment_method || !formData.shipping_date || !formData.delivery_method}
+                disabled={loading || !formData.payment_method || (!formData.is_service && (!formData.shipping_date || !formData.delivery_method))}
                 className="flex items-center px-6 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-500 disabled:opacity-50"
               >
                 {loading ? (

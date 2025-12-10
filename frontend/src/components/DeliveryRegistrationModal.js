@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { getLocalISOString } from '../utils/dateUtils';
 import { useForm } from 'react-hook-form';
 import * as Icons from 'lucide-react';
 import toast from 'react-hot-toast';
@@ -108,7 +109,7 @@ const DeliveryRegistrationModal = ({ isOpen, onClose, order, onConfirm }) => {
       const detected = detectProviderFromStringLocal(order?.notes || '') || '';
       const bank = (fromOrder || detected || 'otro').toLowerCase();
       const ref = `auto-${Date.now()}`;
-      const dateStr = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+      const dateStr = getLocalISOString().slice(0, 10); // YYYY-MM-DD
       setValue('transferBank', bank, { shouldValidate: false });
       setValue('transferReference', ref, { shouldValidate: false });
       setValue('transferDate', dateStr, { shouldValidate: false });
@@ -122,7 +123,7 @@ const DeliveryRegistrationModal = ({ isOpen, onClose, order, onConfirm }) => {
   const deliveryFeeCollected = watch('deliveryFeeCollected');
   // Campos de "Entrega con confianza"
   const trustedDelivery = watch('trustedDelivery');
-  const authorizedByUserId = watch('authorizedByUserId');
+  const authorizedByName = watch('authorizedByName');
   const trustNote = watch('trustNote');
 
   // Reglas de evidencia: pedir foto de pago para efectivo o contraentrega
@@ -198,45 +199,7 @@ const DeliveryRegistrationModal = ({ isOpen, onClose, order, onConfirm }) => {
     }
   };
 
-  const handleMarkPendingEvidence = async () => {
-    if (!window.confirm('¿Estás seguro de marcar este pedido como "Pendiente de Comprobante"?\n\nPodrás finalizar la entrega sin subir la foto del pago, pero Cartera deberá subirla después.')) {
-      return;
-    }
 
-    try {
-      setLoading(true);
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${API_URL}/api/messenger/orders/${order.id}/pending-evidence`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      });
-
-      const data = await response.json();
-
-      if (data.success) {
-        toast.success('Marcado como pendiente de comprobante');
-        // Actualizar estado local para permitir finalizar entrega sin foto
-        // No cerramos el modal, solo actualizamos el objeto order localmente
-        // para que requiresPaymentEvidence se re-evalue a false (o similar)
-        // OJO: requiresPaymentEvidence depende de order.payment_evidence_path.
-        // Aquí necesitamos que el frontend sepa que ya está "pendiente" y permita pasar.
-        // Una forma es simular que ya tiene path o usar una bandera local.
-        // Vamos a inyectar la bandera is_pending_payment_evidence en el objeto order local.
-        if (order) {
-          order.is_pending_payment_evidence = 1;
-        }
-      } else {
-        toast.error(data.message || 'Error al marcar como pendiente');
-      }
-    } catch (error) {
-      console.error('Error marking pending evidence:', error);
-      toast.error('Error de conexión');
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const onSubmit = async (data) => {
     // Validaciones dinámicas según método de pago seleccionado por el mensajero
@@ -268,8 +231,8 @@ const DeliveryRegistrationModal = ({ isOpen, onClose, order, onConfirm }) => {
 
     // Reglas adicionales para entrega con confianza
     if (trustedDelivery) {
-      if (!authorizedByUserId || Number(authorizedByUserId) <= 0) {
-        toast.error('Debes ingresar el ID del usuario que autoriza la entrega con confianza');
+      if (!authorizedByName || String(authorizedByName).trim().length < 3) {
+        toast.error('Debes ingresar el nombre de la persona que autoriza la entrega con confianza');
         return;
       }
       if (!trustNote || String(trustNote).trim().length < 3) {
@@ -302,13 +265,13 @@ const DeliveryRegistrationModal = ({ isOpen, onClose, order, onConfirm }) => {
         // Nuevos campos: métodos de pago seleccionados por el mensajero
         productPaymentMethod,
         deliveryFeePaymentMethod: feePaymentMethod,
-        transferAmount: trustedDelivery ? 0 : parseFloat(data.transferAmount || 0),
+        transferAmount: parseFloat(data.transferAmount || 0), // Enviar el monto real incluso con trustedDelivery
         transferBank: data.transferBank || null,
         transferReference: data.transferReference || null,
         transferDate: data.transferDate || null,
         // Entrega con confianza
         trustedDelivery: !!trustedDelivery,
-        authorizedByUserId: trustedDelivery ? parseInt(authorizedByUserId) : null,
+        authorizedByName: trustedDelivery ? String(authorizedByName).trim() : null,
         trustNote: trustedDelivery ? trustNote : null,
         // Enviar flag de pendiente de comprobante para asegurar consistencia en backend
         isPendingEvidence: order?.is_pending_payment_evidence ? true : false,
@@ -486,15 +449,14 @@ const DeliveryRegistrationModal = ({ isOpen, onClose, order, onConfirm }) => {
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                         <div>
                           <label className="block text-sm font-medium text-gray-700 mb-1">
-                            ID usuario que autoriza (cartera/facturador/admin){trustedDelivery ? ' *' : ''}
+                            Nombre de quien autoriza{trustedDelivery ? ' *' : ''}
                           </label>
                           <input
-                            type="number"
-                            min="1"
+                            type="text"
                             disabled={!trustedDelivery}
                             className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                            placeholder="Ej: 12"
-                            {...register('authorizedByUserId')}
+                            placeholder="Ej: Juan González"
+                            {...register('authorizedByName')}
                           />
                         </div>
                         <div>
@@ -669,7 +631,7 @@ const DeliveryRegistrationModal = ({ isOpen, onClose, order, onConfirm }) => {
               ) : order?.payment_evidence_path ? (
                 <div className="relative">
                   <img
-                    src={`${API_URL}${order.payment_evidence_path}`}
+                    src={order.payment_evidence_path}
                     alt="Evidencia subida por Cartera"
                     className="w-full h-48 object-cover rounded-lg"
                   />
@@ -701,21 +663,10 @@ const DeliveryRegistrationModal = ({ isOpen, onClose, order, onConfirm }) => {
                 accept="image/*"
                 capture="environment"
                 className="hidden"
-                onChange={(e) => handlePhotoChange(e, setPaymentPhoto)}
+                onChange={(e) => handleFileChange(e, 'payment')}
               />
             </div>
-            {/* Botón para marcar pendiente de comprobante */}
-            {!paymentPhoto && !order?.payment_evidence_path && requiresPaymentEvidence && (
-              <div className="mt-2 text-center">
-                <button
-                  type="button"
-                  onClick={handleMarkPendingEvidence}
-                  className="text-sm text-orange-600 hover:text-orange-800 underline font-medium"
-                >
-                  Cliente pagó pero no tiene comprobante (Marcar Pendiente)
-                </button>
-              </div>
-            )}
+
             <p className="text-sm text-gray-600 mt-1">
               {requiresPaymentEvidence
                 ? 'Tome una foto del comprobante de transferencia (cuando aplique)'

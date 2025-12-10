@@ -1195,7 +1195,7 @@ const getPendingSiigoClose = async (req, res) => {
     const eligible = [
       'en_logistica', 'pendiente_empaque', 'en_preparacion', 'en_empaque',
       'empacado', 'listo', 'listo_para_entrega', 'en_reparto',
-      'entregado_transportadora', 'entregado_cliente', 'entregado_bodega',
+      'entregado_transportadora', 'entregado_cliente', 'entregado_bodega', 'entregado',
       'gestion_especial', 'cancelado'
     ];
     where.push(`o.status IN (${eligible.map(() => '?').join(',')})`);
@@ -1237,7 +1237,11 @@ const getPendingSiigoClose = async (req, res) => {
         -- Datos SIIGO
         o.siigo_invoice_id, o.siigo_invoice_number, o.siigo_invoice_created_at,
         o.siigo_closed, o.siigo_closed_at, o.siigo_closure_method,
-        o.payment_evidence_path, o.tags, o.electronic_payment_type
+        o.siigo_closed, o.siigo_closed_at, o.siigo_closure_method,
+        o.payment_evidence_path, 
+        (SELECT JSON_ARRAYAGG(pe.file_path) FROM payment_evidences pe WHERE pe.order_id = o.id) as additional_evidences,
+        (SELECT JSON_ARRAYAGG(wv.payment_proof_image) FROM wallet_validations wv WHERE wv.order_id = o.id AND wv.payment_proof_image IS NOT NULL) as wallet_evidences,
+        o.tags, o.electronic_payment_type, o.is_service
       FROM orders o
       LEFT JOIN carriers c ON o.carrier_id = c.id
       LEFT JOIN users messenger ON o.assigned_messenger_id = messenger.id
@@ -1248,7 +1252,65 @@ const getPendingSiigoClose = async (req, res) => {
       params
     );
 
-    return res.json({ success: true, data: rows });
+    // Procesar filas para combinar evidencias
+    const processedRows = rows.map(row => {
+      let evidences = [];
+
+      // 1. Evidencia legacy (columna orders.payment_evidence_path)
+      if (row.payment_evidence_path) {
+        try {
+          const parsed = JSON.parse(row.payment_evidence_path);
+          if (Array.isArray(parsed)) evidences.push(...parsed);
+          else evidences.push(row.payment_evidence_path);
+        } catch {
+          if (row.payment_evidence_path.includes(',')) {
+            evidences.push(...row.payment_evidence_path.split(',').map(s => s.trim()));
+          } else {
+            evidences.push(row.payment_evidence_path);
+          }
+        }
+      }
+
+      // 2. Evidencias adicionales (tabla payment_evidences)
+      if (row.additional_evidences) {
+        let additional = row.additional_evidences;
+        if (typeof additional === 'string') {
+          try { additional = JSON.parse(additional); } catch { }
+        }
+        if (Array.isArray(additional)) {
+          evidences.push(...additional);
+        }
+      }
+
+      // 3. Evidencias de wallet_validations (payment_proof_image)
+      if (row.wallet_evidences) {
+        let walletEvs = row.wallet_evidences;
+        if (typeof walletEvs === 'string') {
+          try { walletEvs = JSON.parse(walletEvs); } catch { }
+        }
+        if (Array.isArray(walletEvs)) {
+          // Agregar prefijo /uploads/payment-proofs/ a cada evidencia de wallet
+          const fullPaths = walletEvs.map(filename => {
+            if (filename.startsWith('http') || filename.startsWith('/')) {
+              return filename; // Ya es una URL completa o path absoluto
+            }
+            return `/uploads/payment-proofs/${filename}`;
+          });
+          evidences.push(...fullPaths);
+        }
+      }
+
+      // Eliminar duplicados y nulos
+      evidences = [...new Set(evidences.filter(e => e))];
+
+      return {
+        ...row,
+        // Enviar como JSON string para compatibilidad con frontend existente
+        payment_evidence_path: evidences.length > 0 ? JSON.stringify(evidences) : null
+      };
+    });
+
+    return res.json({ success: true, data: processedRows });
   } catch (e) {
     console.error('Error listando pendientes de cierre SIIGO:', e);
     return res.status(500).json({ success: false, message: 'Error interno del servidor' });

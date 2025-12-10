@@ -103,10 +103,21 @@ const getOrders = async (req, res) => {
         whereClause += ' AND o.status = "revision_cartera"';
       }
     } else if (userRole === 'facturador') {
-      // Facturador: puede ver todos los pedidos; si se envía un estado específico desde el frontend, aplicarlo.
-      if (status) {
+      // Facturador: por defecto ver solo pendientes de facturación.
+      // Si se envía un estado específico desde el frontend, aplicarlo.
+      // EXCEPCIÓN: Si la vista es "todos", permitir ver todo el histórico.
+      if (view === 'todos') {
+        // Sin filtro adicional por estado
+        if (status) {
+          whereClause += ' AND o.status = ?';
+          params.push(status);
+        }
+      } else if (status) {
         whereClause += ' AND o.status = ?';
         params.push(status);
+      } else {
+        // Default: solo mostrar pendientes de facturación
+        whereClause += ' AND o.status = "pendiente_por_facturacion"';
       }
     } else if (userRole === 'admin') {
       // Admin puede ver todos los pedidos solo para informes, sin filtros restrictivos
@@ -229,9 +240,11 @@ const getOrders = async (req, res) => {
         o.siigo_observations, o.siigo_payment_info, o.siigo_seller_id, o.siigo_balance,
         o.siigo_document_type, o.siigo_stamp_status, o.siigo_mail_status, o.siigo_invoice_created_at,
         o.siigo_closed, o.siigo_closed_at, o.siigo_closed_by, o.siigo_closure_method, o.siigo_closure_note,
+        o.is_service,
         o.tags,
         o.delivery_fee,
         o.delivered_at,
+        (SELECT COUNT(*) FROM order_items oi WHERE oi.order_id = o.id) AS items_count,
         (SELECT COUNT(*) FROM cash_register cr WHERE cr.order_id = o.id) AS cash_register_count,
         CASE WHEN (SELECT COUNT(*) FROM cash_register cr2 WHERE cr2.order_id = o.id) > 0 THEN 1 ELSE 0 END AS has_payment,
         (SELECT COUNT(*) FROM cash_register crc WHERE crc.order_id = o.id AND crc.status = 'collected') AS cash_register_collected_count,
@@ -2029,6 +2042,32 @@ const getDashboardStats = async (req, res) => {
         params
       );
 
+      // Desglose por método de entrega (para tarjeta Entregados)
+      const deliveredByMethod = await query(
+        `SELECT 
+           COALESCE(delivery_method, 'domicilio') as method,
+           COUNT(*) as count
+         FROM orders ${whereClause} 
+         AND status IN ('entregado_cliente', 'entregado')
+         GROUP BY delivery_method`,
+        params
+      );
+
+      // Desglose por mensajero (para tarjeta Entregados)
+      const deliveredByMessenger = await query(
+        `SELECT 
+           u.full_name,
+           COUNT(*) as count
+         FROM orders o
+         LEFT JOIN users u ON o.assigned_messenger_id = u.id
+         ${whereClause} 
+         AND o.status IN ('entregado_cliente', 'entregado')
+         AND o.assigned_messenger_id IS NOT NULL
+         GROUP BY o.assigned_messenger_id, u.full_name
+         ORDER BY count DESC`,
+        params
+      );
+
       return res.json({
         success: true,
         data: {
@@ -2042,6 +2081,10 @@ const getDashboardStats = async (req, res) => {
           pendingDelivery: pendingDelivery[0].count,
           sentToCarrier: sentToCarrier[0].count,
           delivered: delivered[0].count,
+
+          // Desgloses nuevos
+          deliveredByMethod,
+          deliveredByMessenger,
 
           // Estadísticas mínimas
           statusStats,
@@ -2285,6 +2328,32 @@ const getDashboardStats = async (req, res) => {
       params
     );
 
+    // Desglose por método de entrega (para tarjeta Entregados)
+    const deliveredByMethod = await query(
+      `SELECT 
+         COALESCE(delivery_method, 'domicilio') as method,
+         COUNT(*) as count
+       FROM orders ${whereClause} 
+       AND status IN ('entregado_cliente', 'entregado')
+       GROUP BY delivery_method`,
+      params
+    );
+
+    // Desglose por mensajero (para tarjeta Entregados)
+    const deliveredByMessenger = await query(
+      `SELECT 
+         u.full_name,
+         COUNT(*) as count
+       FROM orders o
+       LEFT JOIN users u ON o.assigned_messenger_id = u.id
+       ${whereClause} 
+       AND o.status IN ('entregado_cliente', 'entregado')
+       AND o.assigned_messenger_id IS NOT NULL
+       GROUP BY o.assigned_messenger_id, u.full_name
+       ORDER BY count DESC`,
+      params
+    );
+
     res.json({
       success: true,
       data: {
@@ -2298,6 +2367,10 @@ const getDashboardStats = async (req, res) => {
         pendingDelivery: pendingDelivery[0].count,
         sentToCarrier: sentToCarrier[0].count,
         delivered: delivered[0].count,
+
+        // Desgloses nuevos
+        deliveredByMethod,
+        deliveredByMessenger,
 
         // Estadísticas existentes
         statusStats,
@@ -2344,7 +2417,7 @@ const getOrderTimeline = async (req, res) => {
     const o = orders[0];
 
     // Consultas paralelas de fuentes relacionadas (incluye adjuntos)
-    const [cash, validations, pkgStatus, scans, tracking, evidences, pkgEvidences, history] = await Promise.all([
+    const [cash, validations, pkgStatus, scans, tracking, evidences, pkgEvidences, history, paymentEvidences] = await Promise.all([
       query('SELECT amount, payment_method, status, created_at, accepted_at, accepted_by FROM cash_register WHERE order_id = ? ORDER BY created_at ASC', [id]),
       // Incluir nombres e imágenes de cartera
       query(`SELECT 
@@ -2362,7 +2435,9 @@ const getOrderTimeline = async (req, res) => {
       // Evidencias fotográficas de empaque
       query('SELECT id, photo_filename, photo_path, description, taken_at, created_at FROM packaging_evidence WHERE order_id = ? ORDER BY created_at ASC', [id]),
       // Historial de órdenes (para evidencia de pago y otros eventos futuros)
-      query('SELECT action, description, created_at FROM order_history WHERE order_id = ? AND action = "payment_evidence_uploaded" ORDER BY created_at ASC', [id])
+      query('SELECT action, description, created_at FROM order_history WHERE order_id = ? AND action = "payment_evidence_uploaded" ORDER BY created_at ASC', [id]),
+      // Evidencias de pago (tabla nueva)
+      query('SELECT id, file_path, uploaded_at, uploaded_by FROM payment_evidences WHERE order_id = ? ORDER BY uploaded_at ASC', [id])
     ]);
 
     // Eventos manuales (auditoría) - Gestión especial / Devolución / Cancelación
@@ -2392,6 +2467,38 @@ const getOrderTimeline = async (req, res) => {
       events.push({ at: o.siigo_invoice_created_at, type: 'invoice_created', title: 'Factura SIIGO creada', details: `Factura: ${o.siigo_invoice_number || o.siigo_invoice_id || ''}` });
     }
 
+    // Evidencias de pago (agrupar por fecha cercana o mostrar individualmente)
+    if (paymentEvidences && paymentEvidences.length > 0) {
+      // Agrupar evidencias subidas en el mismo minuto para no saturar el timeline
+      const grouped = {};
+      paymentEvidences.forEach(ev => {
+        const key = new Date(ev.uploaded_at).toISOString().substring(0, 16); // YYYY-MM-DDTHH:mm
+        if (!grouped[key]) grouped[key] = [];
+        grouped[key].push(ev);
+      });
+
+      Object.keys(grouped).forEach(key => {
+        const group = grouped[key];
+        const first = group[0];
+        const evAttachments = group.map(g => ({
+          url: `/${g.file_path}`,
+          label: 'Comprobante de Pago',
+          source: 'cartera'
+        }));
+
+        // Agregar a adjuntos globales
+        evAttachments.forEach(att => attachments.push({ ...att, at: first.uploaded_at }));
+
+        events.push({
+          at: first.uploaded_at,
+          type: 'payment_evidence',
+          title: 'Comprobante(s) de Pago subido(s)',
+          details: `Se subieron ${group.length} archivo(s) de soporte.`,
+          attachments: evAttachments
+        });
+      });
+    }
+
     // Cartera (validaciones)
     validations.forEach(v => {
       const when = v.validated_at || v.created_at;
@@ -2403,17 +2510,20 @@ const getOrderTimeline = async (req, res) => {
         details: `Resultado: ${status}${v.validated_by_name ? ` · Por: ${v.validated_by_name}` : ''}`
       };
       const evAttachments = [];
+      // Mantener compatibilidad con imágenes antiguas en wallet_validations si existen
       if (v.payment_proof_image) {
         const url = `/uploads/payment-proofs/${v.payment_proof_image}`;
-        evAttachments.push({ url, label: 'Comprobante de Transferencia (Cartera)', source: 'cartera' });
-        attachments.push({ url, label: 'Comprobante de Transferencia (Cartera)', source: 'cartera', at: when });
+        evAttachments.push({ url, label: 'Comprobante de Transferencia (Legacy)', source: 'cartera' });
+        attachments.push({ url, label: 'Comprobante de Transferencia (Legacy)', source: 'cartera', at: when });
       }
       if (v.cash_proof_image) {
         const url = `/uploads/payment-proofs/${v.cash_proof_image}`;
-        evAttachments.push({ url, label: 'Comprobante de Efectivo (Cartera)', source: 'cartera' });
-        attachments.push({ url, label: 'Comprobante de Efectivo (Cartera)', source: 'cartera', at: when });
+        evAttachments.push({ url, label: 'Comprobante de Efectivo (Legacy)', source: 'cartera' });
+        attachments.push({ url, label: 'Comprobante de Efectivo (Legacy)', source: 'cartera', at: when });
       }
-      if (evAttachments.length) ev.attachments = evAttachments;
+      if (evAttachments.length) {
+        ev.attachments = (ev.attachments || []).concat(evAttachments);
+      }
       events.push(ev);
     });
 
@@ -2622,6 +2732,20 @@ const getOrderTimeline = async (req, res) => {
       events.push({ at: o.delivered_at, type: 'delivered_final', title: label, details });
     }
 
+    // Cerrado en Siigo (Administrativo)
+    if (o.siigo_closed === 1) {
+      const detailsParts = [];
+      if (o.siigo_closure_method) detailsParts.push(`Método: ${o.siigo_closure_method}`);
+      if (o.siigo_closure_note) detailsParts.push(`Nota: ${o.siigo_closure_note}`);
+
+      events.push({
+        at: o.siigo_closed_at || o.updated_at, // Fallback si no hay fecha específica
+        type: 'siigo_closed',
+        title: 'Cerrado en Siigo',
+        details: detailsParts.join(' · ') || 'Cierre administrativo completado'
+      });
+    }
+
     // Estado actual al final
     const statusDetails = (() => {
       if (o.status === 'entregado_transportadora') {
@@ -2644,7 +2768,8 @@ const getOrderTimeline = async (req, res) => {
       payment_method: o.payment_method,
       total_amount: o.total_amount,
       carrier_id: o.carrier_id || null,
-      carrier_name: o.carrier_name || null
+      carrier_name: o.carrier_name || null,
+      is_service: o.is_service // Importante para el frontend
     };
 
     return res.json({ success: true, data: { context, events, attachments } });
@@ -2892,8 +3017,8 @@ const syncOrderFromSiigo = async (req, res) => {
 
     console.log(`🔄 Iniciando sincronización inteligente para pedido ${id} desde SIIGO...`);
 
-    // 1. Obtener pedido y su ID de factura SIIGO
-    const orderRows = await query('SELECT id, siigo_invoice_id, order_number FROM orders WHERE id = ?', [id]);
+    // 1. Obtener pedido y su ID de factura SIIGO (incluyendo datos actuales de cliente para fallback)
+    const orderRows = await query('SELECT id, siigo_invoice_id, order_number, customer_phone, customer_address, customer_email FROM orders WHERE id = ?', [id]);
     if (!orderRows.length) {
       return res.status(404).json({ success: false, message: 'Pedido no encontrado' });
     }
@@ -2933,9 +3058,9 @@ const syncOrderFromSiigo = async (req, res) => {
         };
 
         const newName = extractCommercialName(siigoInvoice.customer, customerInfo);
-        const newPhone = customerInfo.phones?.[0]?.number || siigoInvoice.customer.phones?.[0]?.number || order.customer_phone;
-        const newAddress = customerInfo.address?.address || siigoInvoice.customer.address?.address || order.customer_address;
-        const newEmail = customerInfo.contacts?.[0]?.email || customerInfo.email || order.customer_email;
+        const newPhone = customerInfo.phones?.[0]?.number || siigoInvoice.customer.phones?.[0]?.number || order.customer_phone || null;
+        const newAddress = customerInfo.address?.address || siigoInvoice.customer.address?.address || order.customer_address || null;
+        const newEmail = customerInfo.contacts?.[0]?.email || customerInfo.email || order.customer_email || null;
 
         if (newName && newName !== 'Cliente SIIGO') {
           await query(
@@ -2950,7 +3075,8 @@ const syncOrderFromSiigo = async (req, res) => {
           console.log(`✅ Cliente actualizado en BD: ${newName}`);
         }
       } catch (err) {
-        console.warn('⚠️ Error actualizando cliente en sync:', err.message);
+        console.error('⚠️ Error actualizando cliente en sync:', err);
+        console.error(err.stack);
       }
     }
 

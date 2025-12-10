@@ -5,6 +5,17 @@ const configService = require('./configService');
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 
+// Función para obtener instancia de Socket.IO
+function getIO() {
+  try {
+    const server = require('../server');
+    return server.io;
+  } catch (error) {
+    console.warn('⚠️ No se pudo obtener instancia de Socket.IO:', error.message);
+    return null;
+  }
+}
+
 // Función para obtener ID del usuario del sistema
 async function getSystemUserId() {
   try {
@@ -147,6 +158,12 @@ class SiigoService {
         await this.waitForRateLimit();
         const result = await requestFn();
         this.releaseSlot();
+
+        // Éxito: reducir gradualmente el delay si estaba elevado (recuperación adaptativa)
+        if (this.rateLimitDelay > 300) {
+          this.rateLimitDelay = Math.max(300, Math.floor(this.rateLimitDelay * 0.9));
+        }
+
         return result;
       } catch (error) {
         this.releaseSlot();
@@ -1108,6 +1125,25 @@ class SiigoService {
 
       const orderId = insertResult.insertId;
       console.log(`✅ Pedido creado con ID: ${orderId}`);
+
+      // Emitir evento WebSocket para notificar a facturadores sobre el nuevo pedido
+      try {
+        if (global.io) {
+          const eventPayload = {
+            orderId,
+            order_number: orderData.order_number,
+            from_status: null,
+            to_status: 'pendiente_por_facturacion',
+            timestamp: new Date().toISOString()
+          };
+          global.io.emit('order-status-changed', eventPayload);
+          console.log(`📡 Notificación enviada: nuevo pedido ${orderData.order_number} en facturación`);
+        } else {
+          console.warn('⚠️ global.io no disponible, notificación no enviada');
+        }
+      } catch (error) {
+        console.warn('⚠️ Error emitiendo notificación de nuevo pedido:', error.message);
+      }
 
       // Procesar items de la factura
       let itemsInserted = 0;

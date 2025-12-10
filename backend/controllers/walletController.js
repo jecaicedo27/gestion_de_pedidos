@@ -385,7 +385,15 @@ const validatePayment = async (req, res) => {
     if (validationType === 'approved' && (pmLower === 'pago_electronico' || pmLower === 'pago_electrónico' || pmLower === 'electronico' || pmLower === 'electrónico')) {
       // Usar banco enviado inicialmente; el fallback se calcula más adelante con orderData
       const providerRaw = String(bankName || '').toLowerCase();
-      if (!paymentProofImage) {
+
+      // Verificar si hay comprobante en el request o en la tabla payment_evidences
+      let hasEvidence = !!paymentProofImage;
+      if (!hasEvidence) {
+        const existingEvidences = await query('SELECT id FROM payment_evidences WHERE order_id = ? LIMIT 1', [orderId]);
+        hasEvidence = existingEvidences.length > 0;
+      }
+
+      if (!hasEvidence) {
         return res.status(400).json({
           success: false,
           message: 'Debe adjuntar el comprobante de la transacción (imagen) para pagos electrónicos (Bold/MercadoPago)'
@@ -617,8 +625,35 @@ const validatePayment = async (req, res) => {
           );
         }
 
-        // Actualizar estado del pedido a logística (y registrar proveedor si es pago electrónico)
-        if (pmLower === 'pago_electronico' || pmLower === 'pago_electrónico' || pmLower === 'electronico' || pmLower === 'electrónico') {
+        // Actualizar estado del pedido
+        if (orderData.is_service) {
+          // Calcular provider si aplica (aunque sea servicio, podría ser pago electrónico)
+          const bankLower = String(bankNameFinal || '').toLowerCase();
+          let normalizedProvider = null;
+          if (bankLower === 'mercado_pago' || bankLower === 'mercadopago') {
+            normalizedProvider = 'mercadopago';
+          } else if (bankLower === 'bold') {
+            normalizedProvider = 'bold';
+          }
+          // Si es bancolombia u otro, se deja en null (es transferencia, no pago electrónico tipo gateway)
+
+          // Pedidos de servicio: pasan directo a entregado (pendiente cierre SIIGO)
+          await connection.execute(
+            `UPDATE orders 
+             SET status = "entregado", 
+                 validation_status = "approved",
+                 validation_notes = ?,
+                 electronic_payment_type = ?,
+                 electronic_payment_notes = ?,
+                 payment_method = ?,
+                 requires_payment = IF(? = 'cliente_credito', 0, requires_payment),
+                 paid_amount = COALESCE(?, paid_amount),
+                 updated_at = NOW() 
+             WHERE id = ?`,
+            [finalValidationNotes, normalizedProvider, paymentReference || null, pmFinal, pmFinal, paidAmountForUpdate, orderId]
+          );
+          console.log('✅ [WALLET] Pedido de SERVICIO validado y marcado como entregado (skip logística)');
+        } else if (pmLower === 'pago_electronico' || pmLower === 'pago_electrónico' || pmLower === 'electronico' || pmLower === 'electrónico') {
           const bankLower = String(bankNameFinal || '').toLowerCase();
           const normalizedProvider = (bankLower === 'mercado_pago' || bankLower === 'mercadopago') ? 'mercadopago' : 'bold';
           await connection.execute(
@@ -638,15 +673,29 @@ const validatePayment = async (req, res) => {
         } else {
           // Aplicar overrides cuando Cartera marca efectivo pendiente por mensajero (pago mixto)
           // Fallback robusto: si no vienen overrides, derivar de paymentTypeSafe/cashAmount
+
+          // NUEVO: Detectar transferencia completa (no mixta) para marcar requires_payment = 0
+          // Esto evita que el mensajero cobre dinero cuando Cartera ya validó transferencia completa
+          const isFullTransfer = (
+            pmFinal === 'transferencia' &&
+            paymentTypeSafe !== 'mixed' &&
+            typeof req.__requiresPaymentOverride === 'undefined'  // No hay override de pago mixto
+          );
+
           const rpOverride = (typeof req.__requiresPaymentOverride !== 'undefined')
             ? req.__requiresPaymentOverride
-            : (paymentTypeSafe === 'mixed' ? 1 : null);
+            : (paymentTypeSafe === 'mixed' ? 1 : (isFullTransfer ? 0 : null));
+
           const paOverride = (typeof req.__paymentAmountOverride !== 'undefined')
             ? req.__paymentAmountOverride
-            : (paymentTypeSafe === 'mixed' ? toNumberOrNull(cashAmount) : null);
+            : (paymentTypeSafe === 'mixed' ? toNumberOrNull(cashAmount) : (isFullTransfer ? 0 : null));
+
           try {
-            console.log('[WALLET][UPDATE] applying overrides:', { rpOverride, paOverride, pmFinal, paymentTypeSafe });
+            console.log('[WALLET][UPDATE] applying overrides:', {
+              rpOverride, paOverride, pmFinal, paymentTypeSafe, isFullTransfer
+            });
           } catch (_) { }
+
           await connection.execute(
             `UPDATE orders 
              SET status = "en_logistica", 
@@ -656,12 +705,13 @@ const validatePayment = async (req, res) => {
                  requires_payment = IFNULL(?, CASE 
                    WHEN ? = 'cliente_credito' THEN 0 
                    WHEN ? = 'mixed' THEN 1
+                   WHEN ? = 'transferencia' THEN 0
                    ELSE requires_payment END),
                  payment_amount = COALESCE(?, payment_amount),
                  paid_amount = COALESCE(?, paid_amount),
                  updated_at = NOW() 
              WHERE id = ?`,
-            [finalValidationNotes, pmFinal, rpOverride, pmFinal, paymentTypeSafe, paOverride, paidAmountForUpdate, orderId]
+            [finalValidationNotes, pmFinal, rpOverride, pmFinal, paymentTypeSafe, pmFinal, paOverride, paidAmountForUpdate, orderId]
           );
 
           // Fallback robusto: si sigue inconsistente un pago mixto (transferencia + efectivo),
@@ -976,6 +1026,8 @@ const getWalletOrders = async (req, res) => {
         o.payment_evidence_path,
         o.is_pending_payment_evidence,
         o.siigo_observations,
+        o.is_service,
+        (SELECT COUNT(*) FROM order_items oi WHERE oi.order_id = o.id) AS items_count,
         o.created_at,
         o.updated_at,
         u.full_name as created_by_name,
@@ -1078,6 +1130,126 @@ const getWalletStats = async (req, res) => {
   }
 };
 
+// Obtener comprobantes de pago de un pedido
+const getPaymentEvidences = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+
+    // Verificar permisos (cartera, admin, o facturador)
+    // Nota: Asumimos que el middleware de autenticación ya validó el token
+    // y que los roles se verifican en la ruta o aquí si es necesario.
+    // Por ahora permitimos acceso a usuarios autenticados que tengan acceso a la orden.
+
+    const evidences = await query(
+      `SELECT pe.*, u.full_name as uploaded_by_name 
+       FROM payment_evidences pe 
+       LEFT JOIN users u ON pe.uploaded_by = u.id 
+       WHERE pe.order_id = ? 
+       ORDER BY pe.uploaded_at DESC`,
+      [orderId]
+    );
+
+    res.json({
+      success: true,
+      data: evidences
+    });
+  } catch (error) {
+    console.error('Error obteniendo comprobantes:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al obtener comprobantes'
+    });
+  }
+};
+
+// Eliminar un comprobante de pago
+const deletePaymentEvidence = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Obtener información del archivo para eliminarlo del disco
+    const evidence = await query(
+      'SELECT * FROM payment_evidences WHERE id = ?',
+      [id]
+    );
+
+    if (!evidence || evidence.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Comprobante no encontrado'
+      });
+    }
+
+    const filePath = path.join(__dirname, '../../frontend/build', evidence[0].file_path);
+
+    // Eliminar registro de la BD
+    await query('DELETE FROM payment_evidences WHERE id = ?', [id]);
+
+    // Intentar eliminar archivo físico (no fallar si no existe)
+    try {
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+      }
+    } catch (err) {
+      console.warn('No se pudo eliminar el archivo físico:', err);
+    }
+
+    res.json({
+      success: true,
+      message: 'Comprobante eliminado correctamente'
+    });
+  } catch (error) {
+    console.error('Error eliminando comprobante:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al eliminar comprobante'
+    });
+  }
+};
+
+// Subir múltiples comprobantes
+const uploadPaymentEvidences = async (req, res) => {
+  try {
+    const { orderId } = req.body;
+    const files = req.files;
+
+    if (!files || files.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'No se han subido archivos'
+      });
+    }
+
+    const userId = req.user ? req.user.id : null;
+    const insertedIds = [];
+
+    for (const file of files) {
+      // Construir path relativo para guardar en BD
+      // Nota: Multer guarda en frontend/build/uploads/payment-proofs/
+      // El path en BD debe ser relativo a frontend/build/
+      const relativePath = `uploads/payment-proofs/${file.filename}`;
+
+      const result = await query(
+        'INSERT INTO payment_evidences (order_id, file_path, uploaded_by) VALUES (?, ?, ?)',
+        [orderId, relativePath, userId]
+      );
+      insertedIds.push(result.insertId);
+    }
+
+    res.json({
+      success: true,
+      message: `${files.length} comprobantes subidos correctamente`,
+      data: { insertedIds }
+    });
+  } catch (error) {
+    console.error('Error subiendo comprobantes:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al subir comprobantes'
+    });
+  }
+};
+
 module.exports = {
   getCustomerCredit,
   validatePayment: [upload.fields([
@@ -1088,5 +1260,11 @@ module.exports = {
   getCreditCustomers,
   upsertCreditCustomer,
   getWalletOrders,
-  getWalletStats
+  getWalletStats,
+  getPaymentEvidences,
+  deletePaymentEvidence,
+  uploadPaymentEvidences: [
+    upload.array('payment_evidences', 5), // Permitir hasta 5 archivos
+    uploadPaymentEvidences
+  ]
 };
