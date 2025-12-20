@@ -1,0 +1,15 @@
+Connected to database: gestion_pedidos_dev
+Available databases: gestion_pedidos_dev, gestionpbi, information_schema
+--- Checking gestion_pedidos_dev ---
+Latest deposits:
+ID: 14, Deposited At: Fri Dec 05 2025 19:00:00 GMT+0000 (Coordinated Universal Time), Created At: Sat Dec 06 2025 15:50:19 GMT+0000 (Coordinated Universal Time)
+   -> deposited_at ISO: 2025-12-05T19:00:00.000Z
+ID: 13, Deposited At: Fri Dec 05 2025 19:00:00 GMT+0000 (Coordinated Universal Time), Created At: Sat Dec 06 2025 15:44:30 GMT+0000 (Coordinated Universal Time)
+   -> deposited_at ISO: 2025-12-05T19:00:00.000Z
+ID: 12, Deposited At: Fri Dec 05 2025 19:00:00 GMT+0000 (Coordinated Universal Time), Created At: Sat Dec 06 2025 15:35:32 GMT+0000 (Coordinated Universal Time)
+   -> deposited_at ISO: 2025-12-05T19:00:00.000Z
+ID: 11, Deposited At: Fri Dec 05 2025 19:00:00 GMT+0000 (Coordinated Universal Time), Created At: Sat Dec 06 2025 14:47:32 GMT+0000 (Coordinated Universal Time)
+   -> deposited_at ISO: 2025-12-05T19:00:00.000Z
+ID: 10, Deposited At: Fri Dec 05 2025 00:00:00 GMT+0000 (Coordinated Universal Time), Created At: Fri Dec 05 2025 15:29:11 GMT+0000 (Coordinated Universal Time)
+   -> deposited_at ISO: 2025-12-05T00:00:00.000Z
+✅ Pool de conexiones MySQL cerrado correctamente

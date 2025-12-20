@@ -637,6 +637,14 @@ const validatePayment = async (req, res) => {
           }
           // Si es bancolombia u otro, se deja en null (es transferencia, no pago electrónico tipo gateway)
 
+          console.log('[WALLET][DEBUG] Validating payment. Values:', {
+            is_service: orderData.is_service,
+            pmLower,
+            pmFinal,
+            bankNameFinal,
+            delivery_method: orderData.delivery_method
+          });
+
           // Pedidos de servicio: pasan directo a entregado (pendiente cierre SIIGO)
           await connection.execute(
             `UPDATE orders 
@@ -658,7 +666,10 @@ const validatePayment = async (req, res) => {
           const normalizedProvider = (bankLower === 'mercado_pago' || bankLower === 'mercadopago') ? 'mercadopago' : 'bold';
           await connection.execute(
             `UPDATE orders 
-             SET status = "en_logistica", 
+             SET status = CASE 
+               WHEN status = 'listo_para_entrega' THEN 'listo_para_entrega' 
+               ELSE 'en_logistica' 
+             END, 
                  validation_status = "approved",
                  validation_notes = ?,
                  electronic_payment_type = ?,
@@ -698,7 +709,10 @@ const validatePayment = async (req, res) => {
 
           await connection.execute(
             `UPDATE orders 
-             SET status = "en_logistica", 
+             SET status = CASE 
+               WHEN status = 'listo_para_entrega' THEN 'listo_para_entrega' 
+               ELSE 'en_logistica' 
+             END, 
                  validation_status = "approved",
                  validation_notes = ?,
                  payment_method = ?,
@@ -964,7 +978,8 @@ const getWalletOrders = async (req, res) => {
     // respetarlo estrictamente y no incluir otros estados.
     if (status) {
       if (status === 'revision_cartera') {
-        whereClause += ' AND (o.status = ? OR o.is_pending_payment_evidence = 1)';
+        // Incluir también pedidos "listo_para_entrega" que requieren pago O son transferencia (aunque requires_payment=0) y no están validados
+        whereClause += ' AND (o.status = ? OR (o.status = "listo_para_entrega" AND (o.requires_payment = 1 OR o.payment_method = "transferencia") AND (o.validation_status IS NULL OR o.validation_status = "" OR o.validation_status = "pending")) OR o.is_pending_payment_evidence = 1)';
       } else {
         whereClause += ' AND o.status = ?';
       }
@@ -977,7 +992,9 @@ const getWalletOrders = async (req, res) => {
       if (includeLogisticaPending) {
         whereClause += ' AND (o.status = "revision_cartera" OR (o.status = "en_logistica" AND o.requires_payment = 1 AND (o.validation_status IS NULL OR o.validation_status = "" OR o.validation_status = "pending")) OR o.is_pending_payment_evidence = 1)';
       } else {
-        whereClause += ' AND (o.status = "revision_cartera" OR o.is_pending_payment_evidence = 1)';
+        // Incluir también pedidos "listo" (listo para entrega) que requieren pago y no están validados
+        // Esto cubre el caso de "Recoge en Bodega" que pasa a "listo" pero necesita aprobación de Cartera
+        whereClause += ' AND (o.status = "revision_cartera" OR (o.status = "listo" AND o.requires_payment = 1 AND (o.validation_status IS NULL OR o.validation_status = "" OR o.validation_status = "pending")) OR o.is_pending_payment_evidence = 1)';
       }
     }
 
@@ -999,8 +1016,8 @@ const getWalletOrders = async (req, res) => {
     }
 
     // CONSULTA ESPECÍFICA PARA CARTERA CON TODOS LOS CAMPOS NECESARIOS
-    const orders = await query(
-      `SELECT 
+    // CONSULTA ESPECÍFICA PARA CARTERA CON TODOS LOS CAMPOS NECESARIOS
+    const mainQuery = `SELECT 
         o.id,
         o.order_number,
         o.customer_name,
@@ -1027,6 +1044,7 @@ const getWalletOrders = async (req, res) => {
         o.is_pending_payment_evidence,
         o.siigo_observations,
         o.is_service,
+        o.sale_channel,
         (SELECT COUNT(*) FROM order_items oi WHERE oi.order_id = o.id) AS items_count,
         o.created_at,
         o.updated_at,
@@ -1037,9 +1055,11 @@ const getWalletOrders = async (req, res) => {
        LEFT JOIN users assigned_user ON o.assigned_to = assigned_user.id
        ${whereClause}
        ORDER BY o.updated_at DESC
-       LIMIT ? OFFSET ?`,
-      [...params, parseInt(limit), offset]
-    );
+       LIMIT ? OFFSET ?`;
+
+    const queryParams = [...params, parseInt(limit), offset];
+
+    const orders = await query(mainQuery, queryParams);
 
     // Contar total de pedidos
     const totalResult = await query(
@@ -1250,12 +1270,94 @@ const uploadPaymentEvidences = async (req, res) => {
   }
 };
 
+// Validar pago POS (Transferencia, Efectivo, Mixto)
+const validatePosPayment = async (req, res) => {
+  const { orderId, bankReference, cashAmount, notes, validationType } = req.body;
+  const userId = req.user ? req.user.id : null;
+
+  console.log('🏪 [WALLET] validatePosPayment:', { orderId, bankReference, cashAmount, notes });
+
+  if (!orderId) {
+    return res.status(400).json({ message: 'Order ID is required' });
+  }
+
+  try {
+    // 1. Obtener estado actual
+    const [order] = await query('SELECT * FROM orders WHERE id = ?', [orderId]);
+    if (!order) {
+      return res.status(404).json({ message: 'Order not found' });
+    }
+
+    // 2. Preparar actualización
+    // POS orders se marcan como entregados inmediatamente
+    const newStatus = 'entregado';
+    const validationStatus = 'approved';
+
+    // Construir notas de validación
+    let finalNotes = notes || '';
+    if (cashAmount) finalNotes += ` [Efectivo Recibido: ${cashAmount}]`;
+    if (bankReference) finalNotes += ` [Ref. Banco: ${bankReference}]`;
+    finalNotes += ' (Validado POS)';
+
+    // Actualizar campos de pago
+    let updateQuery = `
+      UPDATE orders 
+      SET 
+        status = ?,
+        validation_status = ?,
+        validation_notes = ?,
+        updated_at = NOW()
+    `;
+    const updateParams = [newStatus, validationStatus, finalNotes];
+
+    if (bankReference && bankReference !== 'N/A') {
+      // Solo intentar actualizar si la columna existe (pendiente verificar)
+      // Por seguridad, lo comentamos si da error, o validamos que no sea N/A
+      // updateQuery += `, payment_reference = ?`;
+      // updateParams.push(bankReference);
+    }
+
+    if (cashAmount) {
+      // Si hay efectivo, actualizamos paid_amount
+      updateQuery += `, paid_amount = ?`;
+      updateParams.push(cashAmount);
+    }
+
+    updateQuery += ` WHERE id = ?`;
+    updateParams.push(orderId);
+
+    console.log('📝 [WALLET] Update Query:', updateQuery);
+    console.log('📝 [WALLET] Update Params:', updateParams);
+
+    await query(updateQuery, updateParams);
+
+    // 2.5 Insertar registro en wallet_validations para historial
+    await query(`
+      INSERT INTO wallet_validations 
+      (order_id, validation_type, validation_status, validation_notes, validated_by, validated_at)
+      VALUES (?, ?, ?, ?, ?, NOW())
+    `, [orderId, 'approved', validationStatus, finalNotes, userId]);
+
+    // 3. Emitir evento de cambio de estado
+    emitStatusChange(orderId, order.order_number, order.status, newStatus);
+
+    res.json({ success: true, message: 'Venta POS validada y entregada' });
+
+  } catch (error) {
+    console.error('❌ Error validating POS payment:', error);
+    console.error('❌ SQL Message:', error.sqlMessage);
+    console.error('❌ SQL State:', error.sqlState);
+    res.status(500).json({ message: 'Error interno al validar POS', error: error.message });
+  }
+};
+
 module.exports = {
   getCustomerCredit,
   validatePayment: [upload.fields([
     { name: 'paymentProofImage', maxCount: 1 },
     { name: 'cashProofImage', maxCount: 1 }
   ]), validatePayment],
+  validatePosPayment, // Exported
   getValidationHistory,
   getCreditCustomers,
   upsertCreditCustomer,

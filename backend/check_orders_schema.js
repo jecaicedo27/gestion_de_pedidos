@@ -2,11 +2,8 @@ const { query, poolEnd } = require('./config/database');
 
 async function checkSchema() {
     try {
-        const columns = await query('DESCRIBE orders');
-        console.log('Orders Table Schema:');
-        columns.forEach(col => {
-            console.log(`${col.Field} (${col.Type})`);
-        });
+        const result = await query("DESCRIBE orders");
+        console.log(JSON.stringify(result, null, 2));
     } catch (error) {
         console.error('Error:', error);
     } finally {

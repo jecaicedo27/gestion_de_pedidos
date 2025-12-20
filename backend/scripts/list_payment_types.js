@@ -1,19 +1,22 @@
-const siigoService = require('../services/siigoService');
+require('dotenv').config({ path: '../.env' });
 const axios = require('axios');
+const siigoService = require('../services/siigoService');
 
 async function listPaymentTypes() {
     try {
-        await siigoService.authenticate();
+        console.log('Obteniendo tipos de pago de SIIGO...');
         const headers = await siigoService.getHeaders();
-        const baseUrl = siigoService.getBaseUrl();
 
-        console.log('Listing payment types...');
-        const response = await axios.get(`${baseUrl}/v1/payment-types?document_type=FV`, { headers });
-        console.log('Payment Types:', JSON.stringify(response.data, null, 2));
+        const response = await axios.get(`${siigoService.getBaseUrl()}/v1/payment-types?document_type=FV`, { headers });
+
+        console.log('Tipos de pago encontrados:');
+        console.log(JSON.stringify(response.data, null, 2));
 
     } catch (error) {
         console.error('Error:', error.message);
-        if (error.response) console.log(error.response.data);
+        if (error.response) {
+            console.error('Detalles:', error.response.data);
+        }
     }
 }
 

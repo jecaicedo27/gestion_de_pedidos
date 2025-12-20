@@ -5,13 +5,18 @@ import { siigoService } from '../services/api';
 
 const computeNitCheckDigit = (nit) => {
   try {
-    const weights = [71, 67, 59, 53, 47, 43, 41, 37, 29, 23, 19, 17, 13, 7, 3];
-    const digits = String(nit || '').replace(/\D/g, '').split('').reverse();
+    // Pesos oficiales DIAN Colombia (de derecha a izquierda del NIT)
+    const weights = [3, 7, 13, 17, 19, 23, 29, 37, 41, 43, 47, 53, 59, 67, 71];
+    const nitStr = String(nit || '').replace(/\D/g, '');
+    const digits = nitStr.split(''); // NO reverse
     let sum = 0;
+
+    // Multiplicar de izquierda a derecha del NIT con pesos de derecha a izquierda
     for (let i = 0; i < digits.length; i++) {
-      const w = weights[i] || 0;
-      sum += parseInt(digits[i], 10) * w;
+      const weight = weights[digits.length - 1 - i];
+      sum += parseInt(digits[i], 10) * (weight || 0);
     }
+
     const mod = sum % 11;
     return mod > 1 ? (11 - mod) : mod;
   } catch {
@@ -183,7 +188,14 @@ const CreateSiigoCustomerModal = ({ open = false, onClose, onCreated }) => {
               <label className="block text-xs font-medium text-gray-700">Tipo de identificación</label>
               <select
                 value={idType}
-                onChange={(e) => setIdType(e.target.value)}
+                onChange={(e) => {
+                  const newIdType = e.target.value;
+                  setIdType(newIdType);
+                  // Si selecciona NIT, automáticamente cambiar a Empresa
+                  if (newIdType === 'NIT') {
+                    setPersonType('Company');
+                  }
+                }}
                 className="mt-1 w-full border border-gray-300 rounded px-2 py-1.5 text-sm"
               >
                 <option value="CC">Cédula</option>

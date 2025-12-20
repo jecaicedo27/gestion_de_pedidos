@@ -21,6 +21,7 @@ const CashierCollectionsPage = () => {
   const [selectedHandover, setSelectedHandover] = useState(null);
   const [handoverDetails, setHandoverDetails] = useState(null);
   const [messengers, setMessengers] = useState([]);
+  const [pendingTransfers, setPendingTransfers] = useState([]); // Nuevo estado para transferencias POS
 
   const [filters, setFilters] = useState({
     messengerId: '',
@@ -96,8 +97,8 @@ const CashierCollectionsPage = () => {
         carteraService.getHandovers({ ...params, status: '' })
       ]);
 
-      setPending(pendingRes?.data || []);
-      setHandovers(handoversRes?.data || []);
+      setPending(Array.isArray(pendingRes) ? pendingRes : []);
+      setHandovers(Array.isArray(handoversRes?.data) ? handoversRes.data : []);
     } catch (error) {
       toast.error('Error cargando datos de cartera');
     } finally {
@@ -170,10 +171,43 @@ const CashierCollectionsPage = () => {
     }
   };
 
+  const loadPendingTransfers = async () => {
+    try {
+      const res = await api.get('/pos/pending-transfers');
+      setPendingTransfers(res.data.data || []);
+    } catch (e) {
+      console.error('Error loading pending transfers:', e);
+    }
+  };
+
+  const handleApproveTransfer = async (orderId) => {
+    if (!window.confirm('¿Confirmar que el dinero ingresó a la cuenta?')) return;
+    try {
+      await api.post(`/pos/approve-transfer/${orderId}`);
+      toast.success('Transferencia aprobada');
+      loadPendingTransfers();
+      loadData(); // Refrescar otros datos por si acaso
+    } catch (e) {
+      toast.error('Error al aprobar transferencia');
+    }
+  };
+
+  const handleRejectTransfer = async (orderId) => {
+    if (!window.confirm('¿Rechazar esta transferencia? El pedido quedará marcado como rechazado.')) return;
+    try {
+      await api.post(`/pos/reject-transfer/${orderId}`);
+      toast.success('Transferencia rechazada');
+      loadPendingTransfers();
+    } catch (e) {
+      toast.error('Error al rechazar transferencia');
+    }
+  };
+
   useEffect(() => {
     loadMessengers();
     loadBalance();
     loadTolerance();
+    loadPendingTransfers();
   }, []);
 
   useEffect(() => {
@@ -310,7 +344,7 @@ const CashierCollectionsPage = () => {
           onClick={async () => {
             try {
               setRefreshing(true);
-              await Promise.all([loadData(), loadBalance()]);
+              await Promise.all([loadData(), loadBalance(), loadPendingTransfers()]);
               toast.success('Cartera actualizada');
             } finally {
               setRefreshing(false);
@@ -413,6 +447,92 @@ const CashierCollectionsPage = () => {
 
       {/* Contenido */}
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+
+        {/* Transferencias POS Pendientes - DESHABILITADO POR SOLICITUD DEL USUARIO */}
+        {/*
+        {pendingTransfers.length > 0 && (
+          <div className="card col-span-1 xl:col-span-2 border-l-4 border-blue-500">
+            <div className="card-header bg-blue-50">
+              <h2 className="text-lg font-semibold text-blue-900 flex items-center">
+                <Icons.Smartphone className="w-5 h-5 mr-2 text-blue-600" />
+                Transferencias POS por Aprobar
+                <span className="ml-2 px-2 py-1 text-xs font-medium bg-white text-blue-800 rounded-full border border-blue-200">
+                  {pendingTransfers.length}
+                </span>
+              </h2>
+            </div>
+            <div className="card-content p-0">
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Pedido</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Cliente</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Vendedor</th>
+                      <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Total</th>
+                      <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase">Evidencia</th>
+                      <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {pendingTransfers.map((order) => (
+                      <tr key={order.id} className="hover:bg-blue-50 transition-colors">
+                        <td className="px-4 py-3">
+                          <div className="font-bold text-gray-900">{order.order_number}</div>
+                          <div className="text-xs text-gray-500">{new Date(order.created_at).toLocaleString('es-CO')}</div>
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="text-sm text-gray-900">{order.customer_name}</div>
+                          <div className="text-xs text-gray-500">{order.customer_identification}</div>
+                        </td>
+                        <td className="px-4 py-3 text-sm text-gray-700">
+                          {order.created_by_name || 'Desconocido'}
+                        </td>
+                        <td className="px-4 py-3 text-right font-bold text-gray-900">
+                          {fmt(order.total_amount)}
+                        </td>
+                        <td className="px-4 py-3 text-center">
+                          {order.payment_evidence_photo ? (
+                            <a
+                              href={`${api.defaults.baseURL.replace('/api', '')}/${order.payment_evidence_photo}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center px-2 py-1 bg-blue-100 text-blue-700 text-xs rounded hover:bg-blue-200"
+                            >
+                              <Icons.Image className="w-4 h-4 mr-1" />
+                              Ver Comprobante
+                            </a>
+                          ) : (
+                            <span className="text-gray-400 text-xs">-</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <div className="flex justify-end gap-2">
+                            <button
+                              onClick={() => handleRejectPosTransfer(order)}
+                              className="p-1 text-red-600 hover:bg-red-50 rounded"
+                              title="Rechazar"
+                            >
+                              <Icons.X className="w-5 h-5" />
+                            </button>
+                            <button
+                              onClick={() => handleApprovePosTransfer(order)}
+                              className="px-3 py-1 bg-green-600 text-white text-xs font-medium rounded hover:bg-green-700 flex items-center"
+                            >
+                              <Icons.Check className="w-4 h-4 mr-1" />
+                              Aprobar
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+        */}
 
         {/* Pendientes por aceptar */}
         <div className="card">
@@ -864,7 +984,6 @@ const CashierCollectionsPage = () => {
                       <tbody className="divide-y divide-gray-100 bg-white">
                         {(depositCandidates || [])
                           .filter(p => !depositSearch || String(p.order_number || '').toLowerCase().includes(depositSearch.toLowerCase()))
-                          .slice(0, 20)
                           .map((p) => {
                             const val = Number(depositDetails[p.order_id] || 0);
                             return (

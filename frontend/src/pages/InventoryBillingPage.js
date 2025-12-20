@@ -12,7 +12,11 @@ import {
   Filter,
   RefreshCw,
   FileText,
-  Code
+  Code,
+  CheckCircle,
+  Package,
+  ChevronUp,
+  ChevronDown
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import CustomerSearchDropdown from '../components/CustomerSearchDropdown';
@@ -21,6 +25,7 @@ import { io } from 'socket.io-client';
 import { createPortal } from 'react-dom';
 import InvoiceItemsTable from '../components/InvoiceItemsTable';
 import CreateSiigoCustomerModal from '../components/CreateSiigoCustomerModal';
+import CameraInput from '../components/CameraInput';
 
 const InventoryBillingPage = () => {
   const [products, setProducts] = useState([]);
@@ -47,10 +52,27 @@ const InventoryBillingPage = () => {
   const [documentType, setDocumentType] = useState('invoice'); // 'invoice' | 'quotation'
   const [selectedDiscount, setSelectedDiscount] = useState(0); // Default 0% discount
   const [selectedRetefuente, setSelectedRetefuente] = useState('0'); // Default '0' (No apply)
+
+  // Evidence State
+  const [productPhoto, setProductPhoto] = useState(null);
+  const [paymentEvidence, setPaymentEvidence] = useState(null);
+  const [cashPhoto, setCashPhoto] = useState(null);
   const [processingInvoice, setProcessingInvoice] = useState(false);
   const [showCartModal, setShowCartModal] = useState(false);
   const [showCreateCustomerModal, setShowCreateCustomerModal] = useState(false);
   const [invoiceNotes, setInvoiceNotes] = useState(''); // Estado para notas de factura
+
+  // Estados para forma de pago
+  const [paymentMethod, setPaymentMethod] = useState(null); // 'cash', 'transfer', 'mixed'
+  const [cashAmount, setCashAmount] = useState('');
+  const [transferAmount, setTransferAmount] = useState('');
+  const [orderType, setOrderType] = useState('regular'); // 'regular' | 'pos'
+  const [modalState, setModalState] = useState('config'); // 'config' | 'processing' | 'upload_evidence' | 'completed'
+  const [importedOrder, setImportedOrder] = useState(null);
+
+  // Estados para servicios (Flete)
+  const [servicePrice, setServicePrice] = useState('');
+  const [showServiceSection, setShowServiceSection] = useState(false);
 
   // Estado para controlar la visibilidad del carrito lateral
   const [isCartOpen, setIsCartOpen] = useState(window.innerWidth > 1280); // Default open on large screens
@@ -87,6 +109,13 @@ const InventoryBillingPage = () => {
 
   // DEBUG: Mostrar una sola vez si LIMA LIMON fue detectado en SKARCHA NO FABRICADOS 19%
   const debugLLToastShown = useRef(false);
+
+  // Estado para escáner de código de barras flotante
+  const [barcodeInput, setBarcodeInput] = useState('');
+  const [scanningActive, setScanningActive] = useState(false);
+  const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
+  const [scannerCollapsed, setScannerCollapsed] = useState(false);
+  const barcodeInputRef = useRef(null);
 
   // Cargar productos del inventario - USANDO ENDPOINT FILTRADO PARA PRODUCTOS ACTIVOS ÚNICAMENTE
   const loadInventoryProducts = async () => {
@@ -327,6 +356,11 @@ const InventoryBillingPage = () => {
       return 'LIMA LIMON';
     }
 
+    // Regla específica: AZUCAR MARACUYA
+    if (normalized.includes('AZUCAR') && normalized.includes('MARACUYA')) {
+      return 'AZUCAR MARACUYA';
+    }
+
     // 1) Sabores comunes (ampliado)
     const commonFlavors = [
       'BLUEBERRY', 'CAFE', 'CEREZA', 'CHAMOY', 'CHICLE', 'COCO', 'FRESA',
@@ -420,6 +454,13 @@ const InventoryBillingPage = () => {
       if (f === 'OSITOS') return 'GUDGUMI OSITOS';
       if (f === 'SANDIA') return 'GUDGUMI SANDIA';
       if (f === 'MARACUYA') return 'GUDGUMI MARACUYA';
+      if (f === '16') return 'VASOS 16 OZ';
+      if (f === '22') return 'VASOS 22 OZ';
+      if (f === 'NARANJA') return 'NARANJA DESHIDRATADA';
+    }
+
+    // Reglas específicas para "SKARCHA NO FABRICADOS 19%"
+    if (cat.includes('SKARCHA NO FABRICADOS')) {
       if (f === '16') return 'VASOS 16 OZ';
       if (f === '22') return 'VASOS 22 OZ';
       if (f === 'NARANJA') return 'NARANJA DESHIDRATADA';
@@ -621,8 +662,74 @@ const InventoryBillingPage = () => {
     return available > 0 ? available : realStock;
   };
 
+  // Manejar input de código de barras (SOLO CÓDIGO DE BARRAS O CÓDIGO INTERNO)
+  const handleBarcodeInput = (barcode) => {
+    if (!barcode) return;
+
+    const normalizedBarcode = barcode.trim().toUpperCase();
+
+    // Buscar producto por código de barras o código interno (exacto)
+    // NO buscar por nombre para evitar falsos positivos con el escáner
+    const matchedProduct = products.find(p =>
+      (p.barcode && String(p.barcode).trim().toUpperCase() === normalizedBarcode) ||
+      (p.internal_code && String(p.internal_code).trim().toUpperCase() === normalizedBarcode) ||
+      (p.product_code && String(p.product_code).trim().toUpperCase() === normalizedBarcode) ||
+      (p.siigo_code && String(p.siigo_code).trim().toUpperCase() === normalizedBarcode)
+    );
+
+    if (matchedProduct) {
+      addToCart(matchedProduct, 1);
+      // toast.success(`✅ Agregado: ${matchedProduct.product_name}`); // Eliminado para evitar doble alerta
+      setBarcodeInput('');
+
+      // Auto-scroll al producto si está habilitado (opcional)
+      if (autoScrollEnabled) {
+        // Implementar scroll si es necesario, por ahora solo feedback visual
+      }
+    } else {
+      toast.error(`❌ Producto no encontrado: ${barcode}`);
+      setBarcodeInput('');
+    }
+  };
+
+  const handleBarcodeKeyPress = (e) => {
+    if (e.key === 'Enter') {
+      handleBarcodeInput(barcodeInput);
+    }
+  };
+
   // Agregar producto al carrito con validación de stock
+  // Función para reproducir sonido de éxito (beep agradable)
+  const playSuccessSound = () => {
+    try {
+      const AudioContext = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContext) return;
+
+      const ctx = new AudioContext();
+      const osc = ctx.createOscillator();
+      const gainNode = ctx.createGain();
+
+      osc.connect(gainNode);
+      gainNode.connect(ctx.destination);
+
+      // Configuración del sonido: "Ding" agradable
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(1200, ctx.currentTime); // Frecuencia inicial alta
+      osc.frequency.exponentialRampToValueAtTime(600, ctx.currentTime + 0.15); // Bajada rápida
+
+      gainNode.gain.setValueAtTime(0.3, ctx.currentTime); // Volumen moderado
+      gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.15); // Fade out
+
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + 0.15);
+    } catch (error) {
+      console.error('Error playing sound:', error);
+    }
+  };
+
   const addToCart = (product, quantity = 1) => {
+    playSuccessSound(); // Reproducir sonido al agregar
+
     const availableStock = getAvailableStock(product.id);
 
     // Validar stock disponible
@@ -662,6 +769,40 @@ const InventoryBillingPage = () => {
       id: 'cart-toast',
       duration: 2000
     });
+  };
+
+  // Agregar servicio al carrito (Flete con precio editable)
+  const addServiceToCart = () => {
+    if (!servicePrice || parseFloat(servicePrice) <= 0) {
+      toast.error('❌ Por favor ingresa un precio válido para el servicio');
+      return;
+    }
+
+    const fleteService = {
+      id: 'FL01',
+      product_name: 'Flete, domicilio o envío',
+      internal_code: 'FL01',
+      barcode: 'FL01',
+      standard_price: parseFloat(servicePrice),
+      unit_price: parseFloat(servicePrice),
+      quantity: 1,
+      discount: 0,
+      isService: true // Marcador para identificar que es un servicio
+    };
+
+    // Verificar si ya está en el carrito
+    const existingService = cart.find(item => item.id === 'FL01');
+    if (existingService) {
+      toast.error('❌ El servicio de Flete ya está en el carrito');
+      return;
+    }
+
+    setCart(prevCart => [...prevCart, fleteService]);
+    toast.success(`✅ Servicio de Flete agregado al carrito ($${parseFloat(servicePrice).toLocaleString()})`);
+
+    // Limpiar y ocultar sección
+    setServicePrice('');
+    setShowServiceSection(false);
   };
 
   // Remover del carrito
@@ -804,6 +945,21 @@ const InventoryBillingPage = () => {
       return;
     }
 
+    // Validar forma de pago (Requerido solo para facturas)
+    if (documentType === 'invoice' && !paymentMethod) {
+      toast.error('Debe seleccionar una forma de pago');
+      return;
+    }
+    // Validar pago mixto
+    if (paymentMethod === 'mixed') {
+      const cash = parseFloat(cashAmount) || 0;
+      const transfer = parseFloat(transferAmount) || 0;
+      if (cash <= 0 || transfer <= 0) {
+        toast.error('En pago mixto, debe ingresar ambos montos (efectivo y transferencia)');
+        return;
+      }
+    }
+
     setProcessingInvoice(true);
 
     try {
@@ -817,15 +973,15 @@ const InventoryBillingPage = () => {
           let productCode;
           let codeSource = '';
 
-          // 1. Primera prioridad: siigo_code si existe y es válido
-          if (item.siigo_code && item.siigo_code.length <= 20 && !item.siigo_code.includes('770')) {
-            productCode = item.siigo_code;
-            codeSource = 'siigo_code';
-          }
-          // 2. Segunda prioridad: CÓDIGO INTERNO
-          else if (item.internal_code) {
+          // 1. Primera prioridad: CÓDIGO INTERNO (Lo más confiable desde BD)
+          if (item.internal_code) {
             productCode = item.internal_code;
             codeSource = 'internal_code';
+          }
+          // 2. Segunda prioridad: siigo_code si existe y es válido
+          else if (item.siigo_code && item.siigo_code.length <= 20 && !item.siigo_code.includes('770')) {
+            productCode = item.siigo_code;
+            codeSource = 'siigo_code';
           }
           else if (item.product_code && item.product_code.length <= 20 && !item.product_code.includes('770')) {
             productCode = item.product_code;
@@ -888,8 +1044,19 @@ const InventoryBillingPage = () => {
         documentType: invoiceType,
         discount: selectedDiscount,
         apply_retefuente: selectedRetefuente === '2.5',
-        notes: `${documentType === 'quotation' ? 'Cotización' : `Factura ${invoiceType}`} generada desde inventario directo - ${new Date().toLocaleString()}${selectedDiscount > 0 ? ` - Descuento: ${selectedDiscount}%` : ''}${selectedRetefuente === '2.5' ? ' - Retefuente 2.5% aplicada' : ''}${invoiceNotes ? `\n\nNotas adicionales: ${invoiceNotes}` : ''}`,
-        natural_language_order: `Productos del inventario: ${cart.map(item => `${item.quantity}x ${item.product_name}`).join(', ')}`
+        notes: documentType === 'quotation'
+          ? `Cotización generada desde inventario directo - ${new Date().toLocaleString()}${selectedDiscount > 0 ? ` - Descuento: ${selectedDiscount}%` : ''}${selectedRetefuente === '2.5' ? ' - Retefuente 2.5% aplicada' : ''}${invoiceNotes ? `\n\nNotas adicionales: ${invoiceNotes}` : ''}`
+          : `Factura ${invoiceType} generada desde inventario directo - ${new Date().toLocaleString()}\n\nTipo de Venta: ${orderType === 'pos' ? 'VENTA POS (Entrega Inmediata)' : 'Pedido Regular'}\nForma de pago: ${paymentMethod === 'cash' ? 'Efectivo' : paymentMethod === 'transfer' ? 'Transferencia' : paymentMethod === 'credit' ? 'Crédito' : paymentMethod === 'cod' ? 'Contra Entrega' : `Mixto (Efectivo: $${parseFloat(cashAmount || 0).toLocaleString()}, Transferencia: $${parseFloat(transferAmount || 0).toLocaleString()})`}${invoiceNotes ? `\n\nNotas adicionales: ${invoiceNotes}` : ''}`,
+        natural_language_order: `Productos del inventario: ${cart.map(item => `${item.quantity}x ${item.product_name}`).join(', ')}`,
+
+        // Datos específicos para POS y Regular (SOLO SI NO ES COTIZACIÓN)
+        ...(documentType !== 'quotation' ? {
+          sale_channel: orderType,
+          pos_payment_method: paymentMethod === 'cash' ? 'efectivo' : (paymentMethod === 'transfer' ? 'transferencia' : 'efectivo'),
+          pos_cash_amount: paymentMethod === 'mixed' ? parseFloat(cashAmount) : null,
+          pos_transfer_amount: paymentMethod === 'mixed' ? parseFloat(transferAmount) : null,
+          delivery_method: orderType === 'pos' ? 'recoge_bodega' : 'domicilio'
+        } : {})
       };
 
       console.log('📊 Datos preparados para facturación (estructura exitosa):', invoiceData);
@@ -970,9 +1137,19 @@ const InventoryBillingPage = () => {
           }
         );
 
-        // Auto-importar a pedidos después de 15 segundos
+        // SI ES POS: No cerrar modal, iniciar flujo de importación inmediata (SOLO SI NO ES COTIZACIÓN)
+        if (orderType === 'pos' && documentType !== 'quotation') {
+          setModalState('processing');
+          // Iniciar importación inmediata usando el ID de la factura (más seguro)
+          handlePOSImport(data.data.siigo_invoice_id);
+          return;
+        }
+
+        // SI ES REGULAR: Flujo normal (cerrar y limpiar)
+
+        // Auto-importar a pedidos después de 15 segundos (solo regular y NO cotización)
         const siigoId = data.siigoId || data.data?.id;
-        if (siigoId) {
+        if (siigoId && documentType !== 'quotation') {
           toast('⏳ Sincronizando a pedidos en 15s...', {
             icon: '🔄',
             duration: 5000,
@@ -1012,14 +1189,20 @@ const InventoryBillingPage = () => {
           total: data.data.total_amount
         });
 
-        // Capturar productos facturados antes de limpiar carrito
-        const productIds = [...new Set(cart.map(i => i.id).filter(Boolean))];
+        // Capturar productos facturados antes de limpiar carrito (excluyendo servicios)
+        console.log('🛒 Items en carrito para sync:', cart.map(c => ({ id: c.id, isService: c.isService })));
+        const productIds = [...new Set(cart.filter(i => !i.isService && i.id !== 'FL01').map(i => i.id).filter(Boolean))];
+        console.log('🔄 IDs filtrados para sync:', productIds);
 
         // Limpiar carrito y cerrar checkout
         setCart([]);
         setSelectedCustomer(null);
         setCustomerSearchValue('');
         setShowCheckout(false);
+        // Resetear forma de pago
+        setPaymentMethod(null);
+        setCashAmount('');
+        setTransferAmount('');
 
         // Disparar sync puntual back-end para cada producto facturado (no bloqueante)
         try {
@@ -1107,6 +1290,110 @@ const InventoryBillingPage = () => {
     }
   };
 
+  // --- POS FLOW HELPERS ---
+
+  const handlePOSImport = async (siigoInvoiceId) => {
+    try {
+      console.log('🚀 Iniciando importación inmediata POS para ID:', siigoInvoiceId);
+
+      // Llamar al endpoint de importación con flag immediate
+      const token = localStorage.getItem('token');
+
+      // Map frontend payment method values to database ENUM values
+      const paymentMethodMap = {
+        'cash': 'efectivo',
+        'transfer': 'transferencia',
+        'mixed': 'efectivo' // For mixed, use efectivo as primary (backend handles the logic)
+      };
+
+      const dbPaymentMethod = paymentMethodMap[paymentMethod] || 'efectivo';
+
+      // Nota: Usamos el endpoint existente pero con parámetros nuevos
+      const response = await api.post('/siigo/import', {
+        invoice_id: siigoInvoiceId,
+        immediate: true,
+        payment_method: dbPaymentMethod, // Mapped to database values: 'efectivo', 'transferencia'
+        delivery_method: 'recoge_bodega', // POS orders are pickup at store/warehouse
+        sale_channel: 'pos' // Explicitly mark as POS sale
+      });
+
+      if (response.data.success && response.data.order) {
+        console.log('✅ Pedido importado inmediatamente:', response.data.order);
+        setImportedOrder(response.data.order);
+        setModalState('upload_evidence');
+      } else {
+        throw new Error(response.data.message || 'Error en importación');
+      }
+
+    } catch (error) {
+      console.error('❌ POS Import Error:', error);
+      toast.error('Error al importar el pedido. Por favor verifique en la lista de pedidos.');
+      // En caso de error, permitimos cerrar o reintentar
+      setModalState('config');
+    }
+  };
+
+  const handleConfirmDelivery = async () => {
+    if (!importedOrder) return;
+
+    // Validate files
+    if (!productPhoto) {
+      toast.error('La foto del producto es obligatoria');
+      return;
+    }
+
+    if ((paymentMethod === 'transfer' || paymentMethod === 'mixed') && !paymentEvidence) {
+      toast.error('El comprobante de pago es obligatorio para transferencias');
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append('order_id', importedOrder.id);
+    formData.append('product_photo', productPhoto);
+    if (paymentEvidence) formData.append('payment_evidence', paymentEvidence);
+    if (cashPhoto) formData.append('cash_photo', cashPhoto);
+
+    setProcessingInvoice(true); // Reuse this state for loading
+    try {
+      const response = await api.post('/pos/upload-evidence-and-deliver', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+
+      if (response.data.success) {
+        toast.success(response.data.message);
+        setModalState('completed');
+
+        // Limpiar estado global
+        setCart([]);
+        setSelectedCustomer(null);
+        setCustomerSearchValue('');
+
+        // Clear evidence state
+        setProductPhoto(null);
+        setPaymentEvidence(null);
+        setCashPhoto(null);
+        // No limpiamos paymentMethod aún para mostrar resumen en completed
+      } else {
+        toast.error(response.data.message);
+      }
+    } catch (error) {
+      console.error('Delivery Error:', error);
+      toast.error('Error al confirmar entrega: ' + (error.response?.data?.message || error.message));
+    } finally {
+      setProcessingInvoice(false);
+    }
+  };
+
+  const handleClosePOS = () => {
+    setShowCheckout(false);
+    setModalState('config');
+    setImportedOrder(null);
+    setPaymentMethod(null);
+    setCashAmount('');
+    setTransferAmount('');
+    setOrderType('regular'); // Reset to default
+  };
+
   // Sincronizar inventario desde SIIGO (recargar datos actualizados)
   const syncInventoryFromSiigo = async () => {
     setSyncingInventory(true);
@@ -1148,7 +1435,28 @@ const InventoryBillingPage = () => {
     loadInventoryProducts();
   }, []);
 
-
+  // Auto-focus en el campo de escaneo después de cargar inventario
+  useEffect(() => {
+    // Solo ejecutar cuando ya no está cargando y hay productos
+    if (!loading && products.length > 0 && !scannerCollapsed) {
+      // Usar requestAnimationFrame para asegurar que el DOM esté completamente pintado
+      requestAnimationFrame(() => {
+        setTimeout(() => {
+          if (barcodeInputRef.current) {
+            barcodeInputRef.current.focus();
+            // Verificar que realmente tiene el foco
+            if (document.activeElement === barcodeInputRef.current) {
+              console.log('✅ Auto-focus aplicado al escáner');
+            } else {
+              console.warn('⚠️ Focus aplicado pero perdido inmediatamente');
+              // Intentar de nuevo
+              setTimeout(() => barcodeInputRef.current?.focus(), 100);
+            }
+          }
+        }, 300);
+      });
+    }
+  }, [loading, products.length, scannerCollapsed]);
 
   // Bloquear scroll del fondo cuando el modal esté abierto
   useEffect(() => {
@@ -1357,6 +1665,70 @@ const InventoryBillingPage = () => {
           </div>
         </div>
 
+        {/* Escáner Flotante Fixed (Sticky real) - COMPACTO PARA TABLET */}
+        <div className="fixed top-0 left-0 z-50 w-full pb-1 pt-1 px-2 transition-all duration-300 pointer-events-none" style={{ top: '56px' }}>
+          <div className="max-w-md pointer-events-auto">
+            <div className="bg-white rounded shadow border border-purple-200 overflow-hidden">
+              <div className="px-2 py-1 bg-gradient-to-r from-purple-50 to-indigo-50 flex items-center justify-between">
+                <div className="flex items-center space-x-1.5">
+                  <div className="p-0.5 bg-purple-100 rounded-full">
+                    <Code className="w-3 h-3 text-purple-600" />
+                  </div>
+                  <h3 className="font-medium text-purple-900 text-xs">Escáner de Barras</h3>
+                  <div className={`flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium ${scanningActive ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600'
+                    }`}>
+                    <div className={`w-1 h-1 rounded-full mr-1 ${scanningActive ? 'bg-green-500 animate-pulse' : 'bg-gray-400'
+                      }`}></div>
+                    {scanningActive ? 'Activo' : 'Inactivo'}
+                  </div>
+                </div>
+                <div className="flex items-center space-x-1">
+                  <button
+                    onClick={() => setScannerCollapsed(!scannerCollapsed)}
+                    className="text-[10px] text-purple-600 hover:text-purple-800 font-medium px-1.5 py-0.5 hover:bg-purple-100 rounded transition-colors"
+                  >
+                    {scannerCollapsed ? 'Expandir' : 'Contraer'}
+                  </button>
+                </div>
+              </div>
+
+              {!scannerCollapsed && (
+                <div className="p-2 flex items-center space-x-1.5">
+                  <div className="relative flex-1">
+                    <div className="absolute inset-y-0 left-0 pl-2 flex items-center pointer-events-none">
+                      <Code className="h-3 w-3 text-gray-400" />
+                    </div>
+                    <input
+                      ref={barcodeInputRef}
+                      type="text"
+                      value={barcodeInput}
+                      onChange={(e) => setBarcodeInput(e.target.value)}
+                      onKeyDown={handleBarcodeKeyPress}
+                      onFocus={() => setScanningActive(true)}
+                      onBlur={() => setScanningActive(false)}
+                      placeholder="Escanea código de barras aquí..."
+                      className="block w-full pl-7 pr-2 py-1 border border-gray-300 rounded leading-4 bg-white placeholder-gray-500 focus:outline-none focus:placeholder-gray-400 focus:ring-1 focus:ring-purple-500 focus:border-purple-500 text-xs"
+                      autoComplete="off"
+                      autoFocus
+                    />
+                  </div>
+                  <button
+                    onClick={() => handleBarcodeInput(barcodeInput)}
+                    disabled={!barcodeInput.trim()}
+                    className="inline-flex items-center px-2 py-1 border border-transparent text-xs font-medium rounded shadow-sm text-white bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <Plus className="h-3 w-3 mr-0.5" />
+                    Agregar
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Espaciador para compensar el header fixed */}
+        <div className="h-8"></div>
+
         {/* Filtros */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
           <div className="relative">
@@ -1468,6 +1840,39 @@ const InventoryBillingPage = () => {
           </div>
         </div>
 
+        {/* Sección de Servicios - Compacta */}
+        <div className="mb-3 p-3 bg-gradient-to-r from-orange-50 to-orange-100 border border-orange-300 rounded-lg">
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <Package className="w-4 h-4 text-orange-600" />
+              <span className="font-semibold text-orange-800 text-sm whitespace-nowrap">Flete (FL01):</span>
+            </div>
+            <div className="relative flex-1 max-w-xs">
+              <span className="absolute left-2 top-1/2 transform -translate-y-1/2 text-gray-500 text-sm">$</span>
+              <input
+                type="number"
+                value={servicePrice}
+                onChange={(e) => setServicePrice(e.target.value)}
+                onKeyPress={(e) => {
+                  if (e.key === 'Enter') {
+                    addServiceToCart();
+                  }
+                }}
+                placeholder="Precio"
+                className="w-full pl-6 pr-2 py-1.5 border border-orange-300 rounded focus:ring-1 focus:ring-orange-500 focus:border-orange-500 text-sm"
+              />
+            </div>
+            <button
+              onClick={addServiceToCart}
+              disabled={!servicePrice || parseFloat(servicePrice) <= 0}
+              className="px-3 py-1.5 bg-orange-600 text-white rounded hover:bg-orange-700 focus:outline-none focus:ring-2 focus:ring-orange-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm font-medium flex items-center gap-1 whitespace-nowrap"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              Agregar
+            </button>
+          </div>
+        </div>
+
         {/* Inventario en formato tabla */}
         {loading ? (
           <div className="flex justify-center items-center py-8">
@@ -1495,7 +1900,9 @@ const InventoryBillingPage = () => {
 
               return (
                 <div key={category} className="bg-white rounded shadow overflow-hidden">
-                  <div className="bg-gray-100 px-4 py-2 border-b">
+
+
+                  <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2">
                     <h2 className="text-lg font-bold text-gray-900 text-center">
                       {category}
                     </h2>
@@ -1790,190 +2197,445 @@ const InventoryBillingPage = () => {
               </div>
 
               <div className="p-6 max-h-[70vh] overflow-y-auto">
-                {/* Selección de Cliente */}
-                <div className="mb-6">
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Seleccionar Cliente *
-                  </label>
-                  <div className="flex items-start gap-2">
-                    <div className="flex-1">
-                      <CustomerSearchDropdown
-                        value={customerSearchValue}
-                        onChange={setCustomerSearchValue}
-                        selectedCustomer={selectedCustomer}
-                        onSelectCustomer={(customer) => {
-                          setSelectedCustomer(customer);
-                          if (customer) {
-                            setCustomerSearchValue(customer.name);
-                          }
+                {modalState === 'config' ? (
+                  <>
+                    {/* Selección de Cliente */}
+                    <div className="mb-6">
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Seleccionar Cliente *
+                      </label>
+                      <div className="flex items-start gap-2">
+                        <div className="flex-1">
+                          <CustomerSearchDropdown
+                            value={customerSearchValue}
+                            onChange={setCustomerSearchValue}
+                            selectedCustomer={selectedCustomer}
+                            onSelectCustomer={(customer) => {
+                              setSelectedCustomer(customer);
+                              if (customer) {
+                                setCustomerSearchValue(customer.name);
+                              }
+                            }}
+                            placeholder="Buscar cliente por nombre o documento..."
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setShowCreateCustomerModal(true)}
+                          className="px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm"
+                          title="Crear cliente en SIIGO"
+                        >
+                          + Crear cliente
+                        </button>
+                      </div>
+
+                      <CreateSiigoCustomerModal
+                        open={showCreateCustomerModal}
+                        onClose={() => setShowCreateCustomerModal(false)}
+                        onCreated={(data) => {
+                          const displayName = Array.isArray(data?.name) ? data.name.join(' ').trim() : (data?.name || '');
+                          const selected = {
+                            id: data?.id || data?._id || null,
+                            name: displayName,
+                            identification: data?.identification || '',
+                            email: data?.email || data?.contacts?.[0]?.email || null,
+                            phone: data?.phones?.[0]?.number || null,
+                            siigo_id: data?.id || null
+                          };
+                          setSelectedCustomer(selected);
+                          setCustomerSearchValue(selected.name || '');
+                          setShowCreateCustomerModal(false);
+                          toast.success('Cliente seleccionado para facturar');
                         }}
-                        placeholder="Buscar cliente por nombre o documento..."
                       />
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => setShowCreateCustomerModal(true)}
-                      className="px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm"
-                      title="Crear cliente en SIIGO"
-                    >
-                      + Crear cliente
-                    </button>
-                  </div>
 
-                  <CreateSiigoCustomerModal
-                    open={showCreateCustomerModal}
-                    onClose={() => setShowCreateCustomerModal(false)}
-                    onCreated={(data) => {
-                      const displayName = Array.isArray(data?.name) ? data.name.join(' ').trim() : (data?.name || '');
-                      const selected = {
-                        id: data?.id || data?._id || null,
-                        name: displayName,
-                        identification: data?.identification || '',
-                        email: data?.email || data?.contacts?.[0]?.email || null,
-                        phone: data?.phones?.[0]?.number || null,
-                        siigo_id: data?.id || null
-                      };
-                      setSelectedCustomer(selected);
-                      setCustomerSearchValue(selected.name || '');
-                      setShowCreateCustomerModal(false);
-                      toast.success('Cliente seleccionado para facturar');
-                    }}
-                  />
-                </div>
+                    {/* Opciones de Facturación (Tipo, Descuento, Retención) - Compacto */}
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-4">
+                      <div>
+                        <label className="block text-xs font-medium text-gray-700 mb-1">
+                          Documento
+                        </label>
+                        <select
+                          value={documentType}
+                          onChange={(e) => setDocumentType(e.target.value)}
+                          className="w-full border border-gray-300 rounded-md shadow-sm py-1.5 px-2 focus:outline-none focus:ring-blue-500 focus:border-blue-500 text-sm"
+                        >
+                          <option value="invoice">Factura</option>
+                          <option value="quotation">Cotización</option>
+                        </select>
+                      </div>
 
-                {/* Opciones de Facturación (Tipo, Descuento, Retención) - Compacto */}
-                {/* Opciones de Facturación (Tipo, Descuento, Retención) - Compacto */}
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-4">
-                  <div>
-                    <label className="block text-xs font-medium text-gray-700 mb-1">
-                      Documento
-                    </label>
-                    <select
-                      value={documentType}
-                      onChange={(e) => setDocumentType(e.target.value)}
-                      className="w-full border border-gray-300 rounded-md shadow-sm py-1.5 px-2 focus:outline-none focus:ring-blue-500 focus:border-blue-500 text-sm"
-                    >
-                      <option value="invoice">Factura</option>
-                      <option value="quotation">Cotización</option>
-                    </select>
-                  </div>
+                      {documentType === 'invoice' ? (
+                        <div>
+                          <label className="block text-xs font-medium text-gray-700 mb-1">
+                            Tipo de Factura
+                          </label>
+                          <select
+                            value={invoiceType}
+                            onChange={(e) => setInvoiceType(e.target.value)}
+                            className="w-full border border-gray-300 rounded-md shadow-sm py-1.5 px-2 focus:outline-none focus:ring-blue-500 focus:border-blue-500 text-sm"
+                          >
+                            <option value="FV-2">FV-2 (Factura Electrónica)</option>
+                            <option value="FV-1">FV-1 (Factura No Electrónica)</option>
+                          </select>
+                        </div>
+                      ) : (
+                        <div className="hidden md:block"></div> // Espaciador
+                      )}
 
-                  {documentType === 'invoice' ? (
-                    <div>
-                      <label className="block text-xs font-medium text-gray-700 mb-1">
-                        Tipo de Factura
-                      </label>
-                      <select
-                        value={invoiceType}
-                        onChange={(e) => setInvoiceType(e.target.value)}
-                        className="w-full border border-gray-300 rounded-md shadow-sm py-1.5 px-2 focus:outline-none focus:ring-blue-500 focus:border-blue-500 text-sm"
-                      >
-                        <option value="FV-2">FV-2 (Factura Electrónica)</option>
-                        <option value="FV-1">FV-1 (Factura No Electrónica)</option>
-                      </select>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-700 mb-1">
+                          Descuento Global
+                        </label>
+                        <select
+                          value={selectedDiscount}
+                          onChange={(e) => {
+                            const newDiscount = Number(e.target.value);
+                            setSelectedDiscount(newDiscount);
+                            // Actualizar TODOS los items con el nuevo descuento global
+                            setCart(prev => prev.map(item => ({ ...item, discount: newDiscount })));
+                          }}
+                          className="w-full border border-gray-300 rounded-md shadow-sm py-1.5 px-2 focus:outline-none focus:ring-blue-500 focus:border-blue-500 text-sm"
+                        >
+                          <option value={0}>Sin Descuento (0%)</option>
+                          <option value={5}>5% Descuento</option>
+                          <option value={8}>8% Descuento</option>
+                          <option value={10}>10% Descuento</option>
+                          <option value={15}>15% Descuento</option>
+                          <option value={20}>20% Descuento</option>
+                          <option value={25}>25% Descuento</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-700 mb-1">
+                          Retención en la Fuente
+                        </label>
+                        <select
+                          value={selectedRetefuente}
+                          onChange={(e) => setSelectedRetefuente(e.target.value)}
+                          className="w-full border border-gray-300 rounded-md shadow-sm py-1.5 px-2 focus:outline-none focus:ring-blue-500 focus:border-blue-500 text-sm"
+                        >
+                          <option value="0">No aplicar</option>
+                          <option value="2.5">Aplicar 2.5% (Compras generales / Declarantes)</option>
+                        </select>
+                      </div>
                     </div>
-                  ) : (
-                    <div className="hidden md:block"></div> // Espaciador
-                  )}
 
-                  <div>
-                    <label className="block text-xs font-medium text-gray-700 mb-1">
-                      Descuento Global
-                    </label>
-                    <select
-                      value={selectedDiscount}
-                      onChange={(e) => {
-                        const newDiscount = Number(e.target.value);
-                        setSelectedDiscount(newDiscount);
-                        // Actualizar TODOS los items con el nuevo descuento global
-                        setCart(prev => prev.map(item => ({ ...item, discount: newDiscount })));
-                      }}
-                      className="w-full border border-gray-300 rounded-md shadow-sm py-1.5 px-2 focus:outline-none focus:ring-blue-500 focus:border-blue-500 text-sm"
-                    >
-                      <option value={0}>Sin Descuento (0%)</option>
-                      <option value={5}>5% Descuento</option>
-                      <option value={8}>8% Descuento</option>
-                      <option value={10}>10% Descuento</option>
-                      <option value={15}>15% Descuento</option>
-                      <option value={20}>20% Descuento</option>
-                      <option value={25}>25% Descuento</option>
-                    </select>
+                    {/* Items del Carrito */}
+                    <div className="mb-6">
+                      <h4 className="text-lg font-medium text-gray-900 mb-4">
+                        Items del Carrito ({cart.length})
+                      </h4>
+                      <InvoiceItemsTable
+                        cart={cart}
+                        onIncrease={(id) => {
+                          const item = cart.find(i => i.id === id);
+                          if (item) updateCartQuantity(id, item.quantity + 1);
+                        }}
+                        onDecrease={(id) => {
+                          const item = cart.find(i => i.id === id);
+                          if (item) updateCartQuantity(id, Math.max(0, item.quantity - 1));
+                        }}
+                        onUpdateQuantity={(id, newQty) => updateCartQuantity(id, newQty)}
+                        onRemove={(id) => removeFromCart(id)}
+                        onUpdateDiscount={updateItemDiscount}
+                        getAvailableStock={getAvailableStock}
+                      />
+                    </div>
+
+                    {/* Selector de Tipo de Venta - Solo para Facturas */}
+                    {documentType === 'invoice' && (
+                      <div className="mb-6 bg-gray-50 border border-gray-200 rounded-lg p-4">
+                        <label className="block text-sm font-bold text-gray-900 mb-3">
+                          Tipo de Venta *
+                        </label>
+
+                        <div className="grid grid-cols-2 gap-3">
+                          <button
+                            onClick={() => {
+                              setOrderType('regular');
+                              setPaymentMethod(null); // Limpiar forma de pago al cambiar a regular
+                            }}
+                            className={`flex flex-col items-center justify-center p-3 border-2 rounded-lg transition-all ${orderType === 'regular'
+                              ? 'border-blue-500 bg-blue-50 text-blue-700'
+                              : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
+                              }`}
+                          >
+                            <div className="font-bold text-lg mb-1">📦 Regular</div>
+                            <div className="text-xs text-center">Envío a domicilio o nacional</div>
+                          </button>
+
+                          <button
+                            onClick={() => setOrderType('pos')}
+                            className={`flex flex-col items-center justify-center p-3 border-2 rounded-lg transition-all ${orderType === 'pos'
+                              ? 'border-green-500 bg-green-50 text-green-700'
+                              : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
+                              }`}
+                          >
+                            <div className="font-bold text-lg mb-1">🏪 Venta POS</div>
+                            <div className="text-xs text-center">Cliente en punto (Entrega Inmediata)</div>
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Forma de Pago - Solo para Facturas */}
+                    {documentType === 'invoice' && (
+                      <div className="mb-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
+                        <label className="block text-sm font-bold text-gray-900 mb-2">
+                          Forma de Pago *
+                        </label>
+                        <div className="space-y-3">
+                          <label className={`flex items-center p-3 border rounded-lg cursor-pointer transition-colors ${paymentMethod === 'cash' ? 'bg-green-50 border-green-500' : 'bg-white hover:bg-gray-50'}`}>
+                            <input
+                              type="radio"
+                              name="paymentMethod"
+                              value="cash"
+                              checked={paymentMethod === 'cash'}
+                              onChange={(e) => setPaymentMethod(e.target.value)}
+                              className="form-radio h-4 w-4 text-green-600"
+                            />
+                            <span className="ml-2 flex items-center font-medium text-gray-700">
+                              💵 Efectivo
+                            </span>
+                          </label>
+
+                          <label className={`flex items-center p-3 border rounded-lg cursor-pointer transition-colors ${paymentMethod === 'transfer' ? 'bg-blue-50 border-blue-500' : 'bg-white hover:bg-gray-50'}`}>
+                            <input
+                              type="radio"
+                              name="paymentMethod"
+                              value="transfer"
+                              checked={paymentMethod === 'transfer'}
+                              onChange={(e) => setPaymentMethod(e.target.value)}
+                              className="form-radio h-4 w-4 text-blue-600"
+                            />
+                            <span className="ml-2 flex items-center font-medium text-gray-700">
+                              🏦 Transferencia
+                            </span>
+                          </label>
+
+                          <label className={`flex items-center p-3 border rounded-lg cursor-pointer transition-colors ${paymentMethod === 'mixed' ? 'bg-purple-50 border-purple-500' : 'bg-white hover:bg-gray-50'}`}>
+                            <input
+                              type="radio"
+                              name="paymentMethod"
+                              value="mixed"
+                              checked={paymentMethod === 'mixed'}
+                              onChange={(e) => setPaymentMethod(e.target.value)}
+                              className="form-radio h-4 w-4 text-purple-600"
+                            />
+                            <span className="ml-2 flex items-center font-medium text-gray-700">
+                              💳 Mixto (Efectivo + Transferencia)
+                            </span>
+                          </label>
+
+                          <label className={`flex items-center p-3 border rounded-lg cursor-pointer transition-colors ${paymentMethod === 'credit' ? 'bg-orange-50 border-orange-500' : 'bg-white hover:bg-gray-50'}`}>
+                            <input
+                              type="radio"
+                              name="paymentMethod"
+                              value="credit"
+                              checked={paymentMethod === 'credit'}
+                              onChange={(e) => setPaymentMethod(e.target.value)}
+                              className="form-radio h-4 w-4 text-orange-600"
+                            />
+                            <span className="ml-2 flex items-center font-medium text-gray-700">
+                              📋 Crédito
+                            </span>
+                          </label>
+
+                          <label className={`flex items-center p-3 border rounded-lg cursor-pointer transition-colors ${paymentMethod === 'cod' ? 'bg-yellow-50 border-yellow-500' : 'bg-white hover:bg-gray-50'}`}>
+                            <input
+                              type="radio"
+                              name="paymentMethod"
+                              value="cod"
+                              checked={paymentMethod === 'cod'}
+                              onChange={(e) => setPaymentMethod(e.target.value)}
+                              className="form-radio h-4 w-4 text-yellow-600"
+                            />
+                            <span className="ml-2 flex items-center font-medium text-gray-700">
+                              🚚 Contra Entrega
+                            </span>
+                          </label>
+                        </div>
+
+                        {/* Campos para pago mixto */}
+                        {paymentMethod === 'mixed' && (
+                          <div className="mt-4 grid grid-cols-2 gap-4 animate-fadeIn">
+                            <div>
+                              <label className="block text-xs font-semibold text-gray-600 mb-1">Monto Efectivo</label>
+                              <div className="relative">
+                                <span className="absolute left-3 top-2 text-gray-500">$</span>
+                                <input
+                                  type="number"
+                                  value={cashAmount}
+                                  onChange={(e) => setCashAmount(e.target.value)}
+                                  className="w-full pl-6 pr-3 py-2 border border-gray-300 rounded focus:ring-purple-500 focus:border-purple-500"
+                                  placeholder="0"
+                                />
+                              </div>
+                            </div>
+                            <div>
+                              <label className="block text-xs font-semibold text-gray-600 mb-1">Monto Transferencia</label>
+                              <div className="relative">
+                                <span className="absolute left-3 top-2 text-gray-500">$</span>
+                                <input
+                                  type="number"
+                                  value={transferAmount}
+                                  onChange={(e) => setTransferAmount(e.target.value)}
+                                  className="w-full pl-6 pr-3 py-2 border border-gray-300 rounded focus:ring-purple-500 focus:border-purple-500"
+                                  placeholder="0"
+                                />
+                              </div>
+                            </div>
+                            <div className="col-span-2 text-right text-sm font-bold text-gray-700">
+                              Total: ${((parseFloat(cashAmount) || 0) + (parseFloat(transferAmount) || 0)).toLocaleString()}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Notas de la Factura */}
+                    <div className="mb-6">
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Notas / Observaciones
+                      </label>
+                      <textarea
+                        value={invoiceNotes}
+                        onChange={(e) => setInvoiceNotes(e.target.value)}
+                        placeholder="Escribe aquí cualquier nota adicional para la factura..."
+                        className="w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 text-sm"
+                        rows={6}
+                      />
+                    </div>
+                  </>
+                ) : modalState === 'processing' ? (
+                  <div className="flex flex-col items-center justify-center h-64">
+                    <RefreshCw className="w-16 h-16 text-blue-500 animate-spin mb-4" />
+                    <h3 className="text-xl font-bold text-gray-800">Procesando Pedido...</h3>
+                    <p className="text-gray-500 mt-2">Importando factura desde SIIGO y creando pedido local.</p>
                   </div>
-                  <div>
-                    <label className="block text-xs font-medium text-gray-700 mb-1">
-                      Retención en la Fuente
-                    </label>
-                    <select
-                      value={selectedRetefuente}
-                      onChange={(e) => setSelectedRetefuente(e.target.value)}
-                      className="w-full border border-gray-300 rounded-md shadow-sm py-1.5 px-2 focus:outline-none focus:ring-blue-500 focus:border-blue-500 text-sm"
-                    >
-                      <option value="0">No aplicar</option>
-                      <option value="2.5">Aplicar 2.5% (Compras generales / Declarantes)</option>
-                    </select>
+                ) : modalState === 'upload_evidence' ? (
+                  <div className="space-y-6">
+                    <div className="bg-green-50 p-4 rounded-lg border border-green-200">
+                      <h3 className="text-lg font-bold text-green-800 flex items-center">
+                        <CheckCircle className="w-5 h-5 mr-2" />
+                        Pedido Importado: #{importedOrder?.order_number}
+                      </h3>
+                      <p className="text-sm text-green-700 mt-1">
+                        Total a pagar: <span className="font-bold">${parseFloat(importedOrder?.total_amount || 0).toLocaleString()}</span>
+                      </p>
+                    </div>
+
+                    <div className="bg-white p-4 rounded-lg border border-gray-200 shadow-sm">
+                      <h4 className="font-bold text-gray-800 mb-4">Subir Evidencias de Entrega</h4>
+
+                      <div className="space-y-4">
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Foto del Producto (Obligatorio)
+                          </label>
+                          <CameraInput
+                            id="product-photo"
+                            label="Foto del Producto"
+                            required={true}
+                            onFileSelect={setProductPhoto}
+                          />
+                        </div>
+
+                        {(paymentMethod === 'transfer' || paymentMethod === 'mixed') && (
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                              Comprobante de Pago (Obligatorio)
+                            </label>
+                            <CameraInput
+                              id="payment-evidence"
+                              label="Comprobante de Pago"
+                              required={true}
+                              onFileSelect={setPaymentEvidence}
+                            />
+                          </div>
+                        )}
+
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Foto del Efectivo (Opcional)
+                          </label>
+                          <CameraInput
+                            id="cash-photo"
+                            label="Foto del Efectivo"
+                            required={false}
+                            onFileSelect={setCashPhoto}
+                          />
+                        </div>
+                      </div>
+                    </div>
                   </div>
-                </div>
-
-                {/* Items del Carrito */}
-                <div className="mb-6">
-                  <h4 className="text-lg font-medium text-gray-900 mb-4">
-                    Items del Carrito ({cart.length})
-                  </h4>
-                  <InvoiceItemsTable
-                    cart={cart}
-                    onIncrease={(id) => {
-                      const item = cart.find(i => i.id === id);
-                      if (item) updateCartQuantity(id, item.quantity + 1);
-                    }}
-                    onDecrease={(id) => {
-                      const item = cart.find(i => i.id === id);
-                      if (item) updateCartQuantity(id, Math.max(0, item.quantity - 1));
-                    }}
-                    onRemove={(id) => removeFromCart(id)}
-                    onUpdateDiscount={updateItemDiscount}
-                    getAvailableStock={getAvailableStock}
-                  />
-                </div>
-
-                {/* Notas de la Factura */}
-                <div className="mb-6">
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Notas / Observaciones
-                  </label>
-                  <textarea
-                    value={invoiceNotes}
-                    onChange={(e) => setInvoiceNotes(e.target.value)}
-                    placeholder="Escribe aquí cualquier nota adicional para la factura..."
-                    className="w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 text-sm"
-                    rows={6}
-                  />
-                </div>
+                ) : (
+                  <div className="flex flex-col items-center justify-center h-64">
+                    <CheckCircle className="w-20 h-20 text-green-500 mb-4" />
+                    <h3 className="text-2xl font-bold text-gray-800">¡Proceso Completado!</h3>
+                    <p className="text-gray-600 mt-2 text-center">
+                      {paymentMethod === 'cash'
+                        ? 'El pedido ha sido marcado como ENTREGADO.'
+                        : 'El pedido ha sido enviado a aprobación de Cartera.'}
+                    </p>
+                    <div className="mt-6 p-4 bg-gray-50 rounded text-center">
+                      <p className="font-mono text-lg">{importedOrder?.order_number}</p>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="border-t border-gray-200 px-6 py-4 flex justify-end space-x-3">
-                <button
-                  onClick={() => setShowCheckout(false)}
-                  className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50"
-                >
-                  Cancelar
-                </button>
-                <button
-                  onClick={processInvoice}
-                  disabled={!selectedCustomer || cart.length === 0 || processingInvoice}
-                  className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 flex items-center"
-                >
-                  {processingInvoice ? (
-                    <>
-                      <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
-                      Procesando...
-                    </>
-                  ) : (
-                    <>
-                      <FileText className="w-4 h-4 mr-2" />
-                      Generar {documentType === 'invoice' ? `Factura ${invoiceType}` : 'Cotización'}
-                    </>
-                  )}
-                </button>
+                {modalState === 'config' ? (
+                  <>
+                    <button
+                      onClick={() => setShowCheckout(false)}
+                      className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      onClick={processInvoice}
+                      disabled={!selectedCustomer || cart.length === 0 || processingInvoice || (documentType === 'invoice' && !paymentMethod)}
+                      title={documentType === 'invoice' && !paymentMethod ? "Seleccione una forma de pago" : ""}
+                      className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 flex items-center"
+                    >
+                      {processingInvoice ? (
+                        <>
+                          <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                          Procesando...
+                        </>
+                      ) : (
+                        <>
+                          <FileText className="w-4 h-4 mr-2" />
+                          {documentType === 'invoice' ? `Generar ${invoiceType}` : 'Generar Cotización'}
+                        </>
+                      )}
+                    </button>
+                  </>
+                ) : modalState === 'processing' ? (
+                  <button disabled className="px-4 py-2 bg-gray-300 text-white rounded-lg cursor-not-allowed">
+                    Por favor espere...
+                  </button>
+                ) : modalState === 'upload_evidence' ? (
+                  <button
+                    onClick={handleConfirmDelivery}
+                    disabled={processingInvoice}
+                    className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-bold shadow-lg flex items-center"
+                  >
+                    {processingInvoice ? 'Subiendo...' : 'Confirmar Entrega'}
+                    {!processingInvoice && <CheckCircle className="w-5 h-5 ml-2" />}
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleClosePOS}
+                    className="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 font-bold"
+                  >
+                    Finalizar y Cerrar
+                  </button>
+                )}
               </div>
             </div>
           </div>
@@ -2088,9 +2750,18 @@ const InventoryBillingPage = () => {
                                 >
                                   <Minus className="w-3 h-3" />
                                 </button>
-                                <span className="w-8 text-center font-bold text-sm text-gray-700">
-                                  {item.quantity}
-                                </span>
+                                <input
+                                  type="number"
+                                  value={item.quantity}
+                                  onChange={(e) => {
+                                    const newQty = parseInt(e.target.value) || 0;
+                                    updateCartQuantity(item.id, newQty);
+                                  }}
+                                  onFocus={(e) => e.target.select()}
+                                  min="0"
+                                  max={temporaryStock[item.id] || 0}
+                                  className="w-12 text-center font-bold text-sm text-gray-700 border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-green-500 focus:border-green-500"
+                                />
                                 <button
                                   onClick={() => updateCartQuantity(item.id, item.quantity + 1)}
                                   disabled={item.quantity >= (temporaryStock[item.id] || 0)}
@@ -2131,6 +2802,9 @@ const InventoryBillingPage = () => {
                         onClick={() => {
                           if (window.confirm('¿Estás seguro de vaciar el carrito?')) {
                             setCart([]);
+                            setPaymentMethod(null);
+                            setCashAmount('');
+                            setTransferAmount('');
                             toast.success('Carrito vaciado');
                           }
                         }}
@@ -2174,3 +2848,4 @@ const InventoryBillingPage = () => {
 };
 
 export default InventoryBillingPage;
+// Force refresh Mon Dec 15 11:01:54 -05 2025

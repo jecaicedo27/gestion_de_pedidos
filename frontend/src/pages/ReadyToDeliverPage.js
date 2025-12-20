@@ -960,39 +960,87 @@ export default function ReadyToDeliverPage() {
                                       (() => {
                                         const credit = isCreditOrder(order);
                                         const regCount = Number(order?.cash_register_count || 0);
+                                        const { productDue } = computeCollectionAmounts(order);
+
+                                        // Para determinar si esperamos a Cartera, necesitamos diferenciar:
+                                        // - hasAnyPayment: hay ALGÚN tipo de pago registrado (caja o wallet)
+                                        // - hasCashCollected: específicamente hay efectivo cobrado y aceptado
+                                        // - hasWalletApproved: hay validación de wallet aprobada (transferencias)
                                         const hasAnyPayment = regCount > 0 || String(order?.has_payment || '') === '1';
-                                        const hasCollected = Number(order?.has_cash_collected || 0) === 1 || Number(order?.cash_register_collected_count || 0) > 0;
-                                        // Antes dependíamos solo de regCount; algunos listados traen has_payment sin el conteo
-                                        const mustWaitForCartera = !credit && hasAnyPayment && !hasCollected;
+                                        const hasCashCollected = Number(order?.cash_register_collected_count || 0) > 0;
+                                        const hasWalletApproved = Number(order?.wallet_validations_approved || 0) > 0 || Number(order?.has_cash_collected || 0) === 1;
+
+                                        // mustWaitForCartera solo si:
+                                        // - No es crédito
+                                        // - Hay pago registrado en CAJA (no wallet)
+                                        // - Ese pago de caja NO ha sido aceptado aún
+                                        const mustWaitForCartera = !credit && regCount > 0 && !hasCashCollected;
+
                                         return (
                                           <>
                                             {/* Botón Registrar Pago solo si no es crédito y aún no hay registro */}
-                                            {!credit && regCount === 0 && !__norm(String(order?.payment_method || getRawPaymentMethod(order) || '')).includes('transfer') && (
-                                              <ActionButton
-                                                color="amber"
-                                                title="Registrar pago en bodega"
-                                                onClick={() => setPaymentModal({
-                                                  open: true,
-                                                  order,
-                                                  method: String(order?.payment_method || '').toLowerCase().includes('transfer') ? 'transferencia' : 'efectivo',
-                                                  amount: String(getOrderAmount(order) || ''),
-                                                  notes: '',
-                                                  file: null
-                                                })}
-                                              >
-                                                <Icons.DollarSign className="w-3 h-3 mr-1" />
-                                                Registrar Pago
-                                              </ActionButton>
-                                            )}
+                                            {(() => {
+                                              const { productDue } = computeCollectionAmounts(order);
+                                              const shouldShow = !credit && regCount === 0 && productDue > 0;
+
+                                              // Debug para FV-2-15584 y otros pedidos con pago mixto
+                                              if (order.order_number === 'FV-2-15584' || productDue > 0) {
+                                                console.log(`[DEBUG ${order.order_number}] Registrar Pago:`, {
+                                                  credit,
+                                                  regCount,
+                                                  productDue,
+                                                  shouldShow,
+                                                  payment_method: order.payment_method,
+                                                  payment_amount: order.payment_amount,
+                                                  siigo_balance: order.siigo_balance,
+                                                  total: order.total_amount,
+                                                  paid_amount: order.paid_amount
+                                                });
+                                              }
+
+                                              // Mostrar botón si:
+                                              // - No es crédito
+                                              // - No hay registro de caja aún
+                                              // - Hay dinero pendiente por cobrar (productDue > 0)
+                                              // Esto incluye pagos 100% efectivo Y pagos mixtos (transfer + efectivo)
+                                              return shouldShow;
+                                            })() && (
+                                                <ActionButton
+                                                  color="amber"
+                                                  title="Registrar pago en bodega"
+                                                  onClick={() => {
+                                                    const { productDue } = computeCollectionAmounts(order);
+                                                    // Para pagos mixtos, siempre preseleccionar "efectivo" 
+                                                    // porque estamos cobrando la parte en efectivo (productDue)
+                                                    setPaymentModal({
+                                                      open: true,
+                                                      order,
+                                                      method: 'efectivo', // Siempre efectivo cuando hay productDue > 0
+                                                      amount: String(productDue || getOrderAmount(order) || ''),
+                                                      notes: '',
+                                                      file: null
+                                                    });
+                                                  }}
+                                                >
+                                                  <Icons.DollarSign className="w-3 h-3 mr-1" />
+                                                  Registrar Pago
+                                                </ActionButton>
+                                              )}
 
                                             {/* Chips de estado de pago */}
-                                            {!credit && hasCollected && (
-                                              <span className="inline-flex items-center px-2 py-1 text-xs font-semibold rounded-md bg-emerald-100 text-emerald-700 ml-2" title="Pago aceptado por Cartera">
+                                            {!credit && hasCashCollected && (
+                                              <span className="inline-flex items-center px-2 py-1 text-xs font-semibold rounded-md bg-emerald-100 text-emerald-700 ml-2" title="Pago en efectivo aceptado por Cartera">
                                                 <Icons.Check className="w-3 h-3 mr-1" />
-                                                Pagado
+                                                Efectivo Pagado
                                               </span>
                                             )}
-                                            {!credit && !hasCollected && hasAnyPayment && (
+                                            {!credit && hasWalletApproved && !hasCashCollected && productDue > 0 && (
+                                              <span className="inline-flex items-center px-2 py-1 text-xs font-semibold rounded-md bg-blue-100 text-blue-700 ml-2" title="Transferencia aprobada, falta efectivo">
+                                                <Icons.Check className="w-3 h-3 mr-1" />
+                                                Transfer OK
+                                              </span>
+                                            )}
+                                            {!credit && regCount > 0 && !hasCashCollected && (
                                               <span className="inline-flex items-center px-2 py-1 text-xs font-semibold rounded-md bg-amber-100 text-amber-800 ml-2" title="Pago registrado, pendiente aceptación">
                                                 <Icons.Clock className="w-3 h-3 mr-1" />
                                                 Pago registrado

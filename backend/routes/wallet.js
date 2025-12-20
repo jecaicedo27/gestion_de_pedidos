@@ -18,6 +18,12 @@ router.post('/validate-payment',
   walletController.validatePayment
 );
 
+// Validar pago POS
+router.post('/validate-pos-payment',
+  verifyRole(['cartera', 'admin', 'facturador']),
+  walletController.validatePosPayment
+);
+
 // Obtener historial de validaciones de un pedido
 router.get('/validation-history/:orderId',
   verifyRole(['cartera', 'admin']),

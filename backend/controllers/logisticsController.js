@@ -1638,6 +1638,10 @@ const markInDelivery = async (req, res) => {
 // Recibir pago en bodega (efectivo o transferencia) con evidencia fotográfica
 const receivePickupPayment = async (req, res) => {
   try {
+    console.log('[DEBUG receivePickupPayment] Headers:', req.headers['content-type']);
+    console.log('[DEBUG receivePickupPayment] Body:', req.body);
+    console.log('[DEBUG receivePickupPayment] File:', req.file);
+
     // Política: requiere rol Cartera (o Admin). Soporta sistema de roles avanzado.
     const baseRole = String(req.user?.role || '').toLowerCase();
     const roles = Array.isArray(req.user?.roles) ? req.user.roles.map(r => String(r.role_name || '').toLowerCase()) : [];
@@ -1646,12 +1650,14 @@ const receivePickupPayment = async (req, res) => {
     const isLogistica = baseRole === 'logistica' || roles.includes('logistica');
     // Permitir a Cartera/Admin registrar y aceptar en el acto; Logística puede registrar como pendiente
     if (!isCartera && !isAdmin && !isLogistica) {
+      console.log('[DEBUG] Acceso denegado - rol:', baseRole, 'roles:', roles);
       return res.status(403).json({ success: false, message: 'Acceso denegado: se requiere rol Cartera, Logística o Admin para registrar pagos en bodega.' });
     }
     const { orderId, payment_method, amount, notes } = req.body || {};
     const userId = req.user?.id;
 
     if (!orderId) {
+      console.log('[DEBUG] orderId faltante');
       return res.status(400).json({ success: false, message: 'orderId es requerido' });
     }
 
@@ -1673,23 +1679,24 @@ const receivePickupPayment = async (req, res) => {
     const method = (payment_method || order.order_payment_method || 'efectivo').toLowerCase();
     const amt = Number(amount) > 0 ? Number(amount) : Number(order.total_amount || 0);
 
-    // Si es transferencia debe venir foto del comprobante
-    if (method === 'transferencia' && !req.file) {
+    // Solo requiere foto para trasferencias. Efectivo/contraentrega puede ser sin foto.
+    const isTransfer = method === 'transferencia' || method.includes('transfer');
+    if (isTransfer && !req.file) {
       return res.status(400).json({ success: false, message: 'Debes adjuntar foto del comprobante de transferencia' });
     }
-    const evidence = req.file ? `Evidencia: ${req.file.filename} (${req.file.path})` : 'Sin evidencia fotográfica';
+    const evidence = req.file ? `Evidencia: ${req.file.filename} (${req.file.path})` : 'Sin evidencia fotográfica (efectivo)';
 
     // Evitar pagos duplicados para el mismo pedido
     const existingPayment = await query('SELECT id, status FROM cash_register WHERE order_id = ? ORDER BY id DESC LIMIT 1', [orderId]);
 
     // Decidir si se acepta inmediatamente
-    // - Cartera: siempre
-    // - Admin: si no tiene rol operativo logística
-    // - Logística: solo para pagos en efectivo/contado/contraentrega (reciben caja en bodega)
+    // IMPORTANTE: Solo Cartera puede aceptar pagos en efectivo (para control de caja)
+    // Logística solo REGISTRA el pago como pendiente
     const cashLike = ['efectivo', 'contado', 'contraentrega', 'cash'].some(k => method.includes(k));
-    // Escalable: permitir aceptación por cualquiera de los dos frentes (Logística o Cartera) y Admin
-    // La evidencia para transferencia sigue siendo obligatoria arriba.
-    const acceptNow = isCartera || isAdmin || isLogistica;
+
+    // CAMBIO: Nadie puede auto-aceptar desde Logística.
+    // Todos los pagos deben pasar por el flujo de aceptación de Cartera.
+    const acceptNow = false;
 
     // Si ya hay registro y podemos aceptar ahora, actualizar a collected en lugar de duplicar
     if (existingPayment.length) {
@@ -1702,7 +1709,7 @@ const receivePickupPayment = async (req, res) => {
           [userId || null, amt, row.id]
         );
         await query('UPDATE orders SET updated_at = NOW() WHERE id = ?', [orderId]);
-        return res.json({ success: true, message: 'Pago aceptado (Logística/Cartera)', data: { id: row.id, accepted: true } });
+        return res.json({ success: true, message: 'Pago aceptado (Cartera)', data: { id: row.id, accepted: true } });
       }
       // Idempotente: si ya estaba aceptado, responder 200 y no 409
       if (String(row.status) === 'collected') {
@@ -1711,9 +1718,9 @@ const receivePickupPayment = async (req, res) => {
       return res.status(409).json({ success: false, message: 'El pago ya fue registrado previamente para este pedido' });
     }
 
-    // Insertar nuevo registro: aceptado o pendiente según rol
-    // Evita que usuarios con rol mixto (admin + logistica) acepten directamente desde logística para electrónicos
+    // Insertar nuevo registro: aceptado (solo Cartera/Admin) o pendiente (Logística)
     if (acceptNow) {
+      // Solo Cartera/Admin llegan aquí
       await query(
         `INSERT INTO cash_register (
            order_id, amount, payment_method, delivery_method, registered_by, notes, status, accepted_by, accepted_at, accepted_amount, created_at
@@ -1729,11 +1736,14 @@ const receivePickupPayment = async (req, res) => {
           amt
         ]
       );
+      await query('UPDATE orders SET updated_at = NOW() WHERE id = ?', [orderId]);
+      return res.json({ success: true, message: 'Pago registrado y aceptado (Cartera)', data: { accepted: true } });
     } else {
       // Logística registra como pendiente; Cartera lo acepta luego desde su panel
       await query(
-        `INSERT INTO cash_register (order_id, amount, payment_method, delivery_method, registered_by, notes, status, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, 'pending', NOW())`,
+        `INSERT INTO cash_register (
+           order_id, amount, payment_method, delivery_method, registered_by, notes, status, created_at
+         ) VALUES (?, ?, ?, ?, ?, ?, 'pending', NOW())`,
         [
           orderId,
           amt,
@@ -1743,29 +1753,16 @@ const receivePickupPayment = async (req, res) => {
           `${evidence}${notes ? ' - ' + notes : ''}`
         ]
       );
+      await query('UPDATE orders SET updated_at = NOW() WHERE id = ?', [orderId]);
+      return res.json({ success: true, message: 'Pago registrado. Pendiente de aceptación por Cartera.', data: { accepted: false, pending: true } });
     }
-
-    // Mantener el pedido sin cambios de estado; se libera manualmente en logística/cartera
-    await query('UPDATE orders SET updated_at = NOW() WHERE id = ?', [orderId]);
-
-    return res.json({
-      success: true,
-      message: acceptNow
-        ? 'Pago registrado y aceptado por Cartera. Se contabiliza en el consolidado de Bodega.'
-        : 'Pago registrado por Logística. Pendiente de aceptación por Cartera.',
-      data: {
-        orderId,
-        amount: amt,
-        payment_method: method,
-        accepted: acceptNow,
-        photo: req.file ? `/uploads/delivery_evidence/${req.file.filename}` : null
-      }
-    });
   } catch (error) {
-    console.error('Error registrando pago en bodega:', error);
-    return res.status(500).json({ success: false, message: 'Error interno del servidor' });
+    console.error('Error en receivePickupPayment:', error);
+    res.status(500).json({ success: false, message: 'Error interno del servidor' });
   }
 };
+
+// Entregar pedido en bodega (Recoge en Bodega)
 
 // Marcar entrega en bodega (para Recoge en Bodega)
 const markPickupDelivered = async (req, res) => {
@@ -1775,7 +1772,7 @@ const markPickupDelivered = async (req, res) => {
 
     // Verificar que el pedido existe
     const orderRows = await query(
-      'SELECT id, status, order_number, delivery_method, requires_payment, payment_method, validation_status FROM orders WHERE id = ?',
+      'SELECT id, status, order_number, delivery_method, requires_payment, payment_method, validation_status, approved_by FROM orders WHERE id = ?',
       [orderId]
     );
 
@@ -1826,8 +1823,11 @@ const markPickupDelivered = async (req, res) => {
           return res.status(400).json({ success: false, message: 'Cartera/Logística debe aceptar el pago en caja antes de ENTREGAR' });
         }
       } else if (!isCreditMethod) {
+        // Aceptar si tiene validación en wallet_validations O si ya fue aprobado directamente en la orden (flujo POS)
         const wv = await query('SELECT id FROM wallet_validations WHERE order_id = ? AND validation_status = "approved" LIMIT 1', [orderId]);
-        if (!wv.length) {
+        const isDirectlyApproved = order.approved_by != null || (order.validation_status === 'approved');
+
+        if (!wv.length && !isDirectlyApproved) {
           return res.status(400).json({ success: false, message: 'Cartera debe aprobar el pago antes de ENTREGAR en bodega' });
         }
       }
@@ -1837,7 +1837,7 @@ const markPickupDelivered = async (req, res) => {
     await query(
       `UPDATE orders 
        SET status = 'entregado_cliente', delivered_at = NOW(), delivery_notes = ?, updated_at = NOW()
-       WHERE id = ?`,
+       WHERE id = ? `,
       [delivery_notes || null, orderId]
     );
 
@@ -1868,12 +1868,12 @@ const generateCarrierManifest = async (req, res) => {
       'SELECT id, name, code, active FROM carriers WHERE id = ?',
       [carrierId]
     );
-    const carrierName = carriers.length ? (carriers[0].name || `Carrier ${carrierId}`) : `Carrier ${carrierId}`;
+    const carrierName = carriers.length ? (carriers[0].name || `Carrier ${carrierId} `) : `Carrier ${carrierId} `;
     const carrierCode = carriers.length ? (carriers[0].code || 'carrier') : 'carrier';
 
     const allowedStatuses = ['listo_para_entrega', 'empacado', 'listo'];
 
-    let where = `WHERE o.carrier_id = ? AND o.status IN (?, ?, ?)`;
+    let where = `WHERE o.carrier_id = ? AND o.status IN(?, ?, ?)`;
     const params = [carrierId, ...allowedStatuses];
 
     if (from) {
@@ -1886,8 +1886,8 @@ const generateCarrierManifest = async (req, res) => {
     }
 
     const orders = await query(
-      `SELECT 
-         o.id, o.order_number, o.customer_name, o.customer_phone AS phone
+      `SELECT
+    o.id, o.order_number, o.customer_name, o.customer_phone AS phone
        FROM orders o
        ${where}
        ORDER BY o.created_at ASC`,
@@ -1904,7 +1904,7 @@ const generateCarrierManifest = async (req, res) => {
 
     res.status(200);
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="planilla-${code}-${dateStr}.pdf"`);
+    res.setHeader('Content-Disposition', `attachment; filename = "planilla-${code}-${dateStr}.pdf"`);
     res.setHeader('Content-Length', pdfBuffer.length);
     res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
     res.setHeader('Pragma', 'no-cache');
@@ -1938,7 +1938,7 @@ const generateLocalManifest = async (req, res) => {
 
     const allowedStatuses = ['listo_para_entrega', 'empacado', 'listo', 'en_reparto'];
 
-    let where = `WHERE o.status IN (?, ?, ?, ?)`;
+    let where = `WHERE o.status IN(?, ?, ?, ?)`;
     const params = [...allowedStatuses];
 
     if (messengerId) {
@@ -1948,11 +1948,11 @@ const generateLocalManifest = async (req, res) => {
     } else {
       // Sin mensajero específico: pedidos que van por mensajería local
       // Cubrimos: método de entrega local o con mensajero asignado
-      where += ` AND (
-        o.assigned_messenger_id IS NOT NULL
-        OR (o.assigned_messenger IS NOT NULL AND o.assigned_messenger <> '')
-        OR o.delivery_method IN ('mensajeria_urbana','domicilio')
-      )`;
+      where += ` AND(
+      o.assigned_messenger_id IS NOT NULL
+        OR(o.assigned_messenger IS NOT NULL AND o.assigned_messenger <> '')
+        OR o.delivery_method IN('mensajeria_urbana', 'domicilio')
+    )`;
     }
 
     if (from) {
@@ -1965,8 +1965,8 @@ const generateLocalManifest = async (req, res) => {
     }
 
     const orders = await query(
-      `SELECT 
-         o.id, o.order_number, o.customer_name, o.customer_phone AS phone
+      `SELECT
+    o.id, o.order_number, o.customer_name, o.customer_phone AS phone
        FROM orders o
        ${where}
        ORDER BY o.created_at ASC`,
@@ -1975,7 +1975,7 @@ const generateLocalManifest = async (req, res) => {
 
     // Usar el generador de tabla existente
     const pdfBuffer = await pdfService.generateCarrierManifest(orders, {
-      carrierName: messengerId ? (messengerName ? `Mensajería Local - ${messengerName}` : 'Mensajería Local') : 'Mensajería Local',
+      carrierName: messengerId ? (messengerName ? `Mensajería Local - ${messengerName} ` : 'Mensajería Local') : 'Mensajería Local',
       date: new Date()
     });
 
@@ -1984,7 +1984,7 @@ const generateLocalManifest = async (req, res) => {
 
     res.status(200);
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="planilla-${code}-${dateStr}.pdf"`);
+    res.setHeader('Content-Disposition', `attachment; filename = "planilla-${code}-${dateStr}.pdf"`);
     res.setHeader('Content-Length', pdfBuffer.length);
     res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
     res.setHeader('Pragma', 'no-cache');
@@ -2040,22 +2040,22 @@ const returnToPackaging = async (req, res) => {
     try {
       await query(
         `UPDATE orders
-           SET 
-             status = 'en_empaque',
-             assigned_messenger_id = NULL,
-             assigned_messenger = NULL,
-             messenger_status = NULL,
-             carrier_id = NULL,
-             tracking_number = NULL,
-             shipping_guide_generated = FALSE,
-             shipping_guide_path = NULL,
-             packaging_lock_user_id = NULL,
-             packaging_lock_heartbeat_at = NULL,
-             packaging_lock_expires_at = NULL,
-             packaging_lock_reason = ?,
-             packaging_status = 'in_progress',
-             updated_at = NOW()
-         WHERE id = ?`,
+    SET
+    status = 'en_empaque',
+      assigned_messenger_id = NULL,
+      assigned_messenger = NULL,
+      messenger_status = NULL,
+      carrier_id = NULL,
+      tracking_number = NULL,
+      shipping_guide_generated = FALSE,
+      shipping_guide_path = NULL,
+      packaging_lock_user_id = NULL,
+      packaging_lock_heartbeat_at = NULL,
+      packaging_lock_expires_at = NULL,
+      packaging_lock_reason = ?,
+      packaging_status = 'in_progress',
+      updated_at = NOW()
+         WHERE id = ? `,
         [lockReason, orderId]
       );
     } catch (e) {
@@ -2064,20 +2064,20 @@ const returnToPackaging = async (req, res) => {
       if ((e?.code === 'ER_BAD_FIELD_ERROR' || /Unknown column/i.test(msg)) && /(shipping_guide_generated|shipping_guide_path)/i.test(msg)) {
         await query(
           `UPDATE orders
-             SET 
-               status = 'en_empaque',
-               assigned_messenger_id = NULL,
-               assigned_messenger = NULL,
-               messenger_status = NULL,
-               carrier_id = NULL,
-               tracking_number = NULL,
-               packaging_lock_user_id = NULL,
-               packaging_lock_heartbeat_at = NULL,
-               packaging_lock_expires_at = NULL,
-               packaging_lock_reason = ?,
-               packaging_status = 'in_progress',
-               updated_at = NOW()
-           WHERE id = ?`,
+    SET
+    status = 'en_empaque',
+      assigned_messenger_id = NULL,
+      assigned_messenger = NULL,
+      messenger_status = NULL,
+      carrier_id = NULL,
+      tracking_number = NULL,
+      packaging_lock_user_id = NULL,
+      packaging_lock_heartbeat_at = NULL,
+      packaging_lock_expires_at = NULL,
+      packaging_lock_reason = ?,
+      packaging_status = 'in_progress',
+      updated_at = NOW()
+           WHERE id = ? `,
           [lockReason, orderId]
         );
       } else {
@@ -2137,20 +2137,20 @@ const uploadPaymentEvidence = async (req, res) => {
 
       await query(
         `UPDATE orders 
-         SET payment_evidence_path = ?, 
-             is_pending_payment_evidence = FALSE,
-             payment_method = 'transferencia',
-             requires_payment = 1,
-             payment_amount = ?,
-             paid_amount = ?,
-             updated_at = NOW()
-         WHERE id = ?`,
+         SET payment_evidence_path = ?,
+      is_pending_payment_evidence = FALSE,
+      payment_method = 'transferencia',
+      requires_payment = 1,
+      payment_amount = ?,
+      paid_amount = ?,
+      updated_at = NOW()
+         WHERE id = ? `,
         [relativePath, cashAmount, transferAmount, id]
       );
 
       await query(
-        `INSERT INTO order_history (order_id, action, description, created_at) 
-         VALUES (?, 'payment_evidence_uploaded', ?, NOW())`,
+        `INSERT INTO order_history(order_id, action, description, created_at)
+    VALUES(?, 'payment_evidence_uploaded', ?, NOW())`,
         [id, `Pago mixto registrado - Transferencia: $${transferAmount.toLocaleString()} / Efectivo pendiente: $${cashAmount.toLocaleString()}`]
       );
     } else {

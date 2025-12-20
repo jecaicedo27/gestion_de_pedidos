@@ -35,15 +35,15 @@ const getPendingCashOrders = async (req, res) => {
     const sqlMessenger = `
       SELECT
         o.id AS order_id,
-        o.order_number,
-        o.customer_name,
-        o.customer_phone,
-        o.customer_address,
+        o.order_number COLLATE utf8mb4_unicode_ci AS order_number,
+        o.customer_name COLLATE utf8mb4_unicode_ci AS customer_name,
+        o.customer_phone COLLATE utf8mb4_unicode_ci AS customer_phone,
+        o.customer_address COLLATE utf8mb4_unicode_ci AS customer_address,
         o.total_amount,
-        o.payment_method,
-        o.shipping_payment_method,
+        o.payment_method COLLATE utf8mb4_unicode_ci AS payment_method,
+        o.shipping_payment_method COLLATE utf8mb4_unicode_ci AS shipping_payment_method,
         o.assigned_messenger_id AS messenger_id,
-        u.full_name AS messenger_name,
+        u.full_name COLLATE utf8mb4_unicode_ci AS messenger_name,
         dt.delivered_at,
         o.siigo_invoice_created_at AS invoice_date,
         -- Solo contabilizar efectivo para Cartera
@@ -56,11 +56,11 @@ const getPendingCashOrders = async (req, res) => {
         ) AS expected_amount,
         ccd.id AS detail_id,
         ccd.collected_amount AS declared_amount,
-        ccd.collection_status,
+        ccd.collection_status COLLATE utf8mb4_unicode_ci AS collection_status,
         mcc.id AS closing_id,
         mcc.closing_date,
         NULL AS cash_register_id,
-        'messenger' AS source
+        'messenger' COLLATE utf8mb4_unicode_ci AS source
       FROM orders o
       -- Usar SIEMPRE el último registro de tracking por pedido para evitar filas antiguas
       JOIN delivery_tracking dt ON dt.id = (
@@ -86,7 +86,6 @@ const getPendingCashOrders = async (req, res) => {
     ];
     const paramsBodega = [];
 
-    // Filtros de fecha aplicados sobre la fecha de registro en caja
     if (from) {
       whereBodega.push('cr.created_at >= ?');
       paramsBodega.push(new Date(from).toISOString().slice(0, 19).replace('T', ' '));
@@ -96,19 +95,18 @@ const getPendingCashOrders = async (req, res) => {
       paramsBodega.push(new Date(to).toISOString().slice(0, 19).replace('T', ' '));
     }
 
-    // Importante: el filtro por mensajero NO aplica para bodega (no hay mensajero)
     const sqlBodega = `
       SELECT
         o.id AS order_id,
-        o.order_number,
-        o.customer_name,
-        o.customer_phone,
-        o.customer_address,
+        o.order_number COLLATE utf8mb4_unicode_ci AS order_number,
+        o.customer_name COLLATE utf8mb4_unicode_ci AS customer_name,
+        o.customer_phone COLLATE utf8mb4_unicode_ci AS customer_phone,
+        o.customer_address COLLATE utf8mb4_unicode_ci AS customer_address,
         o.total_amount,
-        o.payment_method,
-        o.shipping_payment_method,
+        o.payment_method COLLATE utf8mb4_unicode_ci AS payment_method,
+        o.shipping_payment_method COLLATE utf8mb4_unicode_ci AS shipping_payment_method,
         NULL AS messenger_id,
-        'Bodega' AS messenger_name,
+        'Bodega' COLLATE utf8mb4_unicode_ci AS messenger_name,
         cr.created_at AS delivered_at,
         o.siigo_invoice_created_at AS invoice_date,
         0 AS product_collected,
@@ -116,72 +114,64 @@ const getPendingCashOrders = async (req, res) => {
         COALESCE(cr.amount,0) AS expected_amount,
         NULL AS detail_id,
         COALESCE(cr.accepted_amount,0) AS declared_amount,
-        COALESCE(cr.status,'pending') AS collection_status,
+        COALESCE(cr.status,'pending') COLLATE utf8mb4_unicode_ci AS collection_status,
         NULL AS closing_id,
         NULL AS closing_date,
         cr.id AS cash_register_id,
-        cr.registered_by,
-        COALESCE(ur.full_name, ur.username) AS registered_by_name,
-        ur.role AS registered_by_role,
-        cr.accepted_by,
-        COALESCE(ua.full_name, ua.username) AS accepted_by_name,
-        ua.role AS accepted_by_role,
-        'bodega' AS source
+        'bodega' COLLATE utf8mb4_unicode_ci AS source
       FROM cash_register cr
-      JOIN orders o ON o.id = cr.order_id
-      LEFT JOIN users ur ON ur.id = cr.registered_by
-      LEFT JOIN users ua ON ua.id = cr.accepted_by
+      LEFT JOIN orders o ON o.id = cr.order_id
       WHERE ${whereBodega.join(' AND ')}
-      ORDER BY cr.created_at DESC
-      LIMIT 500
     `;
 
-    // Ejecutar ambas y concatenar resultados (priorizando las más recientes al inicio)
-    const rowsMessenger = await query(sqlMessenger, paramsMessenger);
-    const rowsBodega = await query(sqlBodega, paramsBodega);
+    // Bloque 3: Pedidos POS (Entregados en caja, pago efectivo, sin delivery_tracking ni cash_register aún)
+    const wherePOS = [
+      "o.status = 'entregado'",
+      "o.payment_method = 'efectivo'",
+      "o.delivery_method = 'recoge_bodega'",
+      "(ccd.id IS NULL OR ccd.collection_status <> 'collected')",
+      "cr.id IS NULL"
+    ];
+    const paramsPOS = [];
 
-    // Bloque 3: órdenes Recoge en Bodega sin cash_register aún (para que Cartera pueda registrar pago directo)
-    const eligibleStatuses = ['en_preparacion', 'en_logistica', 'en_empaque', 'empacado', 'listo', 'listo_para_entrega'];
-    const pmCash = ['efectivo', 'contado'];
-    const sqlEligible = `
-      SELECT 
+    if (from) {
+      wherePOS.push('o.delivered_at >= ?');
+      paramsPOS.push(new Date(from).toISOString().slice(0, 19).replace('T', ' '));
+    }
+    if (to) {
+      wherePOS.push('o.delivered_at <= ?');
+      paramsPOS.push(new Date(to).toISOString().slice(0, 19).replace('T', ' '));
+    }
+
+    const sqlPOS = `
+      SELECT
         o.id AS order_id,
-        o.order_number,
-        o.customer_name,
-        o.customer_phone,
-        o.customer_address,
+        o.order_number COLLATE utf8mb4_unicode_ci AS order_number,
+        o.customer_name COLLATE utf8mb4_unicode_ci AS customer_name,
+        o.customer_phone COLLATE utf8mb4_unicode_ci AS customer_phone,
+        o.customer_address COLLATE utf8mb4_unicode_ci AS customer_address,
         o.total_amount,
-        o.payment_method,
-        o.shipping_payment_method,
+        o.payment_method COLLATE utf8mb4_unicode_ci AS payment_method,
+        o.shipping_payment_method COLLATE utf8mb4_unicode_ci AS shipping_payment_method,
         NULL AS messenger_id,
-        'Bodega' AS messenger_name,
-        o.updated_at AS delivered_at,
+        'Caja POS' COLLATE utf8mb4_unicode_ci AS messenger_name,
+        o.delivered_at,
         o.siigo_invoice_created_at AS invoice_date,
-        0 AS product_collected,
+        o.total_amount AS product_collected,
         0 AS delivery_fee_collected,
-        COALESCE(o.total_amount,0) AS expected_amount,
-        NULL AS detail_id,
-        0 AS declared_amount,
-        'pending' AS collection_status,
+        o.total_amount AS expected_amount,
+        ccd.id AS detail_id,
+        ccd.collected_amount AS declared_amount,
+        ccd.collection_status COLLATE utf8mb4_unicode_ci AS collection_status,
         NULL AS closing_id,
         NULL AS closing_date,
         NULL AS cash_register_id,
-        NULL AS registered_by,
-        NULL AS registered_by_name,
-        NULL AS registered_by_role,
-        NULL AS accepted_by,
-        NULL AS accepted_by_name,
-        NULL AS accepted_by_role,
-        'bodega_eligible' AS source
+        'bodega_eligible' COLLATE utf8mb4_unicode_ci AS source
       FROM orders o
-      WHERE 
-        LOWER(COALESCE(o.delivery_method,'')) IN ('recoge_bodega','recogida_tienda')
-        AND LOWER(COALESCE(o.payment_method,'')) IN ('efectivo','contado')
-        AND o.status IN (${eligibleStatuses.map(() => '?').join(',')})
-        AND NOT EXISTS (SELECT 1 FROM cash_register cr WHERE cr.order_id = o.id)
-      ORDER BY o.updated_at DESC
-      LIMIT 500`;
-    const rowsEligible = await query(sqlEligible, eligibleStatuses);
+      LEFT JOIN cash_closing_details ccd ON ccd.order_id = o.id
+      LEFT JOIN cash_register cr ON cr.order_id = o.id
+      WHERE ${wherePOS.join(' AND ')}
+    `;
 
     // Bloque 4: Pagos Adhoc (recibos manuales de mensajero)
     const whereAdhoc = ["status = 'pending'"];
@@ -202,15 +192,15 @@ const getPendingCashOrders = async (req, res) => {
     const sqlAdhoc = `
       SELECT
         CONCAT('adhoc-', map.id) AS order_id,
-        CONCAT('Recaudo #', map.id) AS order_number,
-        map.description AS customer_name,
+        CONCAT('Recaudo #', map.id) COLLATE utf8mb4_unicode_ci AS order_number,
+        map.description COLLATE utf8mb4_unicode_ci AS customer_name,
         NULL AS customer_phone,
         NULL AS customer_address,
         map.amount AS total_amount,
-        'efectivo' AS payment_method,
+        'efectivo' COLLATE utf8mb4_unicode_ci AS payment_method,
         NULL AS shipping_payment_method,
         map.messenger_id,
-        u.full_name AS messenger_name,
+        u.full_name COLLATE utf8mb4_unicode_ci AS messenger_name,
         map.created_at AS delivered_at,
         NULL AS invoice_date,
         map.amount AS product_collected,
@@ -218,31 +208,34 @@ const getPendingCashOrders = async (req, res) => {
         map.amount AS expected_amount,
         NULL AS detail_id,
         0 AS declared_amount,
-        'pending' AS collection_status,
+        'pending' COLLATE utf8mb4_unicode_ci AS collection_status,
         NULL AS closing_id,
         NULL AS closing_date,
         NULL AS cash_register_id,
-        'messenger_adhoc' AS source,
-        map.evidence_url,
-        map.id AS adhoc_id
+        'messenger_adhoc' COLLATE utf8mb4_unicode_ci AS source
       FROM messenger_adhoc_payments map
       JOIN users u ON u.id = map.messenger_id
       WHERE ${whereAdhoc.join(' AND ')}
-      ORDER BY map.created_at DESC
     `;
-    const rowsAdhoc = await query(sqlAdhoc, paramsAdhoc);
 
-    // Unir y ordenar por fecha descendente
-    const rows = [...rowsMessenger, ...rowsBodega, ...rowsEligible, ...rowsAdhoc].sort((a, b) => {
-      const da = a.delivered_at ? new Date(a.delivered_at).getTime() : 0;
-      const db = b.delivered_at ? new Date(b.delivered_at).getTime() : 0;
-      return db - da;
-    }).slice(0, 500);
+    let finalSql, finalParams;
 
-    return res.json({ success: true, data: rows });
+    if (messengerId) {
+      // Si hay filtro de mensajero, SOLO ejecutamos sqlMessenger y sqlAdhoc
+      finalSql = `(${sqlMessenger}) UNION ALL (${sqlAdhoc}) ORDER BY delivered_at DESC LIMIT 500`;
+      finalParams = [...paramsMessenger, ...paramsAdhoc];
+    } else {
+      // Si no hay filtro de mensajero, traemos TODO (Mensajeros + Bodega + POS + Adhoc)
+      finalSql = `(${sqlMessenger}) UNION ALL (${sqlBodega}) UNION ALL (${sqlPOS}) UNION ALL (${sqlAdhoc}) ORDER BY delivered_at DESC LIMIT 500`;
+      finalParams = [...paramsMessenger, ...paramsBodega, ...paramsPOS, ...paramsAdhoc];
+    }
+
+    const rows = await query(finalSql, finalParams);
+    res.json(rows);
+
   } catch (error) {
-    console.error('Error listando pendientes de cartera:', error);
-    return res.status(500).json({ success: false, message: 'Error interno del servidor' });
+    console.error('Error obteniendo pendientes de cartera:', error);
+    res.status(500).json({ message: 'Error al obtener pendientes' });
   }
 };
 
@@ -1318,6 +1311,132 @@ const getPendingSiigoClose = async (req, res) => {
 };
 
 /**
+ * GET /api/cartera/reposicion-orders
+ * Lista pedidos con forma de pago "reposición" para revisión de Cartera y Facturación
+ */
+const getReposicionOrders = async (req, res) => {
+  try {
+    const { search, from, to, limit = 200 } = req.query;
+
+    const where = [
+      'o.deleted_at IS NULL',
+      "LOWER(COALESCE(o.payment_method,'')) = 'reposicion'",
+      '(o.manufacturer_reposition_completed IS NULL OR o.manufacturer_reposition_completed = 0)'
+    ];
+    const params = [];
+
+    if (from) {
+      where.push('DATE(COALESCE(o.siigo_invoice_created_at, o.created_at)) >= ?');
+      params.push(from);
+    }
+    if (to) {
+      where.push('DATE(COALESCE(o.siigo_invoice_created_at, o.created_at)) <= ?');
+      params.push(to);
+    }
+    if (search) {
+      where.push('(o.order_number LIKE ? OR o.customer_name LIKE ?)');
+      const s = `%${search}%`;
+      params.push(s, s);
+    }
+
+    const rows = await query(
+      `
+      SELECT 
+        o.id, o.order_number, o.customer_name, o.status,
+        o.delivery_method,
+        o.assigned_messenger_id,
+        messenger.full_name AS messenger_name,
+        o.carrier_id,
+        c.name AS carrier_name,
+        o.payment_method,
+        CASE 
+          WHEN LOWER(COALESCE(o.delivery_method,'')) IN ('recoge_bodega','recogida_tienda') THEN 'Bodega'
+          WHEN o.carrier_id IS NOT NULL THEN COALESCE(c.name,'Transportadora')
+          WHEN o.assigned_messenger_id IS NOT NULL THEN CONCAT('Mensajero: ', COALESCE(messenger.full_name, CONCAT('ID ', o.assigned_messenger_id)))
+          ELSE NULL
+        END AS delivery_channel,
+        o.siigo_invoice_id, o.siigo_invoice_number, o.siigo_invoice_created_at,
+        o.total_amount,
+        o.tags, o.electronic_payment_type, o.is_service
+      FROM orders o
+      LEFT JOIN carriers c ON o.carrier_id = c.id
+      LEFT JOIN users messenger ON o.assigned_messenger_id = messenger.id
+      WHERE ${where.join(' AND ')}
+      ORDER BY COALESCE(o.siigo_invoice_created_at, o.created_at) DESC, o.id DESC
+      LIMIT ${Number(limit) || 200}
+      `,
+      params
+    );
+
+    return res.json({ success: true, data: rows });
+  } catch (e) {
+    console.error('Error listando pedidos de reposición:', e);
+    return res.status(500).json({ success: false, message: 'Error interno del servidor' });
+  }
+};
+
+/**
+ * POST /api/cartera/orders/:id/complete-manufacturer-reposition
+ * Marca un pedido de reposición como "Fabricante completó reposición"
+ * Sube evidencias (imágenes de chats con cliente)
+ */
+const completeManufacturerReposition = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { notes } = req.body;
+    const userId = req.user?.id;
+    const files = req.files || []; // Array de archivos subidos por multer
+
+    // Verificar que el pedido existe y es de reposición
+    const [order] = await query(
+      "SELECT id, order_number, payment_method FROM orders WHERE id = ? AND LOWER(COALESCE(payment_method,'')) = 'reposicion'",
+      [id]
+    );
+
+    if (!order) {
+      return res.status(404).json({ success: false, message: 'Pedido no encontrado o no es de tipo reposición' });
+    }
+
+    // Actualizar el pedido
+    await query(
+      `UPDATE orders 
+       SET manufacturer_reposition_completed = 1,
+           manufacturer_reposition_completed_at = NOW(),
+           manufacturer_reposition_completed_by = ?,
+           manufacturer_reposition_notes = ?
+       WHERE id = ?`,
+      [userId, notes || null, id]
+    );
+
+    // Guardar evidencias si hay archivos
+    if (files && files.length > 0) {
+      for (const file of files) {
+        const filePath = `/uploads/reposition-evidences/${file.filename}`;
+        await query(
+          `INSERT INTO manufacturer_reposition_evidences (order_id, file_path, uploaded_by)
+           VALUES (?, ?, ?)`,
+          [id, filePath, userId]
+        );
+      }
+    }
+
+    console.log(`✅ Reposición completada para pedido ${order.order_number} por usuario ${userId}`);
+
+    return res.json({
+      success: true,
+      message: 'Reposición de fabricante marcada como completada',
+      data: {
+        orderId: id,
+        filesUploaded: files.length
+      }
+    });
+  } catch (error) {
+    console.error('Error completando reposición de fabricante:', error);
+    return res.status(500).json({ success: false, message: 'Error interno del servidor' });
+  }
+};
+
+/**
  * POST /api/cartera/adhoc-payments/:id/accept
  * Aceptar pago adhoc
  */
@@ -1353,6 +1472,8 @@ module.exports = {
   returnToBilling,
   closeOrderInSiigo,
   getPendingSiigoClose,
+  getReposicionOrders,
+  completeManufacturerReposition,
   acceptAdhocPayment,
   getTags: async (req, res) => {
     try {

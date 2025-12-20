@@ -335,7 +335,7 @@ const getDepositCandidates = async (req, res) => {
       ) a ON a.order_id = o.id
       WHERE (COALESCE(m.accepted_messenger,0) + COALESCE(b.accepted_bodega,0)) > COALESCE(a.assigned_total,0)
       ORDER BY o.siigo_invoice_created_at DESC, o.id DESC
-      LIMIT 500
+      LIMIT 5000
     `;
 
     const rows = await query(sql, [...paramsM, ...paramsB]);
@@ -418,21 +418,43 @@ const closeDepositSiigo = async (req, res) => {
     const userId = req.user?.id || null;
     const closed = (typeof req.body?.closed === 'boolean') ? req.body.closed : true;
 
-    if (closed) {
-      await query(
-        `UPDATE cartera_deposits 
-           SET siigo_closed = 1, siigo_closed_at = NOW(), siigo_closed_by = ? 
-         WHERE id = ?`,
-        [userId, id]
-      );
-    } else {
-      await query(
-        `UPDATE cartera_deposits 
-           SET siigo_closed = 0, siigo_closed_at = NULL, siigo_closed_by = NULL 
-         WHERE id = ?`,
-        [id]
-      );
-    }
+    await transaction(async (conn) => {
+      if (closed) {
+        // Cerrar consignación
+        await conn.execute(
+          `UPDATE cartera_deposits 
+             SET siigo_closed = 1, siigo_closed_at = NOW(), siigo_closed_by = ? 
+           WHERE id = ?`,
+          [userId, id]
+        );
+
+        // Cerrar facturas relacionadas
+        await conn.execute(
+          `UPDATE orders o
+           JOIN cartera_deposit_details cdd ON cdd.order_id = o.id
+           SET o.siigo_closed = 1, o.siigo_closed_at = NOW(), o.siigo_closed_by = ?
+           WHERE cdd.deposit_id = ?`,
+          [userId, id]
+        );
+      } else {
+        // Reabrir consignación
+        await conn.execute(
+          `UPDATE cartera_deposits 
+             SET siigo_closed = 0, siigo_closed_at = NULL, siigo_closed_by = NULL 
+           WHERE id = ?`,
+          [id]
+        );
+
+        // Reabrir facturas relacionadas
+        await conn.execute(
+          `UPDATE orders o
+           JOIN cartera_deposit_details cdd ON cdd.order_id = o.id
+           SET o.siigo_closed = 0, o.siigo_closed_at = NULL, o.siigo_closed_by = NULL
+           WHERE cdd.deposit_id = ?`,
+          [id]
+        );
+      }
+    });
 
     const [row] = await query(
       `SELECT id, amount, bank_name, reference_number, reason_code, reason_text, evidence_file, notes, siigo_closed, siigo_closed_at, siigo_closed_by, deposited_by, deposited_at, created_at
@@ -444,7 +466,7 @@ const closeDepositSiigo = async (req, res) => {
 
     return res.json({
       success: true,
-      message: closed ? 'Consignación marcada como cerrada en Siigo' : 'Consignación marcada como pendiente en Siigo',
+      message: closed ? 'Consignación y facturas relacionadas marcadas como cerradas en Siigo' : 'Consignación y facturas relacionadas marcadas como pendientes en Siigo',
       data: row
     });
   } catch (error) {

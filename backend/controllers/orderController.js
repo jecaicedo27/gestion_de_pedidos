@@ -235,9 +235,10 @@ const getOrders = async (req, res) => {
         o.customer_email, o.customer_city, o.customer_department, o.customer_country,
         o.status, o.total_amount, o.notes, o.special_management_note, o.validation_status, o.validation_notes, o.delivery_date, o.shipping_date,
         o.payment_method, o.electronic_payment_type, o.electronic_payment_notes, o.delivery_method, o.shipping_payment_method, o.carrier_id, o.created_at, o.updated_at,
-        o.payment_evidence_path, o.is_pending_payment_evidence,
+        o.payment_evidence_path, o.payment_evidence_photo, o.is_pending_payment_evidence,
         o.siigo_invoice_id, o.siigo_invoice_number, o.siigo_public_url, o.siigo_customer_id,
         o.siigo_observations, o.siigo_payment_info, o.siigo_seller_id, o.siigo_balance,
+        o.sale_channel,
         o.siigo_document_type, o.siigo_stamp_status, o.siigo_mail_status, o.siigo_invoice_created_at,
         o.siigo_closed, o.siigo_closed_at, o.siigo_closed_by, o.siigo_closure_method, o.siigo_closure_note,
         o.is_service,
@@ -494,12 +495,29 @@ const createOrder = async (req, res) => {
 
       const orderId = orderResult.insertId;
 
+      // 1. Obtener costos de compra actuales para snapshot histórico
+      const productNames = items.filter(i => i.name).map(i => i.name);
+      let costMap = {};
+
+      if (productNames.length > 0) {
+        const [products] = await connection.query(
+          'SELECT product_name, purchasing_price FROM products WHERE product_name IN (?)',
+          [productNames]
+        );
+        products.forEach(p => {
+          costMap[p.product_name] = p.purchasing_price;
+        });
+      }
+
       // Crear items del pedido
       for (const item of items) {
         if (item.name && item.quantity > 0 && item.price >= 0) {
+          // Obtener costo histórico (snapshot)
+          const historicalCost = costMap[item.name] || 0; // Si no hay costo, guarda 0 (se usará fallback en queries)
+
           await connection.execute(
-            'INSERT INTO order_items (order_id, name, quantity, price, description) VALUES (?, ?, ?, ?, ?)',
-            [orderId, item.name, item.quantity, item.price, item.description || null]
+            'INSERT INTO order_items (order_id, name, quantity, price, description, purchase_cost) VALUES (?, ?, ?, ?, ?, ?)',
+            [orderId, item.name, item.quantity, item.price, item.description || null, historicalCost]
           );
         }
       }
@@ -841,12 +859,27 @@ const updateOrder = async (req, res) => {
         // Eliminar items existentes
         await connection.execute('DELETE FROM order_items WHERE order_id = ?', [id]);
 
-        // Crear nuevos items
+        // Obtener costos actuales de los productos para snapshot
+        let costMap = {};
+        const productNames = updateData.items.map(i => i.name).filter(n => n);
+
+        if (productNames.length > 0) {
+          const [products] = await connection.query(
+            'SELECT product_name, purchasing_price FROM products WHERE product_name IN (?)',
+            [productNames]
+          );
+          products.forEach(p => {
+            costMap[p.product_name] = p.purchasing_price;
+          });
+        }
+
+        // Crear nuevos items con costo snapshot
         let totalAmount = 0;
         for (const item of updateData.items) {
+          const historicalCost = costMap[item.name] || 0;
           await connection.execute(
-            'INSERT INTO order_items (order_id, name, quantity, price, description) VALUES (?, ?, ?, ?, ?)',
-            [id, item.name, item.quantity, item.price, item.description || null]
+            'INSERT INTO order_items (order_id, name, quantity, price, description, purchase_cost) VALUES (?, ?, ?, ?, ?, ?)',
+            [id, item.name, item.quantity, item.price, item.description || null, historicalCost]
           );
           totalAmount += item.quantity * item.price;
         }
@@ -2467,6 +2500,32 @@ const getOrderTimeline = async (req, res) => {
       events.push({ at: o.siigo_invoice_created_at, type: 'invoice_created', title: 'Factura SIIGO creada', details: `Factura: ${o.siigo_invoice_number || o.siigo_invoice_id || ''}` });
     }
 
+    // Evidencias POS (almacenadas en tabla orders)
+    if (o.product_evidence_photo) {
+      attachments.push({
+        url: `/${o.product_evidence_photo}`,
+        label: 'Foto del Producto (POS)',
+        source: 'POS',
+        at: o.delivered_at || o.updated_at
+      });
+    }
+    if (o.payment_evidence_photo) {
+      attachments.push({
+        url: `/${o.payment_evidence_photo}`,
+        label: 'Comprobante de Pago (POS)',
+        source: 'POS',
+        at: o.delivered_at || o.updated_at
+      });
+    }
+    if (o.cash_evidence_photo) {
+      attachments.push({
+        url: `/${o.cash_evidence_photo}`,
+        label: 'Foto del Efectivo (POS)',
+        source: 'POS',
+        at: o.delivered_at || o.updated_at
+      });
+    }
+
     // Evidencias de pago (agrupar por fecha cercana o mostrar individualmente)
     if (paymentEvidences && paymentEvidences.length > 0) {
       // Agrupar evidencias subidas en el mismo minuto para no saturar el timeline
@@ -2772,6 +2831,7 @@ const getOrderTimeline = async (req, res) => {
       is_service: o.is_service // Importante para el frontend
     };
 
+    console.log('🔍 Timeline Attachments:', JSON.stringify(attachments, null, 2));
     return res.json({ success: true, data: { context, events, attachments } });
   } catch (error) {
     console.error('Error construyendo timeline del pedido:', error);
@@ -3074,6 +3134,19 @@ const syncOrderFromSiigo = async (req, res) => {
           );
           console.log(`✅ Cliente actualizado en BD: ${newName}`);
         }
+
+        // 2.2 Actualizar observaciones/notas
+        const newObservations = siigoInvoice.observations || '';
+        if (newObservations) {
+          await query(
+            `UPDATE orders SET 
+                siigo_observations = ?,
+                notes = ?
+              WHERE id = ?`,
+            [newObservations, newObservations, id]
+          );
+          console.log(`✅ Notas actualizadas desde SIIGO`);
+        }
       } catch (err) {
         console.error('⚠️ Error actualizando cliente en sync:', err);
         console.error(err.stack);
@@ -3098,6 +3171,19 @@ const syncOrderFromSiigo = async (req, res) => {
       // Manejar duplicados locales (no debería pasar, pero por seguridad usamos array)
       if (!localMap.has(key)) localMap.set(key, []);
       localMap.get(key).push(item);
+    });
+
+    // 3.1 Cargar Mapa de Costos de Productos
+    const [products] = await query('SELECT product_name, internal_code, purchasing_price, standard_price FROM products');
+    const costMap = new Map();
+    products.forEach(p => {
+      // Costo Histórico: Precio Compra o (Precio Estándar / 1.19)
+      const cost = p.purchasing_price
+        ? parseFloat(p.purchasing_price)
+        : (p.standard_price ? parseFloat(p.standard_price) / 1.19 : 0);
+
+      if (p.internal_code) costMap.set(`CODE:${p.internal_code}`, cost);
+      if (p.product_name) costMap.set(`NAME:${String(p.product_name).trim().toLowerCase()}`, cost);
     });
 
     let updatedCount = 0;
@@ -3136,39 +3222,60 @@ const syncOrderFromSiigo = async (req, res) => {
             console.log(`   ✅ Match encontrado con local ID ${localItem.id}`);
             processedLocalIds.add(localItem.id);
 
+            // Obtener Costo (Preferir el costo ya existente en el item si es > 0, sino buscar en mapa)
+            const currentCost = parseFloat(localItem.purchase_cost || 0);
+            const productCost = costMap.get(matchKey) || costMap.get(nameKey) || 0;
+            const finalCost = currentCost > 0 ? currentCost : productCost;
+
             // Detectar cambios
             const qtyChanged = Math.abs(parseFloat(localItem.quantity) - siigoQty) > 0.001;
             const priceChanged = Math.abs(parseFloat(localItem.price) - siigoPrice) > 0.01;
+            const costNeedsUpdate = currentCost === 0 && finalCost > 0; // Solo actualizar costo si era 0 y ahora tenemos dato
 
-            if (qtyChanged || priceChanged) {
+            // Recalcular utilidad (Total Profit for the line)
+            // Discount is handled in total amount usually, but for item row profit: (Price - Cost) * Qty
+            // Assuming price is unit price after discount or list price? 
+            // Siigo price usually is unit price. 
+            // Let's use: (siigoPrice - finalCost) * siigoQty
+            const profitAmount = (siigoPrice - finalCost) * siigoQty;
+
+            if (qtyChanged || priceChanged || costNeedsUpdate) {
               await connection.execute(
                 `UPDATE order_items 
-                 SET quantity = ?, price = ?, description = ?, updated_at = NOW()
+                 SET quantity = ?, price = ?, description = ?, purchase_cost = ?, profit_amount = ?, updated_at = NOW()
                  WHERE id = ?`,
-                [siigoQty, siigoPrice, siigoName, localItem.id]
+                [siigoQty, siigoPrice, siigoName, finalCost, profitAmount, localItem.id]
               );
               updatedCount++;
-              console.log(`   🔄 Item actualizado (ID ${localItem.id}): ${localItem.name} -> Qty: ${localItem.quantity} a ${siigoQty}`);
+              console.log(`   🔄 Item actualizado (ID ${localItem.id}): Qty ${localItem.quantity}->${siigoQty}, Cost: ${finalCost}, Profit: ${profitAmount}`);
             } else {
               console.log(`   ⏹️ Sin cambios en cantidad/precio.`);
             }
           } else {
             console.log(`   ⚠️ Match existe pero ya fue procesado (duplicado en SIIGO?), insertando nuevo.`);
+
+            const productCost = costMap.get(matchKey) || costMap.get(nameKey) || 0;
+            const profitAmount = (siigoPrice - productCost) * siigoQty;
+
             // Match existe pero ya fue usado (caso raro de duplicados en siigo vs local), insertar nuevo
             await connection.execute(
-              `INSERT INTO order_items (order_id, name, quantity, price, description, product_code, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, NOW())`,
-              [id, siigoName, siigoQty, siigoPrice, siigoName, siigoCode || null]
+              `INSERT INTO order_items (order_id, name, quantity, price, description, product_code, purchase_cost, profit_amount, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+              [id, siigoName, siigoQty, siigoPrice, siigoName, siigoCode || null, productCost, profitAmount]
             );
             insertedCount++;
           }
         } else {
           console.log(`   ❌ NO MATCH encontrado. Insertando nuevo.`);
+
+          const productCost = costMap.get(matchKey) || costMap.get(nameKey) || 0;
+          const profitAmount = (siigoPrice - productCost) * siigoQty;
+
           // NO MATCH: Insertar nuevo
           await connection.execute(
-            `INSERT INTO order_items (order_id, name, quantity, price, description, product_code, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, NOW())`,
-            [id, siigoName, siigoQty, siigoPrice, siigoName, siigoCode || null]
+            `INSERT INTO order_items (order_id, name, quantity, price, description, product_code, purchase_cost, profit_amount, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+            [id, siigoName, siigoQty, siigoPrice, siigoName, siigoCode || null, productCost, profitAmount]
           );
           insertedCount++;
         }

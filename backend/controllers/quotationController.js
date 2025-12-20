@@ -504,7 +504,15 @@ class QuotationController {
       const siigoResponse = await siigoInvoiceService.createQuotation(siigoQuotationData);
 
       if (!siigoResponse.success) {
-        console.warn('❌ SIIGO error al crear cotización:', JSON.stringify(siigoResponse.details || {}, null, 2));
+        const errorDetails = JSON.stringify(siigoResponse.details || {}, null, 2);
+        console.warn('❌ SIIGO error al crear cotización:', errorDetails);
+
+        // Write to file for debugging
+        const fs = require('fs');
+        const path = require('path');
+        const logPath = path.join(__dirname, '../siigo_error.log');
+        fs.writeFileSync(logPath, `Error: ${siigoResponse.error}\nDetails: ${errorDetails}\nTimestamp: ${new Date().toISOString()}\n`);
+
         return res.status(422).json({
           success: false,
           message: 'Error creando cotización en SIIGO',
@@ -700,13 +708,21 @@ class QuotationController {
           });
         }
 
-        console.log('📊 JSON para SIIGO (estructura exitosa):', JSON.stringify(siigoInvoiceData, null, 2));
+        console.log('📊 JSON para SIIGO (PAYLOAD):', JSON.stringify(siigoInvoiceData, null, 2));
 
         // Crear factura en SIIGO usando servicio optimizado
         const siigoResponse = await siigoInvoiceService.createInvoice(siigoInvoiceData);
 
         if (!siigoResponse.success) {
-          console.warn('❌ SIIGO error al crear factura (cotización):', JSON.stringify(siigoResponse.details || {}, null, 2));
+          const errorDetails = JSON.stringify(siigoResponse.details || {}, null, 2);
+          console.warn('❌ SIIGO error al crear factura (cotización):', errorDetails);
+
+          // Write to file for debugging
+          const fs = require('fs');
+          const path = require('path');
+          const logPath = path.join(__dirname, '../siigo_error.log');
+          fs.writeFileSync(logPath, `Error: ${siigoResponse.error}\nDetails: ${errorDetails}\nTimestamp: ${new Date().toISOString()}\nPayload: ${JSON.stringify(siigoInvoiceData, null, 2)}\n`);
+
           return res.status(422).json({
             success: false,
             message: 'Error creando factura en SIIGO',
@@ -887,7 +903,7 @@ class QuotationController {
         // Configurar tipo de documento
         const documentConfig = {
           'FV-1': 15047, // FV-1 - Factura No Electrónica (CONFIRMADO exitoso)
-          'FV-2': 5154   // FV-2 - Factura electrónica 
+          'FV-2': 27081  // FV-2 - Factura electrónica (CONFIRMADO)
         };
 
         const options = {
@@ -1651,7 +1667,7 @@ class QuotationController {
       // Configurar tipo de documento
       const documentConfig = {
         'FV-1': 15047, // FV-1 - Factura No Electrónica
-        'FV-2': 5154   // FV-2 - Factura electrónica
+        'FV-2': 27081  // FV-2 - Factura electrónica (CONFIRMADO)
       };
 
       const options = {
@@ -1685,13 +1701,53 @@ class QuotationController {
       const siigoResponse = await siigoInvoiceService.createInvoice(siigoInvoiceData);
 
       if (!siigoResponse.success) {
-        return res.status(422).json({
-          success: false,
-          message: 'Error creando factura en SIIGO',
-          error: siigoResponse.error,
-          details: siigoResponse.details,
-          suggestions: siigoResponse.suggestions
-        });
+        // FALLBACK: Verificar si la factura se creó a pesar del error
+        // Esto puede ocurrir si SIIGO crea la factura pero devuelve error por timeout u otros problemas
+        console.warn('⚠️ Error reportado al crear factura, verificando si se creó en SIIGO...');
+
+        try {
+          const todayDate = new Date().toISOString().split('T')[0];
+          const headers = await siigoService.getHeaders();
+          const axios = require('axios');
+
+          const searchResponse = await axios.get(
+            `${siigoService.getBaseUrl()}/v1/invoices?created_start=${todayDate}&page_size=50`,
+            { headers, timeout: 10000 }
+          );
+
+          const recentInvoices = searchResponse.data?.results || [];
+          const matchingInvoice = recentInvoices.find(inv =>
+            inv.customer?.identification === customer.identification &&
+            Math.abs(inv.total - total_amount) < 1 // Tolerancia de 1 peso
+          );
+
+          if (matchingInvoice) {
+            console.log('✅ Factura encontrada en SIIGO a pesar del error:', matchingInvoice.name);
+            // Continuar como si hubiera sido exitoso
+            siigoResponse.success = true;
+            siigoResponse.data = matchingInvoice;
+          } else {
+            console.error('❌ Factura NO encontrada en SIIGO, error es real');
+            return res.status(422).json({
+              success: false,
+              message: 'Error creando factura en SIIGO',
+              error: siigoResponse.error,
+              details: siigoResponse.details,
+              suggestions: siigoResponse.suggestions,
+              siigo_request_data: siigoInvoiceData
+            });
+          }
+        } catch (fallbackError) {
+          console.error('❌ Error en fallback de búsqueda:', fallbackError.message);
+          return res.status(422).json({
+            success: false,
+            message: 'Error creando factura en SIIGO',
+            error: siigoResponse.error,
+            details: siigoResponse.details,
+            suggestions: siigoResponse.suggestions,
+            siigo_request_data: siigoInvoiceData
+          });
+        }
       }
 
       console.log('✅ Factura directa creada exitosamente en SIIGO');

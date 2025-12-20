@@ -50,7 +50,8 @@ class SiigoInvoiceService {
       ivaRate,
       useSiigoPrices,
       discount: options.discount,
-      retefuente: options.retefuente
+      retefuente: options.retefuente,
+      useTaxedPrice: true // IMPORTANTE: Facturas SÍ soportan taxed_price y es preferible para evitar errores de redondeo
     });
 
     // Calcular totales usando los items formateados
@@ -184,7 +185,6 @@ class SiigoInvoiceService {
     for (const it of formattedItems) {
       const qty = parseFloat(it.quantity || 1);
       const hasTaxes = Array.isArray(it.taxes) && it.taxes.length > 0;
-      const hasTaxed = typeof it.taxed_price === 'number' && !Number.isNaN(it.taxed_price);
 
       // Obtener porcentaje de descuento
       let discountPercent = 0;
@@ -194,49 +194,22 @@ class SiigoInvoiceService {
         discountPercent = it.discount.percentage;
       }
 
-      let lineGrossStart = 0;
-      let lineBase = 0;
-
-      if (hasTaxed) {
-        // Si tenemos precio con impuesto, partimos del total de la línea
-        lineGrossStart = it.taxed_price * qty;
-        // Desglosamos la base del total
-        lineBase = Number((lineGrossStart / factor).toFixed(2));
-      } else {
-        const unitBase = typeof it.price === 'number' ? it.price : 0;
-        lineBase = Number((unitBase * qty).toFixed(2));
-        // Si no tiene taxed_price, calculamos el bruto inicial
-        if (hasTaxes) {
-          lineGrossStart = Number((lineBase * factor).toFixed(2));
-        } else {
-          lineGrossStart = lineBase;
-        }
-      }
+      // Usar el precio BASE que estamos enviando a SIIGO (it.price)
+      // SIIGO calculará el IVA sobre este precio
+      const unitBase = typeof it.price === 'number' ? it.price : 0;
+      let lineBase = Number((unitBase * qty).toFixed(2));
 
       // Aplicar descuento a la base total de la línea
       const discountValue = Number((lineBase * (discountPercent / 100)).toFixed(2));
       const lineBaseAfterDiscount = Number((lineBase - discountValue).toFixed(2));
 
-      // Recalcular IVA sobre la base depurada
+      // Calcular IVA sobre la base usando el MISMO redondeo que SIIGO
       let lineIVA = 0;
-      if (hasTaxed || hasTaxes) {
+      if (hasTaxes) {
         lineIVA = Number((lineBaseAfterDiscount * (ivaRate / 100)).toFixed(2));
       }
 
-      let lineTotalFinal = lineBaseAfterDiscount + lineIVA;
-
-      // CORRECCIÓN DE REDONDEO:
-      // Si partimos de un precio con impuestos (taxed_price) y no hubo descuentos,
-      // el total final DEBE ser igual al precio original * cantidad.
-      // La diferencia de centavos por el desglose de base + recálculo de IVA debe ignorarse.
-      if (hasTaxed && discountPercent === 0) {
-        const originalTotal = it.taxed_price * qty;
-        // Si la diferencia es pequeña (ajuste de centavos), forzamos el valor original
-        if (Math.abs(lineTotalFinal - originalTotal) < 0.10) {
-          lineTotalFinal = originalTotal;
-        }
-      }
-
+      const lineTotalFinal = lineBaseAfterDiscount + lineIVA;
       totalGrossWithIVA += lineTotalFinal;
 
       // Acumular base para ReteFuente si aplica
@@ -262,23 +235,14 @@ class SiigoInvoiceService {
    * Formatea las observaciones con límite de caracteres
    */
   formatObservations(notes, originalRequest) {
-    let observations = '';
-
-    if (originalRequest) {
-      const truncatedRequest = originalRequest.length > 500
-        ? originalRequest.substring(0, 500) + '...'
-        : originalRequest;
-      observations += `Pedido original: ${truncatedRequest}\n\n`;
-    }
-
+    // Solo retornar las notas sin agregar información adicional
+    // El frontend ya incluye toda la información necesaria en las notas
     if (notes) {
-      observations += notes + '\n\n';
+      // Limitar a 500 caracteres si es necesario
+      return notes.length > 500 ? notes.substring(0, 500) + '...' : notes;
     }
 
-    observations += 'Factura generada automáticamente desde sistema interno usando ChatGPT.';
-
-    // Limitar a 4000 caracteres según documentación oficial
-    return observations.length > 4000 ? observations.substring(0, 3997) + '...' : observations;
+    return '';
   }
 
   /**
@@ -386,10 +350,19 @@ class SiigoInvoiceService {
           if (rows && rows.length > 0) {
             const r = rows[0];
             // Completar campos faltantes con lo que haya en BD
-            item.internal_code = item.internal_code || r.internal_code || null;
-            item.barcode = item.barcode || r.barcode || null;
-            item.code = item.code || r.internal_code || null;
-            item.siigo_id = item.siigo_id || r.siigo_id || null;
+            // Priorizar datos de BD sobre los del request si existen
+            item.internal_code = r.internal_code || item.internal_code || null;
+            item.barcode = r.barcode || item.barcode || null;
+            item.siigo_id = r.siigo_id || item.siigo_id || null;
+
+            // Si tenemos internal_code de BD, usarlo como code preferido
+            if (r.internal_code) {
+              item.code = r.internal_code;
+            } else {
+              item.code = item.code || r.internal_code || null;
+            }
+          } else {
+            // console.warn(`⚠️ Producto con ID ${item.product_id} no encontrado en BD`);
           }
         }
       } catch (e) {
@@ -491,30 +464,42 @@ class SiigoInvoiceService {
                 console.warn(`⚠️ Fallback siigo_fallback_product_code no disponible: ${e.message}`);
               }
             }
-            // Asegurar que el código a enviar sea el que SIIGO reconoce
-            productCode = resolvedCode;
+
+            // ACTUALIZAR el código en el objeto formateado con el resuelto
+            if (resolvedCode !== productCode) {
+              formattedItem.code = resolvedCode;
+              productCode = resolvedCode;
+            }
+
+            // Si encontramos info en SIIGO, usar el ID (UUID) que es más seguro
+            if (info && info.id) {
+              formattedItem.id = info.id;
+              // Si enviamos ID, el código es opcional, pero lo dejamos por claridad
+            }
+
           } catch (e) {
             console.warn(`⚠️ Error resolviendo código SIIGO para item: ${e.message}`);
           }
           const ivaRate = Number(options.ivaRate) || 19;
           const factor = 1 + (ivaRate / 100);
           if (info && Number.isFinite(info.basePrice) && info.basePrice > 0) {
-            const hasTaxes = Array.isArray(info?.taxes) && info.taxes.length > 0;
-            if (priceIncludeTaxFlag && hasTaxes) {
-              // Precio final con IVA incluido: enviar taxed_price y NO price
-              const taxed = Number((info.basePrice * factor).toFixed(2));
-              formattedItem.taxed_price = taxed;
+            // Si priceIncludeTaxFlag está activo, significa que info.basePrice viene con IVA incluido
+            // Necesitamos dividir para obtener el precio base real
+            if (priceIncludeTaxFlag) {
+              const basePrice = Number((info.basePrice / factor).toFixed(6));
+              formattedItem.price = basePrice;
             } else {
-              // Precio base (sin IVA): enviar price
-              formattedItem.price = Number(info.basePrice.toFixed(2));
+              // SIIGO devuelve el precio BASE (sin IVA) directamente
+              formattedItem.price = Number(info.basePrice.toFixed(6));
             }
           } else {
             // Fallback al valor de la solicitud
             if (priceIncludeTaxFlag) {
-              // Si el precio recibido ya incluye IVA, enviarlo en taxed_price
-              formattedItem.taxed_price = Number(Number(priceFromRequest).toFixed(2));
+              // Si el precio recibido ya incluye IVA, calcular la base
+              const basePrice = Number((priceFromRequest / factor).toFixed(6));
+              formattedItem.price = basePrice;
             } else {
-              formattedItem.price = Number(Number(priceFromRequest).toFixed(2));
+              formattedItem.price = Number(Number(priceFromRequest).toFixed(6));
             }
           }
 
@@ -534,11 +519,36 @@ class SiigoInvoiceService {
             if (taxIds.length > 0) {
               formattedItem.taxes = taxIds;
             }
+          } else {
+            // Si SIIGO no devuelve impuestos, intentar aplicar el IVA por defecto (19%) si no es exento
+            // Esto es crítico para productos nuevos o servicios como Flete
+            const defaultTaxId = 8095; // IVA 19%
+            formattedItem.taxes = [{ id: defaultTaxId }];
+          }
+
+          // REDONDEO:
+          // Si es factura (useTaxedPrice=true), usamos 6 decimales en el precio base para mayor precisión
+          // Si es cotización (useTaxedPrice=false), VOLVEMOS A 2 DECIMALES porque 6 causa error 422
+          if (formattedItem.price) {
+            if (options.useTaxedPrice) {
+              formattedItem.price = Number(formattedItem.price.toFixed(6));
+            } else {
+              formattedItem.price = Number(formattedItem.price.toFixed(2));
+            }
+          }
+
+          // NUEVA LÓGICA: Si tenemos precio con IVA incluido y está habilitado (solo facturas)
+          // Esto delega el cálculo base a SIIGO y evita discrepancias de centavos
+          if (priceIncludeTaxFlag && options.useTaxedPrice) {
+            // Si priceFromRequest es el precio total con IVA
+            formattedItem.taxed_price = Number(priceFromRequest.toFixed(2));
+            // Eliminamos 'price' para que SIIGO use 'taxed_price'
+            delete formattedItem.price;
           }
         } catch (e) {
           console.warn(`⚠️ No se pudo obtener info de producto ${productCode} desde SIIGO: ${e.message}`);
           // Fallback a lo que venga de la solicitud
-          formattedItem.price = Number((priceFromRequest).toFixed(2));
+          formattedItem.price = Number((priceFromRequest).toFixed(6));
           if (descriptionFromRequest) {
             formattedItem.description = String(descriptionFromRequest).substring(0, 100);
           }
@@ -558,10 +568,13 @@ class SiigoInvoiceService {
 
         if ((priceIncludeTaxFlag || item.price_include_tax === true) && !isExempt) {
           const taxed = typeof item.taxed_price !== 'undefined' ? parseFloat(item.taxed_price) : priceFromRequest;
-          // Enviar precio FINAL con IVA incluido
-          formattedItem.taxed_price = Number((taxed).toFixed(2));
+          // SIEMPRE enviar precio base (sin IVA), SIIGO calculará el IVA automáticamente
+          const basePrice = Number((taxed / factor).toFixed(2));
+          formattedItem.price = basePrice;
         } else if (typeof item.taxed_price !== 'undefined' && !isExempt) {
-          formattedItem.taxed_price = Number((parseFloat(item.taxed_price)).toFixed(2));
+          // Si viene taxed_price pero no está marcado como incluido, calcular base
+          const basePrice = Number((parseFloat(item.taxed_price) / factor).toFixed(2));
+          formattedItem.price = basePrice;
         } else {
           // Enviar precio base (sin IVA)
           formattedItem.price = Number((priceFromRequest).toFixed(2));
@@ -644,8 +657,11 @@ class SiigoInvoiceService {
       };
 
     } catch (error) {
-      console.error('❌ Error creando factura en SIIGO:', error.response?.data || error.message);
-
+      console.error('❌ Error creando factura en SIIGO (RAW):', error.message);
+      if (error.response) {
+        console.error('❌ Status:', error.response.status);
+        console.error('❌ Data:', JSON.stringify(error.response.data, null, 2));
+      }
       return this.handleCreateInvoiceError(error);
     }
   }
@@ -671,7 +687,8 @@ class SiigoInvoiceService {
       ivaRate: await configService.getConfig('siigo_iva_rate', '19'),
       useSiigoPrices: true, // Usar precios de SIIGO por defecto
       discount: options.discount,
-      retefuente: options.retefuente
+      retefuente: options.retefuente,
+      useTaxedPrice: false // IMPORTANTE: Cotizaciones NO soportan taxed_price (causa error 422)
     });
 
     // Formatear observaciones

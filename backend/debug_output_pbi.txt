@@ -1,0 +1,4 @@
+Connected to database: gestion_pedidos_dev
+Available databases: gestion_pedidos_dev, gestionpbi, information_schema
+--- Checking gestionpbi ---
+✅ Pool de conexiones MySQL cerrado correctamente

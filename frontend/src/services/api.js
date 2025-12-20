@@ -964,6 +964,38 @@ export const carteraService = {
     return response.data;
   },
 
+  // Listado de pedidos de reposición
+  getReposicionOrders: async (params = {}) => {
+    const response = await api.get('/cartera/reposicion-orders', { params });
+    return response.data;
+  },
+
+  // Completar reposición de fabricante con evidencias
+  completeManufacturerReposition: async (orderId, { notes, files }) => {
+    const formData = new FormData();
+
+    if (notes) {
+      formData.append('notes', notes);
+    }
+
+    if (files && files.length > 0) {
+      for (let i = 0; i < files.length; i++) {
+        formData.append('evidences', files[i]);
+      }
+    }
+
+    const response = await api.post(
+      `/cartera/orders/${orderId}/complete-manufacturer-reposition`,
+      formData,
+      {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      }
+    );
+    return response.data;
+  },
+
   // Aceptar pago adhoc (recibos manuales de mensajero)
   acceptAdhocPayment: async (adhocId) => {
     const response = await api.post(`/cartera/adhoc-payments/${adhocId}/accept`);
@@ -1000,12 +1032,25 @@ export const logisticsService = {
   },
   // Recibir pago en bodega (con foto si es transferencia)
   receivePickupPayment: async ({ orderId, payment_method, amount, notes, file }) => {
+    // Si NO hay archivo, enviar como JSON normal (no FormData)
+    // Esto evita que multer procese la request y cause problemas
+    if (!file) {
+      const response = await api.post('/logistics/receive-pickup-payment', {
+        orderId,
+        payment_method,
+        amount,
+        notes
+      });
+      return response.data;
+    }
+
+    // Si HAY archivo, usar FormData
     const form = new FormData();
     form.append('orderId', String(orderId));
     if (payment_method) form.append('payment_method', payment_method);
     if (amount != null) form.append('amount', String(amount));
     if (notes) form.append('notes', notes);
-    if (file) form.append('photo', file);
+    form.append('photo', file);
     const response = await api.post('/logistics/receive-pickup-payment', form, {
       headers: { 'Content-Type': 'multipart/form-data' }
     });

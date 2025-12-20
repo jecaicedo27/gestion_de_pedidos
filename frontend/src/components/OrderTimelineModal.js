@@ -75,7 +75,18 @@ const EventItem = ({ event, onPreview }) => (
               src={att.url}
               alt={att.label || 'adjunto'}
               className="w-24 h-24 object-cover"
-              onError={(e) => { e.currentTarget.style.opacity = 0.4; }}
+              onError={(e) => {
+                console.error('Failed to load image:', att.url);
+                // Show a visible fallback instead of just opacity
+                e.currentTarget.style.display = 'none';
+                const parent = e.currentTarget.parentElement;
+                if (parent && !parent.querySelector('.img-fallback')) {
+                  const fallback = document.createElement('div');
+                  fallback.className = 'img-fallback w-24 h-24 bg-gray-200 flex items-center justify-center text-xs';
+                  fallback.innerHTML = '<span class="text-gray-600">📄<br/>Click<br/>para ver</span>';
+                  parent.insertBefore(fallback, parent.firstChild);
+                }
+              }}
             />
             <span className="absolute bottom-0 left-0 right-0 bg-black bg-opacity-50 text-[10px] text-white px-1 py-0.5 truncate">
               {att.source || 'adjunto'}

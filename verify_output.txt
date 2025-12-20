@@ -1,0 +1,5 @@
+[
+  {
+    "supplier": "TEST_SUPPLIER"
+  }
+]

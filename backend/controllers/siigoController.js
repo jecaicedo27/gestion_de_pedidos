@@ -323,10 +323,73 @@ const siigoController = {
 
   async importInvoices(req, res) {
     try {
-      console.log('� Solicitud de importación recibida');
-      console.log('Body:', req.body);
+      console.log('═══════════════════════════════════════════');
+      console.log('🔄 Solicitud de importación recibida');
+      console.log('Body completo:', JSON.stringify(req.body, null, 2));
+      console.log('Headers:', JSON.stringify(req.headers, null, 2));
+      console.log('═══════════════════════════════════════════');
 
-      const { invoice_ids, payment_method = 'transferencia', delivery_method = 'domicilio' } = req.body;
+      const { invoice_ids, invoice_id, immediate, payment_method = 'transferencia', delivery_method = 'domicilio', sale_channel } = req.body;
+
+      console.log('Parámetros extraídos:');
+      console.log('  - invoice_ids:', invoice_ids);
+      console.log('  - invoice_id:', invoice_id);
+      console.log('  - immediate:', immediate);
+      console.log('  - payment_method:', payment_method);
+      console.log('  - delivery_method:', delivery_method);
+      console.log('  - sale_channel:', sale_channel);
+
+      // --- LOGICA DE IMPORTACIÓN INMEDIATA (POS) ---
+      if (immediate && invoice_id) {
+        console.log(`🚀 Importación INMEDIATA para factura ID: ${invoice_id}`);
+
+        // 1. Obtener detalles de SIIGO
+        const invoice = await siigoService.getInvoiceDetails(invoice_id);
+        if (!invoice) {
+          return res.status(404).json({ success: false, message: 'Factura no encontrada en SIIGO' });
+        }
+
+        // 2. Procesar a pedido
+        const result = await siigoService.processInvoiceToOrder(invoice, payment_method, delivery_method, sale_channel);
+
+        if (!result.success) {
+          // Manejo de Race Condition: Si falla porque ya existe (auto-import ganó), recuperarlo
+          if (result.isDuplicate || (result.message && (result.message.includes('ya existe') || result.message.includes('ya importada') || result.message.includes('duplicado')))) {
+            console.log(`⚠️ Race condition detectada: Factura ${invoice_id} ya fue importada por auto-import. Recuperando...`);
+
+            const [existing] = await pool.execute('SELECT * FROM orders WHERE siigo_invoice_id = ?', [invoice_id]);
+
+            if (existing.length > 0) {
+              const existingOrder = existing[0];
+              // Actualizar método de pago si es diferente (auto-import usa default)
+              if (payment_method && existingOrder.payment_method !== payment_method) {
+                await pool.execute('UPDATE orders SET payment_method = ? WHERE id = ?', [payment_method, existingOrder.id]);
+                existingOrder.payment_method = payment_method;
+                console.log(`✅ Método de pago actualizado para pedido recuperado #${existingOrder.id}`);
+              }
+
+              return res.json({
+                success: true,
+                message: 'Pedido recuperado exitosamente (ya existía)',
+                order: existingOrder
+              });
+            }
+          }
+
+          return res.status(400).json({ success: false, message: result.message });
+        }
+
+        // 3. Obtener el pedido completo de la BD
+        const [orders] = await pool.execute('SELECT * FROM orders WHERE id = ?', [result.orderId]);
+        const order = orders[0];
+
+        return res.json({
+          success: true,
+          message: 'Pedido importado exitosamente',
+          order: order
+        });
+      }
+      // ---------------------------------------------
 
       if (!invoice_ids || !Array.isArray(invoice_ids) || invoice_ids.length === 0) {
         return res.status(400).json({
@@ -337,7 +400,7 @@ const siigoController = {
 
       console.log(`📋 Importando ${invoice_ids.length} facturas con rate limiting...`);
 
-      const result = await siigoService.importInvoices(invoice_ids, payment_method, delivery_method);
+      const result = await siigoService.importInvoices(invoice_ids, payment_method, delivery_method, sale_channel);
 
       res.json({
         success: true,
@@ -348,6 +411,8 @@ const siigoController = {
 
     } catch (error) {
       console.error('❌ Error en importación:', error.message);
+      console.error('❌ Stack trace:', error.stack);
+      console.error('❌ Error completo:', error);
       res.status(500).json({
         success: false,
         message: 'Error importando facturas',
@@ -527,19 +592,20 @@ const siigoController = {
         return res.status(400).json({ success: false, message: 'Identificación requerida' });
       }
 
-      // DV para NIT (módulo 11)
+      // DV para NIT (módulo 11) - Algoritmo oficial DIAN Colombia
       const computeNitCheckDigit = (nit) => {
-        const weights = [71, 67, 59, 53, 47, 43, 41, 37, 29, 23, 19, 17, 13, 7, 3];
-        const digits = nit.toString().replace(/\D/g, '').split('').reverse();
+        const weights = [3, 7, 13, 17, 19, 23, 29, 37, 41, 43, 47, 53, 59, 67, 71];
+        const nitStr = nit.toString().replace(/\D/g, '');
+        const digits = nitStr.split(''); // NO reverse
         let sum = 0;
         for (let i = 0; i < digits.length; i++) {
-          const w = weights[i] || 0;
-          sum += parseInt(digits[i], 10) * w;
+          const weight = weights[digits.length - 1 - i];
+          sum += parseInt(digits[i], 10) * (weight || 0);
         }
         const mod = sum % 11;
         return mod > 1 ? (11 - mod) : mod;
       };
-      const check_digit = idType === '31' ? computeNitCheckDigit(identification) : undefined;
+      const check_digit = idType === '31' ? String(computeNitCheckDigit(identification)) : undefined;
 
       // Nombres / Razón social
       const rawFirst = b.first_name || b.nombres || '';

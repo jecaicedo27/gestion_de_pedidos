@@ -46,6 +46,7 @@ const heatmapRoutes = require('./routes/heatmap');
 const postventaRoutes = require('./routes/postventa');
 const monitorRoutes = require('./routes/monitor');
 const whapifyRoutes = require('./routes/whapify');
+const inventoryManagementRoutes = require('./routes/inventoryManagement');
 
 // Importar servicios
 const siigoUpdateService = require('./services/siigoUpdateService');
@@ -187,6 +188,7 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Servir archivos estáticos (uploads)
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+app.use('/api/uploads', express.static(path.join(__dirname, 'uploads')));
 
 /**
  * Ruta raíz y favicon para evitar 404 al abrir http://localhost:3001
@@ -246,6 +248,10 @@ app.use('/api/heatmap', heatmapRoutes);
 app.use('/api/postventa', postventaRoutes);
 app.use('/api/monitor', monitorRoutes);
 app.use('/api/whapify', whapifyRoutes);
+app.use('/api/inventory-management', inventoryManagementRoutes);
+app.use('/api/receptions', require('./routes/reception'));
+app.use('/api/supplier-codes', require('./routes/supplierCodes'));
+app.use('/api/pos', require('./routes/posRoutes'));
 
 // Ruta de health check
 app.get('/api/health', (req, res) => {

@@ -19,7 +19,9 @@ import {
   Package,
   Truck,
   Calculator,
-  Package2
+  Package2,
+  QrCode,
+  TrendingUp
 } from 'lucide-react';
 import NotificationSystem from './NotificationSystem';
 import RoleNavigation from './RoleNavigation';
@@ -38,6 +40,13 @@ const Layout = () => {
       current: location.pathname === '/dashboard',
     },
     {
+      name: 'Dashboard Ejecutivo',
+      href: '/admin/dashboard',
+      icon: TrendingUp,
+      current: location.pathname === '/admin/dashboard',
+      requiresPermission: ['admin', 'gerente'],
+    },
+    {
       name: 'Pedidos',
       href: '/orders',
       icon: ShoppingCart,
@@ -48,6 +57,13 @@ const Layout = () => {
       href: '/products',
       icon: Package,
       current: location.pathname === '/products',
+      requiresPermission: ['admin', 'logistica'],
+    },
+    {
+      name: 'Códigos Proveedor',
+      href: '/supplier-codes',
+      icon: Database,
+      current: location.pathname === '/supplier-codes',
       requiresPermission: ['admin', 'logistica'],
     },
     {
@@ -132,7 +148,28 @@ const Layout = () => {
       href: '/inventory-billing',
       icon: Package2,
       current: location.pathname === '/inventory-billing',
+      requiresPermission: ['admin', 'facturador', 'cartera', 'empacador', 'empaque', 'packaging'],
+    },
+    {
+      name: 'Gestión de Inventario',
+      href: '/inventory-management',
+      icon: Database,
+      current: location.pathname === '/inventory-management',
       requiresPermission: ['admin', 'facturador', 'cartera'],
+    },
+    {
+      name: 'Recepción Mercancía',
+      href: '/reception',
+      icon: Package,
+      current: location.pathname === '/reception',
+      requiresPermission: ['admin', 'facturador', 'facturacion', 'cartera', 'logistica', 'empaque', 'packaging'],
+    },
+    {
+      name: 'Generador QR',
+      href: '/qr-generator',
+      icon: QrCode,
+      current: location.pathname === '/qr-generator',
+      requiresPermission: ['admin', 'logistica'],
     },
   ];
 

@@ -37,6 +37,7 @@ const InvoiceItemsTable = ({
   onDecrease,
   onRemove,
   onUpdateDiscount, // Nueva prop para actualizar descuento
+  onUpdateQuantity, // Nueva prop para actualizar cantidad directamente
   getAvailableStock,
 }) => {
   // Calcular subtotal considerando descuentos individuales
@@ -99,46 +100,46 @@ const InvoiceItemsTable = ({
                     const isCustom = !STANDARD_DISCOUNTS.includes(discount) && discount !== 0; // 0 is standard
 
                     if (isCustom && discount !== 'custom') {
-                       // Input mode for custom value
-                       return (
-                         <div className="flex items-center space-x-1">
-                           <input
-                             type="number"
-                             value={discount}
-                             onChange={(e) => onUpdateDiscount && onUpdateDiscount(item.id, Number(e.target.value))}
-                             className="text-xs border border-gray-300 rounded px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-500 w-[50px] text-right"
-                             autoFocus
-                             min="0"
-                             max="100"
-                           />
-                           <button
-                             onClick={() => onUpdateDiscount && onUpdateDiscount(item.id, 0)}
-                             className="text-gray-400 hover:text-red-500"
-                             title="Restablecer"
-                           >
-                             ×
-                           </button>
-                         </div>
-                       );
+                      // Input mode for custom value
+                      return (
+                        <div className="flex items-center space-x-1">
+                          <input
+                            type="number"
+                            value={discount}
+                            onChange={(e) => onUpdateDiscount && onUpdateDiscount(item.id, Number(e.target.value))}
+                            className="text-xs border border-gray-300 rounded px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-500 w-[50px] text-right"
+                            autoFocus
+                            min="0"
+                            max="100"
+                          />
+                          <button
+                            onClick={() => onUpdateDiscount && onUpdateDiscount(item.id, 0)}
+                            className="text-gray-400 hover:text-red-500"
+                            title="Restablecer"
+                          >
+                            ×
+                          </button>
+                        </div>
+                      );
                     } else if (discount === 'custom') {
-                        // Input mode initial state (empty or 0)
-                        return (
-                         <div className="flex items-center space-x-1">
-                           <input
-                             type="number"
-                             placeholder="%"
-                             onChange={(e) => onUpdateDiscount && onUpdateDiscount(item.id, Number(e.target.value))}
-                             className="text-xs border border-gray-300 rounded px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-500 w-[50px] text-right"
-                             autoFocus
-                           />
-                           <button
-                             onClick={() => onUpdateDiscount && onUpdateDiscount(item.id, 0)}
-                             className="text-gray-400 hover:text-red-500"
-                           >
-                             ×
-                           </button>
-                         </div>
-                       );
+                      // Input mode initial state (empty or 0)
+                      return (
+                        <div className="flex items-center space-x-1">
+                          <input
+                            type="number"
+                            placeholder="%"
+                            onChange={(e) => onUpdateDiscount && onUpdateDiscount(item.id, Number(e.target.value))}
+                            className="text-xs border border-gray-300 rounded px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-500 w-[50px] text-right"
+                            autoFocus
+                          />
+                          <button
+                            onClick={() => onUpdateDiscount && onUpdateDiscount(item.id, 0)}
+                            className="text-gray-400 hover:text-red-500"
+                          >
+                            ×
+                          </button>
+                        </div>
+                      );
                     }
 
                     // Select mode
@@ -179,7 +180,17 @@ const InvoiceItemsTable = ({
                   <Minus className="w-4 h-4" />
                 </button>
 
-                <span className="w-10 text-center font-semibold">{qty}</span>
+                <input
+                  type="number"
+                  value={qty}
+                  onChange={(e) => {
+                    const newQty = parseInt(e.target.value) || 0;
+                    onUpdateQuantity && onUpdateQuantity(item.id, newQty);
+                  }}
+                  onFocus={(e) => e.target.select()}
+                  min="0"
+                  className="w-14 text-center font-semibold border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-green-500 focus:border-green-500 py-1"
+                />
 
                 <button
                   type="button"

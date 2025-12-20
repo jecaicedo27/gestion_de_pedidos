@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { toast } from 'react-hot-toast';
 import * as Icons from 'lucide-react';
@@ -10,6 +10,7 @@ const PendingTransportGuides = ({ onGuideUploaded }) => {
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState('');
     const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
+    const [selectedCarrier, setSelectedCarrier] = useState('');
 
     // Debounce search term
     useEffect(() => {
@@ -155,14 +156,25 @@ const PendingTransportGuides = ({ onGuideUploaded }) => {
         setFilesToUpload([]);
     };
 
+    // Get unique carriers
+    const uniqueCarriers = useMemo(() => {
+        const carriers = pendingOrders.map(o => o.carrier_name || 'Nacional');
+        return [...new Set(carriers)].sort();
+    }, [pendingOrders]);
+
     // Filter orders
     const filteredOrders = pendingOrders.filter(order => {
-        if (!debouncedSearchTerm) return true;
+        const matchesCarrier = !selectedCarrier || (order.carrier_name || 'Nacional') === selectedCarrier;
+
+        if (!debouncedSearchTerm) return matchesCarrier;
+
         const searchLower = debouncedSearchTerm.toLowerCase();
-        return (
+        const matchesSearch = (
             (order.order_number && order.order_number.toLowerCase().includes(searchLower)) ||
             (order.customer_name && order.customer_name.toLowerCase().includes(searchLower))
         );
+
+        return matchesCarrier && matchesSearch;
     });
 
     // Pagination logic
@@ -199,19 +211,34 @@ const PendingTransportGuides = ({ onGuideUploaded }) => {
                         </h2>
                     </div>
 
-                    <div className="relative w-full sm:w-64">
-                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                            <Icons.Search className="h-4 w-4 text-gray-400" />
+                    <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
+                        <div className="relative w-full sm:w-64">
+                            <select
+                                className="block w-full pl-3 pr-10 py-2 text-sm border border-gray-300 focus:outline-none focus:ring-orange-500 focus:border-orange-500 sm:text-sm rounded-md"
+                                value={selectedCarrier}
+                                onChange={(e) => setSelectedCarrier(e.target.value)}
+                            >
+                                <option value="">Todas las transportadoras</option>
+                                {uniqueCarriers.map(carrier => (
+                                    <option key={carrier} value={carrier}>{carrier}</option>
+                                ))}
+                            </select>
                         </div>
-                        <input
-                            type="text"
-                            placeholder="Buscar por pedido o cliente..."
-                            className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent w-full"
-                            value={searchTerm}
-                            onChange={(e) => {
-                                setSearchTerm(e.target.value);
-                            }}
-                        />
+
+                        <div className="relative w-full sm:w-64">
+                            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                                <Icons.Search className="h-4 w-4 text-gray-400" />
+                            </div>
+                            <input
+                                type="text"
+                                placeholder="Buscar por pedido o cliente..."
+                                className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent w-full"
+                                value={searchTerm}
+                                onChange={(e) => {
+                                    setSearchTerm(e.target.value);
+                                }}
+                            />
+                        </div>
                     </div>
                 </div>
 

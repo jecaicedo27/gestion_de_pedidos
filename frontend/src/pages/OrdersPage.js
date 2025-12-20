@@ -9,6 +9,7 @@ import DeliveryConfirmationModal from '../components/DeliveryConfirmationModal';
 import OrderReviewModal from '../components/OrderReviewModal';
 import OrderTimelineModal from '../components/OrderTimelineModal';
 import WalletValidationModal from '../components/WalletValidationModal';
+import PosValidationModal from '../components/PosValidationModal';
 import LogisticsModal from '../components/LogisticsModal';
 import PickupPaymentModal from '../components/PickupPaymentModal';
 import DeleteSiigoOrderModal from '../components/DeleteSiigoOrderModal';
@@ -27,6 +28,7 @@ import es from 'date-fns/locale/es';
 import { io } from 'socket.io-client';
 import audioFeedback from '../utils/audioUtils';
 import { hasOrderPayment, hasShippingFeePaid, computeCollectionAmounts, isCreditOrder, normalize, getPaymentMethodLabel, getPaymentBadgeClass, getElectronicLabel, getElectronicBadgeClass, resolveElectronicType, getProviderHint, detectProviderFromString } from '../utils/payments';
+import { formatCurrencyCOP } from '../utils/formatters';
 
 // CustomDropdown para reemplazar selector nativo de estado
 const CustomDropdown = ({ value, onChange, options, placeholder, className }) => {
@@ -139,6 +141,7 @@ const OrdersPage = () => {
 
   // SIIGO: pendientes por cerrar y modal
   const [siigoPending, setSiigoPending] = useState([]);
+  const [reposicionOrders, setReposicionOrders] = useState([]);
   const [siigoCloseModal, setSiigoCloseModal] = useState({
     open: false,
     order: null,
@@ -146,6 +149,14 @@ const OrdersPage = () => {
     note: '',
     tags: [],
     availableTags: []
+  });
+
+  const [reposicionModal, setReposicionModal] = useState({
+    open: false,
+    order: null,
+    notes: '',
+    files: [],
+    isSubmitting: false
   });
 
   // Estados para modales
@@ -163,12 +174,14 @@ const OrdersPage = () => {
     isOpen: false,
     order: null
   });
-
+  const [posModal, setPosModal] = useState({
+    isOpen: false,
+    order: null
+  });
   const [logisticsModal, setLogisticsModal] = useState({
     isOpen: false,
     order: null
   });
-
   const [deleteSiigoModal, setDeleteSiigoModal] = useState({
     isOpen: false,
     order: null,
@@ -446,6 +459,7 @@ const OrdersPage = () => {
           // Usar el endpoint específico de cartera que garantiza datos correctos
           console.log('🏦 Usando endpoint de cartera para obtener pedidos');
           response = await walletService.getWalletOrders(finalFilters);
+          console.log('🏦 Respuesta Cartera RAW:', response);
         } else {
           // Usar el endpoint general de pedidos
           // Nota: si el filtro es "pendiente_empaque" (ficha agrupada), NO enviar status al backend,
@@ -495,7 +509,15 @@ const OrdersPage = () => {
             list = list.filter(o => isDeliveredUi(o));
           } else if (desired === 'revision_cartera') {
             // Permitir 'revision_cartera' O pedidos marcados como pendientes de comprobante (aunque estén entregados)
-            list = list.filter(o => String(o?.status || '') === desired || o?.is_pending_payment_evidence);
+            // Y también 'listo_para_entrega' si requieren pago o son transferencia (para que coincida con backend)
+            list = list.filter(o => {
+              const status = String(o?.status || '');
+              const pm = String(o?.payment_method || '').toLowerCase();
+              const isTransfer = pm.includes('transferencia');
+              return status === desired ||
+                o?.is_pending_payment_evidence ||
+                (status === 'listo_para_entrega' && (o?.requires_payment || isTransfer));
+            });
           } else if (desired === 'money_in_transit') {
             // El backend ya filtra, pero si queremos ser defensivos en frontend:
             // (No es fácil filtrar aquí sin datos extra de delivery_tracking/cash_register, 
@@ -718,7 +740,95 @@ const OrdersPage = () => {
     }
   };
 
-  // Abrir modal de recepción de pago en bodega
+  // Abrir modal de "Completar Reposición de Fabricante"
+  const handleOpenRepositionModal = (order) => {
+    setReposicionModal({
+      open: true,
+      order,
+      notes: '',
+      files: [],
+      isSubmitting: false
+    });
+  };
+
+  // Manejar cambio de archivos
+  const handleRepositionFilesChange = (e) => {
+    const selectedFiles = Array.from(e.target.files);
+    setReposicionModal(prev => ({
+      ...prev,
+      files: selectedFiles
+    }));
+  };
+
+  // Confirmar completar reposición
+  const handleConfirmReposition = async () => {
+    try {
+      const { order, notes, files } = reposicionModal;
+      if (!order) return;
+
+      const orderId = order.id || order.order_id;
+      if (!orderId) {
+        toast.error('Pedido inválido');
+        return;
+      }
+
+      setReposicionModal(prev => ({ ...prev, isSubmitting: true }));
+
+      await carteraService.completeManufacturerReposition(orderId, { notes, files });
+
+      toast.success('Reposición de fabricante completada exitosamente');
+
+      // Remover de la lista local
+      setReposicionOrders(prev => prev.filter(o => (o.id || o.order_id) !== orderId));
+
+      // Cerrar modal
+      setReposicionModal({
+        open: false,
+        order: null,
+        notes: '',
+        files: [],
+        isSubmitting: false
+      });
+    } catch (e) {
+      console.error('Error completando reposición:', e);
+      toast.error(e.response?.data?.message || 'Error completando reposición de fabricante');
+      setReposicionModal(prev => ({ ...prev, isSubmitting: false }));
+    }
+  };
+
+  // Manejar pegado de imágenes (Ctrl+V) en el modal de reposición
+  useEffect(() => {
+    if (!reposicionModal.open) return;
+
+    const handlePaste = (e) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+
+      const imageFiles = [];
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        if (item.type.indexOf('image') !== -1) {
+          const file = item.getAsFile();
+          if (file) {
+            imageFiles.push(file);
+          }
+        }
+      }
+
+      if (imageFiles.length > 0) {
+        setReposicionModal(prev => ({
+          ...prev,
+          files: [...prev.files, ...imageFiles]
+        }));
+        toast.success(`${imageFiles.length} imagen(es) pegada(s)`);
+      }
+    };
+
+    document.addEventListener('paste', handlePaste);
+    return () => document.removeEventListener('paste', handlePaste);
+  }, [reposicionModal.open]);
+
+  // --- FIN SIIGO/REPOSICION ---de recepción de pago en bodega
   const handleReceivePickupPayment = (order) => {
     setPickupPaymentModal({ isOpen: true, order });
   };
@@ -1205,7 +1315,23 @@ const OrdersPage = () => {
       (async () => {
         try {
           const res = await carteraService.getPendingSiigoClose({});
-          setSiigoPending(res?.data || []);
+          const list = res?.data || [];
+          setSiigoPending(list.filter(o => String(o.payment_method || '').toLowerCase() !== 'cliente_credito'));
+        } catch (e) {
+          // silencioso
+        }
+      })();
+    }
+  }, [searchParams]);
+
+  // Cargar "Pedidos de Reposición" cuando estamos en vista Cartera o Facturación
+  useEffect(() => {
+    const view = searchParams.get('view');
+    if (view === 'cartera' || view === 'facturacion') {
+      (async () => {
+        try {
+          const res = await carteraService.getReposicionOrders({});
+          setReposicionOrders(res?.data || []);
         } catch (e) {
           // silencioso
         }
@@ -1640,6 +1766,32 @@ const OrdersPage = () => {
     }
   };
 
+  // Manejar validación POS
+  const handlePosValidation = async (data) => {
+    try {
+      console.log('🏪 HandlePosValidation - Datos:', data);
+      const response = await fetch('/api/wallet/validate-pos-payment', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
+        body: JSON.stringify(data)
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || 'Error validando pago POS');
+      }
+
+      toast.success('✅ Venta POS validada exitosamente');
+      loadOrders();
+    } catch (error) {
+      console.error('Error validando POS:', error);
+      toast.error(error.message);
+    }
+  };
+
   // Manejar procesamiento de logística
   const handleLogisticsProcess = async (processData) => {
     try {
@@ -1908,8 +2060,11 @@ const OrdersPage = () => {
                   { value: 'credito', label: 'Crédito' },
                   { value: 'efectivo', label: 'Efectivo' },
                   { value: 'mercadopago', label: 'Mercado Pago' },
+                  { value: 'pago_electronico', label: 'Pago Electrónico' },
                   { value: 'transferencia', label: 'Transferencia' },
-                  { value: 'contraentrega', label: 'Contraentrega' }
+                  { value: 'contraentrega', label: 'Contraentrega' },
+                  { value: 'publicidad', label: 'Publicidad' },
+                  { value: 'reposicion', label: 'Reposición' }
                 ]}
                 placeholder="Todas las formas de pago"
               />
@@ -2147,7 +2302,19 @@ const OrdersPage = () => {
                         }
                         return null;
                       })()}
-                      <div className="text-[12px] text-gray-600 mt-1 truncate">{order.customer_name || order.client_name}</div>
+                      <div className="text-[12px] text-gray-600 mt-1 truncate flex items-center gap-1.5">
+                        {order.customer_name || order.client_name}
+                        {(() => {
+                          if (order.sale_channel) {
+                            console.log('🔍 DEBUG: Order has sale_channel:', order.order_number, order.sale_channel);
+                          }
+                          return order.sale_channel && (
+                            <span className="inline-flex items-center px-2 py-1 rounded text-xs font-bold bg-red-500 text-white border-2 border-red-700 shrink-0">
+                              {order.sale_channel === 'pos' ? '🏪 POS' : `📦 ${order.sale_channel}`}
+                            </span>
+                          );
+                        })()}
+                      </div>
                       <div className="mt-1 flex items-center gap-2">
                         <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${getStatusColor(order.status, order)}`}>
                           {getStatusLabel(order.status, order)}
@@ -2361,8 +2528,13 @@ const OrdersPage = () => {
 
                     <td className="px-6 py-4">
                       <div className="max-w-xs">
-                        <div className="text-sm font-medium text-gray-900 break-words leading-tight">
+                        <div className="text-sm font-medium text-gray-900 break-words leading-tight flex items-center gap-2">
                           {order.customer_name || order.client_name}
+                          {order.sale_channel && (
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 border border-blue-200">
+                              {order.sale_channel === 'pos' ? 'POS' : order.sale_channel}
+                            </span>
+                          )}
                         </div>
                         <div className="text-sm text-gray-500 whitespace-nowrap">
                           {order.customer_phone || order.client_phone}
@@ -2431,6 +2603,24 @@ const OrdersPage = () => {
                         {/* Indicadores de método de pago */}
                         <div className="flex space-x-1 mt-1">
                           {(() => {
+                            // PRIORIDAD 1: Indicadores POS
+                            if (order.sale_channel === 'pos') {
+                              if (order.status === 'pending_payment') {
+                                return (
+                                  <span className="px-1 py-0.5 text-xs font-medium bg-yellow-100 text-yellow-800 rounded animate-pulse border border-yellow-200">
+                                    ⏳ PENDIENTE PAGO
+                                  </span>
+                                );
+                              }
+                              if (order.status === 'payment_rejected') {
+                                return (
+                                  <span className="px-1 py-0.5 text-xs font-medium bg-red-100 text-red-800 rounded border border-red-200">
+                                    ❌ PAGO RECHAZADO
+                                  </span>
+                                );
+                              }
+                            }
+
                             // Si es cliente a crédito, siempre mostrar "CRÉDITO" sin importar totalDue (el flete se muestra en el chip de envío)
                             if (isCreditOrder(order)) {
                               return (
@@ -2679,14 +2869,24 @@ const OrdersPage = () => {
                               <Icons.Flag className="w-4 h-4" />
                             </button>
                           </>
-                        ) : (['admin', 'cartera'].includes(user?.role) && order.status === 'revision_cartera') ? (
-                          <button
-                            onClick={() => setWalletModal({ isOpen: true, order })}
-                            className="text-green-600 hover:text-green-900 w-4 h-4 flex items-center justify-center"
-                            title="Validar pago"
-                          >
-                            <Icons.CreditCard className="w-4 h-4" />
-                          </button>
+                        ) : (['admin', 'cartera'].includes(user?.role) && (order.status === 'revision_cartera' || (order.status === 'listo_para_entrega' && (order.requires_payment || String(order.payment_method || '').toLowerCase().includes('transferencia'))))) ? (
+                          order.sale_channel === 'pos' ? (
+                            <button
+                              onClick={() => setPosModal({ isOpen: true, order })}
+                              className="text-blue-600 hover:text-blue-900 w-4 h-4 flex items-center justify-center"
+                              title="Validar Venta POS"
+                            >
+                              <Icons.Store className="w-4 h-4" />
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => setWalletModal({ isOpen: true, order })}
+                              className="text-green-600 hover:text-green-900 w-4 h-4 flex items-center justify-center"
+                              title="Validar pago"
+                            >
+                              <Icons.CreditCard className="w-4 h-4" />
+                            </button>
+                          )
                         ) : (['admin', 'cartera', 'logistica'].includes(user?.role) && (order.is_pending_payment_evidence)) ? (
                           <button
                             onClick={() => setUploadEvidenceModal({ open: true, order, file: null })}
@@ -3008,6 +3208,107 @@ const OrdersPage = () => {
         </div>
       )}
 
+      {/* Pedidos de Reposición (vista Cartera y Facturación) */}
+      {(searchParams.get('view') === 'cartera' || searchParams.get('view') === 'facturacion') && (
+        <div className="card mt-6">
+          <div className="card-header">
+            <h2 className="text-lg font-semibold text-gray-900 flex items-center">
+              <Icons.Package className="w-5 h-5 mr-2 text-orange-600" />
+              Pedidos de Reposición
+              <span className="ml-2 px-2 py-1 text-xs font-medium bg-gray-100 text-gray-800 rounded-full">
+                {reposicionOrders.length}
+              </span>
+            </h2>
+          </div>
+          <div className="card-content p-0">
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-2 py-1 text-left text-xs font-medium text-gray-500 uppercase">Pedido</th>
+                    <th className="px-2 py-1 text-left text-xs font-medium text-gray-500 uppercase">Cliente</th>
+                    <th className="px-2 py-1 text-left text-xs font-medium text-gray-500 uppercase hidden lg:table-cell">Estado</th>
+                    <th className="px-2 py-1 text-left text-xs font-medium text-gray-500 uppercase hidden lg:table-cell">Entrega</th>
+                    <th className="px-2 py-1 text-left text-xs font-medium text-gray-500 uppercase hidden lg:table-cell">Factura</th>
+                    <th className="px-2 py-1 text-left text-xs font-medium text-gray-500 uppercase hidden lg:table-cell">Fecha Factura</th>
+                    <th className="px-2 py-1 text-left text-xs font-medium text-gray-500 uppercase hidden lg:table-cell">Monto</th>
+                    <th className="px-2 py-1 text-right text-xs font-medium text-gray-500 uppercase">Acciones</th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {reposicionOrders.map((row) => (
+                    <tr key={row.id || row.order_id} className="hover:bg-gray-50">
+                      <td className="px-2 py-1">
+                        <div className="text-sm font-medium text-gray-900">{row.order_number}</div>
+                      </td>
+                      <td className="px-2 py-1">
+                        <div className="text-xs sm:text-sm text-gray-900 whitespace-normal break-words">{row.customer_name}</div>
+                      </td>
+                      <td className="px-2 py-1 hidden lg:table-cell">
+                        <div className="flex flex-col items-start gap-1">
+                          <span className="px-2 py-1 text-xs font-semibold rounded-full bg-orange-100 text-orange-800">
+                            {row.status}
+                          </span>
+                          {(row.is_service === 1 || row.is_service === true) && (
+                            <span className="px-2 py-1 text-xs font-semibold rounded-full bg-blue-100 text-blue-800">
+                              Servicio
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-2 py-1 hidden lg:table-cell">
+                        <span className="text-xs sm:text-sm text-gray-900">
+                          {row.delivery_channel || '-'}
+                        </span>
+                      </td>
+                      <td className="px-2 py-1 hidden lg:table-cell">
+                        <div className="text-xs sm:text-sm text-gray-900">
+                          {row.siigo_invoice_number || '-'}
+                        </div>
+                      </td>
+                      <td className="px-2 py-1 hidden lg:table-cell">
+                        <div className="text-xs text-gray-500">
+                          {row.siigo_invoice_created_at ? new Date(row.siigo_invoice_created_at).toLocaleDateString('es-CO') : '-'}
+                        </div>
+                      </td>
+                      <td className="px-2 py-1 hidden lg:table-cell">
+                        <div className="text-xs sm:text-sm font-medium text-gray-900">
+                          ${Number(row.total_amount || 0).toLocaleString('es-CO')}
+                        </div>
+                      </td>
+                      <td className="px-2 py-1 text-right">
+                        <button
+                          onClick={() => setTimelineModal({ isOpen: true, order: row })}
+                          className="mr-2 px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded inline-flex items-center"
+                          title="Ver Historial"
+                        >
+                          <Icons.History className="w-3 h-3" />
+                        </button>
+                        <button
+                          onClick={() => handleOpenRepositionModal(row)}
+                          className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white text-xs rounded inline-flex items-center"
+                          title="Gestionar Reposición"
+                        >
+                          <Icons.CheckCircle className="w-3 h-3" />
+                          <span className="ml-1 hidden sm:inline">Gestionar</span>
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                  {reposicionOrders.length === 0 && (
+                    <tr>
+                      <td className="px-2 py-6 text-center text-sm text-gray-500" colSpan={8}>
+                        No hay pedidos de reposición.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Modal Cerrar en Siigo */}
       {siigoCloseModal.open && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40 p-4 overflow-y-auto">
@@ -3166,6 +3467,109 @@ const OrdersPage = () => {
         </div>
       )}
 
+      {/* Modal Completar Reposición de Fabricante */}
+      {reposicionModal.open && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40 p-4 overflow-y-auto">
+          <div className="bg-white rounded shadow-lg w-full max-w-2xl max-h-[90vh] overflow-y-auto flex flex-col">
+            <div className="p-4 border-b flex items-center justify-between shrink-0">
+              <h3 className="text-lg font-semibold">Gestionar Reposición de Fabricante</h3>
+              <button
+                onClick={() => setReposicionModal({ open: false, order: null, notes: '', files: [], isSubmitting: false })}
+                className="text-gray-600 hover:text-gray-900"
+                disabled={reposicionModal.isSubmitting}
+              >
+                <Icons.X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-4 flex-1 overflow-y-auto">
+              <div className="mb-4">
+                <p className="text-sm text-gray-600 mb-2">
+                  Pedido: <span className="font-semibold">{reposicionModal.order?.order_number}</span>
+                </p>
+                <p className="text-sm text-gray-600">
+                  Cliente: <span className="font-semibold">{reposicionModal.order?.customer_name}</span>
+                </p>
+              </div>
+
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Notas / Observaciones
+                </label>
+                <textarea
+                  value={reposicionModal.notes}
+                  onChange={(e) => setReposicionModal(prev => ({ ...prev, notes: e.target.value }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  rows={4}
+                  placeholder="Agrega detalles sobre la reposición, comunicación con el cliente, etc."
+                  disabled={reposicionModal.isSubmitting}
+                />
+              </div>
+
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Evidencias (Imágenes de chats con cliente)
+                </label>
+                <input
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  onChange={handleRepositionFilesChange}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  disabled={reposicionModal.isSubmitting}
+                />
+                {reposicionModal.files.length > 0 && (
+                  <p className="mt-2 text-sm text-green-600">
+                    {reposicionModal.files.length} archivo(s) seleccionado(s)
+                  </p>
+                )}
+                <p className="mt-1 text-xs text-gray-500">
+                  Máximo 10 imágenes, 10MB por archivo. También puedes pegar imágenes con Ctrl+V
+                </p>
+              </div>
+
+              {/* Vista previa de imágenes */}
+              {reposicionModal.files.length > 0 && (
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Vista Previa
+                  </label>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                    {reposicionModal.files.map((file, idx) => (
+                      <div key={idx} className="relative">
+                        <img
+                          src={URL.createObjectURL(file)}
+                          alt={`Previa ${idx + 1}`}
+                          className="w-full h-32 object-cover rounded border"
+                        />
+                        <p className="text-xs text-gray-500 truncate mt-1">{file.name}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="p-4 border-t flex justify-end gap-2 shrink-0 bg-gray-50">
+              <button
+                onClick={() => setReposicionModal({ open: false, order: null, notes: '', files: [], isSubmitting: false })}
+                className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50"
+                disabled={reposicionModal.isSubmitting}
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleConfirmReposition}
+                className="px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={reposicionModal.isSubmitting}
+              >
+                {reposicionModal.isSubmitting ? 'Guardando...' : 'Guardar Gestión'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Modal de registro de entrega */}
       <DeliveryRegistrationModal
         isOpen={deliveryModal.isOpen}
@@ -3188,6 +3592,13 @@ const OrdersPage = () => {
         onClose={() => setWalletModal({ isOpen: false, order: null })}
         order={walletModal.order}
         onValidate={handleWalletValidation}
+      />
+
+      <PosValidationModal
+        isOpen={posModal.isOpen}
+        order={posModal.order}
+        onClose={() => setPosModal({ isOpen: false, order: null })}
+        onValidate={handlePosValidation}
       />
 
       {/* Modal de logística */}
@@ -3379,10 +3790,7 @@ function getDeliveryMethodColor(method) {
 }
 
 // Formato de moneda para monto a cobrar en móvil
-function formatCurrencyCOP(amount) {
-  const n = Number(amount) || 0;
-  return new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0 }).format(n);
-}
+// formatCurrencyCOP imported from utils/formatters
 
 // Dirección de entrega (mejor esfuerzo)
 function getOrderAddress(order) {

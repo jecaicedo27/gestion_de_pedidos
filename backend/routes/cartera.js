@@ -1,9 +1,40 @@
 const express = require('express');
 const router = express.Router();
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
 const auth = require('../middleware/auth');
 const carteraController = require('../controllers/carteraController');
 const treasuryController = require('../controllers/treasuryController');
 const movementsController = require('../controllers/movementsController');
+
+// Configuración de Multer para evidencias de reposición
+const repositionStorage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    const dir = 'uploads/reposition-evidences';
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    cb(null, dir);
+  },
+  filename: function (req, file, cb) {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, 'reposition-' + uniqueSuffix + path.extname(file.originalname));
+  }
+});
+
+const uploadRepositionEvidences = multer({
+  storage: repositionStorage,
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit per file
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith('image/')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Solo se permiten imágenes'));
+    }
+  }
+});
+
 
 // Todas las rutas requieren autenticación y rol de cartera o admin
 // Debug: listado rápido de rutas (solo en desarrollo)
@@ -230,6 +261,23 @@ router.get(
   auth.authenticateToken,
   auth.verifyRole(['cartera', 'admin']),
   carteraController.getPendingSiigoClose
+);
+
+// GET /api/cartera/reposicion-orders - Listado de pedidos de reposición
+router.get(
+  '/reposicion-orders',
+  auth.authenticateToken,
+  auth.verifyRole(['cartera', 'facturacion', 'admin']),
+  carteraController.getReposicionOrders
+);
+
+// POST /api/cartera/orders/:id/complete-manufacturer-reposition - Marcar reposición como completada
+router.post(
+  '/orders/:id/complete-manufacturer-reposition',
+  auth.authenticateToken,
+  auth.verifyRole(['cartera', 'facturacion', 'admin']),
+  uploadRepositionEvidences.array('evidences', 10), // Max 10 archivos
+  carteraController.completeManufacturerReposition
 );
 
 // GET /api/cartera/tags - Listado de tags disponibles

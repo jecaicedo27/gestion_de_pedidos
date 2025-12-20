@@ -164,8 +164,8 @@ class CompleteProductImportService {
         };
       }
 
-      // Limpiar productos existentes
-      await this.clearExistingProducts();
+      // Limpiar productos existentes - DESHABILITADO para evitar pérdida de configuración
+      // await this.clearExistingProducts();
 
       console.log('💾 Insertando TODOS los productos en la base de datos...');
 
@@ -177,6 +177,13 @@ class CompleteProductImportService {
         const siigoProduct = allProducts[i];
 
         try {
+          // 🔍 FILTRO: Ignorar productos sin lista de precios (ocultos en ventas/activos fijos)
+          if (!siigoProduct.prices || !Array.isArray(siigoProduct.prices) || siigoProduct.prices.length === 0) {
+            // Opcional: Loguear solo si no es un activo fijo obvio para no llenar el log
+            // console.log(`🚫 Saltando producto sin precio (oculto): ${siigoProduct.code}`);
+            continue;
+          }
+
           // Extraer datos básicos
           const productName = siigoProduct.name || `Producto ${siigoProduct.code || i}`;
           const internalCode = siigoProduct.code || null;
@@ -239,33 +246,55 @@ class CompleteProductImportService {
           const isActive = siigoProduct.active === true ? 1 : 0;
 
           // Insertar producto en la base de datos (con manejo de duplicado de barcode)
-          try {
+          // Verificar si el producto ya existe por siigo_id
+          const [existingProduct] = await pool.execute(
+            'SELECT id, barcode FROM products WHERE siigo_id = ?',
+            [siigoId]
+          );
+
+          if (existingProduct.length > 0) {
+            // ACTUALIZAR producto existente
+            const existingId = existingProduct[0].id;
+
+            // Solo actualizar barcode si el nuevo es válido y diferente (evitar sobrescribir con temporales si ya tiene uno real)
+            let barcodeToUpdate = existingProduct[0].barcode;
+            if (barcodeType === 'real') {
+              barcodeToUpdate = barcode;
+            }
+
             await pool.execute(
-              `INSERT INTO products (
-                product_name, barcode, internal_code, category, description,
-                standard_price, siigo_product_id, siigo_id, available_quantity,
-                is_active, created_at, updated_at, last_sync_at, stock
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), NOW(), ?)`,
+              `UPDATE products SET 
+                product_name = ?, 
+                barcode = ?, 
+                internal_code = ?, 
+                category = ?, 
+                description = ?,
+                standard_price = ?, 
+                siigo_product_id = ?, 
+                available_quantity = ?,
+                is_active = ?, 
+                updated_at = NOW(), 
+                last_sync_at = NOW(), 
+                stock = ?
+               WHERE id = ?`,
               [
                 productName,
-                barcode,
+                barcodeToUpdate,
                 internalCode,
                 category,
                 description,
                 standardPrice,
                 internalCode,
-                siigoId,
                 availableQuantity,
                 isActive,
-                availableQuantity
+                availableQuantity,
+                existingId
               ]
             );
-          } catch (insertErr) {
-            if (insertErr && insertErr.code === 'ER_DUP_ENTRY' && barcodeType !== 'temp') {
-              const suffix = String(Date.now()).slice(-6);
-              const fallback = `TEMP-DUP-${(rawBarcode || barcode || 'DUP')}-${(internalCode || 'UNK')}-${suffix}`;
-              console.warn(`⚠️ ER_DUP_ENTRY al insertar ${internalCode} con barcode ${barcode}. Reintentando con ${fallback}`);
-              barcode = fallback;
+            // console.log(`🔄 Producto actualizado: ${internalCode}`);
+          } else {
+            // INSERTAR nuevo producto
+            try {
               await pool.execute(
                 `INSERT INTO products (
                   product_name, barcode, internal_code, category, description,
@@ -286,10 +315,37 @@ class CompleteProductImportService {
                   availableQuantity
                 ]
               );
-              this.tempBarcodeCount++;
-              barcodeType = 'temp';
-            } else {
-              throw insertErr;
+            } catch (insertErr) {
+              if (insertErr && insertErr.code === 'ER_DUP_ENTRY' && barcodeType !== 'temp') {
+                const suffix = String(Date.now()).slice(-6);
+                const fallback = `TEMP-DUP-${(rawBarcode || barcode || 'DUP')}-${(internalCode || 'UNK')}-${suffix}`;
+                console.warn(`⚠️ ER_DUP_ENTRY al insertar ${internalCode} con barcode ${barcode}. Reintentando con ${fallback}`);
+                barcode = fallback;
+                await pool.execute(
+                  `INSERT INTO products (
+                    product_name, barcode, internal_code, category, description,
+                    standard_price, siigo_product_id, siigo_id, available_quantity,
+                    is_active, created_at, updated_at, last_sync_at, stock
+                  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), NOW(), ?)`,
+                  [
+                    productName,
+                    barcode,
+                    internalCode,
+                    category,
+                    description,
+                    standardPrice,
+                    internalCode,
+                    siigoId,
+                    availableQuantity,
+                    isActive,
+                    availableQuantity
+                  ]
+                );
+                this.tempBarcodeCount++;
+                barcodeType = 'temp';
+              } else {
+                throw insertErr;
+              }
             }
           }
 

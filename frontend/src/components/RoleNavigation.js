@@ -39,6 +39,14 @@ const RoleNavigation = () => {
       roles: ['admin', 'facturador']
     },
     {
+      id: 'inventory-billing',
+      name: 'Inventario + Facturación',
+      icon: Icons.Package2,
+      path: '/inventory-billing',
+      description: 'Facturación directa desde inventario',
+      roles: ['admin', 'facturador', 'cartera', 'empacador', 'empaque', 'packaging']
+    },
+    {
       id: 'cartera',
       name: 'Cartera',
       icon: Icons.CreditCard,

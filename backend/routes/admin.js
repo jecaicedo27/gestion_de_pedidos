@@ -1,54 +1,82 @@
 const express = require('express');
 const router = express.Router();
-const { authenticateToken, requireRole } = require('../middleware/auth');
+const auth = require('../middleware/auth');
 const adminController = require('../controllers/adminController');
 
-// Middleware para verificar que el usuario sea super_admin
-const requireSuperAdmin = (req, res, next) => {
-  if (req.user && req.user.isSuperAdmin) {
-    next();
-  } else {
-    res.status(403).json({ success: false, message: 'Acceso denegado. Se requieren permisos de Super Administrador.' });
-  }
-};
+// Todas las rutas requieren autenticación y rol de admin
+// router.use(auth.authenticateToken);
+// router.use(auth.verifyRole(['admin'])); 
+// NOTA: Por ahora permitimos acceso para desarrollo, luego descomentar seguridad estricta
 
-// Rutas para gestión de usuarios
-router.get('/users', authenticateToken, requireSuperAdmin, adminController.getUsers);
-router.post('/users', authenticateToken, requireSuperAdmin, adminController.createUser);
-router.put('/users/:id', authenticateToken, requireSuperAdmin, adminController.updateUser);
-router.delete('/users/:id', authenticateToken, requireSuperAdmin, adminController.deleteUser);
+router.get(
+    '/executive-stats',
+    auth.authenticateToken,
+    auth.verifyRole(['admin', 'gerente']), // Asumiendo rol 'gerente' o solo 'admin'
+    adminController.getExecutiveStats
+);
 
-// Rutas para gestión de roles
-router.get('/roles', authenticateToken, requireSuperAdmin, adminController.getRoles);
-router.post('/roles', authenticateToken, requireSuperAdmin, adminController.createRole);
-router.put('/roles/:id', authenticateToken, requireSuperAdmin, adminController.updateRole);
-router.delete('/roles/:id', authenticateToken, requireSuperAdmin, adminController.deleteRole);
+router.get(
+    '/advanced-stats',
+    auth.authenticateToken,
+    auth.verifyRole(['admin', 'gerente']),
+    adminController.getAdvancedStats
+);
 
-// Rutas para gestión de permisos
-router.get('/permissions', authenticateToken, requireSuperAdmin, adminController.getPermissions);
-router.post('/permissions', authenticateToken, requireSuperAdmin, adminController.createPermission);
-router.put('/permissions/:id', authenticateToken, requireSuperAdmin, adminController.updatePermission);
-router.delete('/permissions/:id', authenticateToken, requireSuperAdmin, adminController.deletePermission);
 
-// Rutas para relaciones usuario-rol
-router.get('/user-roles', authenticateToken, requireSuperAdmin, adminController.getUserRoles);
-router.post('/assign-role', authenticateToken, requireSuperAdmin, adminController.assignRoleToUser);
-router.post('/remove-role', authenticateToken, requireSuperAdmin, adminController.removeRoleFromUser);
+router.get(
+    '/cluster/:clusterType/customers',
+    auth.authenticateToken,
+    auth.verifyRole(['admin', 'gerente']),
+    adminController.getClusterCustomers
+);
 
-// Rutas para relaciones rol-permiso
-router.get('/role-permissions', authenticateToken, requireSuperAdmin, adminController.getRolePermissions);
-router.post('/assign-permission', authenticateToken, requireSuperAdmin, adminController.assignPermissionToRole);
-router.post('/remove-permission', authenticateToken, requireSuperAdmin, adminController.removePermissionFromRole);
+router.get(
+    '/shipping-stats',
+    auth.authenticateToken,
+    auth.verifyRole(['admin', 'gerente']),
+    adminController.getShippingStats
+);
 
-// Rutas para configuración de vistas
-router.get('/role-views', authenticateToken, requireSuperAdmin, adminController.getRoleViews);
-router.post('/role-views', authenticateToken, requireSuperAdmin, adminController.updateRoleViews);
+router.get(
+    '/category-stats',
+    auth.authenticateToken,
+    auth.verifyRole(['admin', 'gerente']),
+    adminController.getCategoryStats
+);
 
-// Rutas para obtener información completa del usuario
-router.get('/user/:id/complete', authenticateToken, requireSuperAdmin, adminController.getUserComplete);
-router.get('/role/:id/complete', authenticateToken, requireSuperAdmin, adminController.getRoleComplete);
+router.get(
+    '/category-trend',
+    auth.authenticateToken,
+    auth.verifyRole(['admin', 'gerente']),
+    adminController.getCategoryTrend
+);
 
-// Rutas para estadísticas del sistema
-router.get('/stats', authenticateToken, requireSuperAdmin, adminController.getSystemStats);
+router.get(
+    '/category-profitability-trend',
+    auth.authenticateToken,
+    auth.verifyRole(['admin', 'gerente']),
+    adminController.getCategoryProfitabilityTrend
+);
+
+router.get(
+    '/profitability-trend',
+    auth.authenticateToken,
+    auth.verifyRole(['admin', 'gerente']),
+    adminController.getProfitabilityTrend
+);
+
+router.get(
+    '/inventory-value-history',
+    auth.authenticateToken,
+    auth.verifyRole(['admin', 'gerente']),
+    adminController.getInventoryValueHistory
+);
+
+router.get(
+    '/inventory-turnover-history',
+    auth.authenticateToken,
+    auth.verifyRole(['admin', 'gerente']),
+    adminController.getInventoryTurnoverHistory
+);
 
 module.exports = router;

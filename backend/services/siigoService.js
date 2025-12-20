@@ -547,7 +547,7 @@ class SiigoService {
     }
   }
 
-  async processInvoiceToOrder(invoice, paymentMethod = 'transferencia', deliveryMethod = 'domicilio') {
+  async processInvoiceToOrder(invoice, paymentMethod = 'transferencia', deliveryMethod = 'domicilio', saleChannel = null) {
     try {
       console.log(`🔄 Procesando factura ${invoice.name || invoice.id} a pedido...`);
 
@@ -564,11 +564,11 @@ class SiigoService {
       // Validación de items > 0 con reintentos para evitar pedidos vacíos
       {
         let attempts = 0;
-        const maxAttempts = 3;
+        const maxAttempts = 10; // Aumentado de 3 a 10 para dar más tiempo a SIIGO
         while (attempts < maxAttempts && (!fullInvoice.items || fullInvoice.items.length === 0)) {
           attempts++;
           console.warn(`⚠️ Factura ${invoice.id} sin items (intento ${attempts}/${maxAttempts}). Reintentando obtener detalles...`);
-          await new Promise(r => setTimeout(r, Math.min(3000, attempts * 1500)));
+          await new Promise(r => setTimeout(r, 2000)); // Espera fija de 2s entre intentos
           try {
             fullInvoice = await this.getInvoiceDetails(invoice.id);
             console.log(`🔄 Reintento ${attempts}: items ahora = ${Array.isArray(fullInvoice.items) ? fullInvoice.items.length : 0}`);
@@ -583,7 +583,7 @@ class SiigoService {
               INSERT INTO siigo_sync_log (
                 siigo_invoice_id, sync_status, error_message, processed_at
               ) VALUES (?, ?, ?, NOW())
-            `, [invoice.id, 'pending_no_items', 'Factura sin items; importación abortada']);
+            `, [invoice.id, 'error', 'Factura sin items; importación abortada']);
           } catch (logError) {
             console.error('Error logging pending_no_items:', logError.message);
           }
@@ -1074,6 +1074,7 @@ class SiigoService {
         net_value: netValue, // Nuevo campo
         status: 'pendiente_por_facturacion',
         delivery_method: deliveryMethod,
+        sale_channel: saleChannel, // Nuevo campo
         payment_method: normalizedPaymentMethod,
         created_by: await getSystemUserId(),
         created_at: new Date()
@@ -1084,46 +1085,78 @@ class SiigoService {
       console.log(`💾 Insertando pedido con TODOS los campos: ${orderData.order_number}`);
 
       // Insertar pedido con TODOS los campos disponibles incluyendo commercial_name, siigo_public_url, siigo_observations y shipping_payment_method
-      const insertResult = await query(`
-        INSERT INTO orders (
-          order_number, invoice_code, siigo_invoice_id, customer_name, commercial_name,
-          customer_phone, customer_address, customer_identification,
-          customer_id_type, siigo_customer_id, customer_person_type,
-          customer_email, customer_department, customer_country, customer_city,
-          total_amount, net_value, status, delivery_method, payment_method, 
-          shipping_payment_method, siigo_public_url, siigo_observations, siigo_invoice_created_at, 
-          created_by, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `, [
-        orderData.order_number,
-        orderData.invoice_code,
-        orderData.siigo_invoice_id,
-        orderData.customer_name,
-        sanitizedCommercialName, // NUEVO CAMPO: commercial_name extraído correctamente
-        orderData.customer_phone,
-        orderData.customer_address,
-        orderData.customer_identification,
-        orderData.customer_id_type,
-        orderData.siigo_customer_id,
-        orderData.customer_person_type,
-        orderData.customer_email,
-        orderData.customer_department,
-        orderData.customer_country,
-        typeof orderData.customer_city === 'object' ? safeJSONStringify(orderData.customer_city) : orderData.customer_city,
-        orderData.total_amount,
-        orderData.net_value,
-        orderData.status,
-        orderData.delivery_method,
-        orderData.payment_method,
-        shippingPaymentMethod, // CAMPO AUTOMÁTICO DESDE SIIGO
-        siigoPublicUrl,
-        sanitizedSiigoObservations,
-        siigoInvoiceCreatedAt,
-        orderData.created_by,
-        orderData.created_at
-      ]);
+      let insertResult;
+      try {
+        insertResult = await query(`
+          INSERT INTO orders (
+            order_number, invoice_code, siigo_invoice_id, customer_name, commercial_name,
+            customer_phone, customer_address, customer_identification,
+            customer_id_type, siigo_customer_id, customer_person_type,
+            customer_email, customer_department, customer_country, customer_city,
+            total_amount, net_value, status, delivery_method, sale_channel, payment_method, 
+            shipping_payment_method, siigo_public_url, siigo_observations, siigo_invoice_created_at, 
+            created_by, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `, [
+          orderData.order_number,
+          orderData.invoice_code,
+          orderData.siigo_invoice_id,
+          orderData.customer_name,
+          sanitizedCommercialName, // NUEVO CAMPO: commercial_name extraído correctamente
+          orderData.customer_phone,
+          orderData.customer_address,
+          orderData.customer_identification,
+          orderData.customer_id_type,
+          orderData.siigo_customer_id,
+          orderData.customer_person_type,
+          orderData.customer_email,
+          orderData.customer_department,
+          orderData.customer_country,
+          typeof orderData.customer_city === 'object' ? safeJSONStringify(orderData.customer_city) : orderData.customer_city,
+          orderData.total_amount,
+          orderData.net_value,
+          orderData.status,
+          orderData.delivery_method,
+          orderData.sale_channel,
+          orderData.payment_method,
+          shippingPaymentMethod, // CAMPO AUTOMÁTICO DESDE SIIGO
+          siigoPublicUrl,
+          sanitizedSiigoObservations,
+          siigoInvoiceCreatedAt,
+          orderData.created_by,
+          orderData.created_at
+        ]);
+      } catch (insertError) {
+        if (insertError.code === 'ER_DUP_ENTRY') {
+          console.warn(`⚠️ Intento de duplicado para pedido ${orderData.order_number} (Race Condition)`);
+          return {
+            success: false,
+            message: 'Factura ya existe (duplicado detectado en inserción)',
+            isDuplicate: true
+          };
+        }
+        throw insertError;
+      }
 
-      const orderId = insertResult.insertId;
+      console.log('🔍 Debug insertResult:', insertResult);
+      let orderId = insertResult.insertId;
+
+      // Fallback si insertResult es un array (algunas versiones de mysql2/wrapper)
+      if (!orderId && Array.isArray(insertResult) && insertResult.length > 0 && insertResult[0].insertId) {
+        orderId = insertResult[0].insertId;
+        console.log('⚠️ insertResult era array, recuperado insertId del primer elemento');
+      }
+
+      if (!orderId) {
+        console.error('❌ CRITICAL: Order ID is undefined after INSERT!');
+        // Intentar recuperar por siigo_invoice_id como último recurso
+        const [recovered] = await query('SELECT id FROM orders WHERE siigo_invoice_id = ? ORDER BY id DESC LIMIT 1', [orderData.siigo_invoice_id]);
+        if (recovered && recovered.id) {
+          orderId = recovered.id;
+          console.log(`✅ Recuperado orderId ${orderId} mediante consulta SELECT fallback`);
+        }
+      }
+
       console.log(`✅ Pedido creado con ID: ${orderId}`);
 
       // Emitir evento WebSocket para notificar a facturadores sobre el nuevo pedido
@@ -1150,28 +1183,130 @@ class SiigoService {
       if (fullInvoice.items && fullInvoice.items.length > 0) {
         console.log(`📦 Procesando ${fullInvoice.items.length} items...`);
 
+        // 1. Pre-fetch purchasing prices AND standard prices for all items
+        const productNames = fullInvoice.items
+          .map(i => i.description || i.name)
+          .filter(Boolean)
+          .map(n => sanitizeText(n)); // Normalized Names
+
+        const productCodes = fullInvoice.items
+          .map(i => i.code || i.product?.code)
+          .filter(Boolean);
+
+        let costMap = new Map();
+
+        if (productNames.length > 0 || productCodes.length > 0) {
+          try {
+            let querySQL = 'SELECT product_name, internal_code, purchasing_price, standard_price FROM products WHERE ';
+            const params = [];
+            const conditions = [];
+
+            if (productNames.length > 0) {
+              conditions.push('product_name IN (?)');
+              params.push(productNames);
+            }
+            if (productCodes.length > 0) {
+              conditions.push('internal_code IN (?)');
+              params.push(productCodes);
+            }
+
+            querySQL += conditions.join(' OR ');
+
+            const productsInfo = await query(querySQL, params);
+
+            productsInfo.forEach(p => {
+              const cost = Number(p.purchasing_price || (p.standard_price ? p.standard_price / 1.19 : 0));
+
+              if (p.internal_code) {
+                costMap.set(`CODE:${p.internal_code}`, cost);
+              }
+              if (p.product_name) {
+                costMap.set(`NAME:${sanitizeText(p.product_name)}`, cost);
+              }
+            });
+            console.log(`💰 Costos obtenidos para ${productsInfo.length} productos (usando nombres y códigos)`);
+          } catch (e) {
+            console.warn('⚠️ Error obteniendo costos/precios, se usarán defaults:', e.message);
+          }
+        }
+
+        // Variables for Segmentation Analysis
+        let maxDiscountFound = 0;
+        let validItemsForSegmentation = 0;
+
         for (const item of fullInvoice.items) {
           try {
             console.log(`🔍 Insertando item: ${item.description || item.name || 'Producto SIIGO'}`);
             // Determinar la línea de la factura conservando el orden de SIIGO
             const invoiceLine = Array.isArray(fullInvoice.items) ? (fullInvoice.items.indexOf(item) + 1) : null;
             const productCode = item.code || (item.product?.code) || null;
+            const productName = sanitizeText(item.description || item.name || 'Producto SIIGO');
+
+            // Snapshot del costo histórico (Code match priority, then Name match)
+            const keyByCode = productCode ? `CODE:${productCode}` : null;
+            const keyByName = `NAME:${productName}`;
+            const historicalCost = (keyByCode && costMap.has(keyByCode))
+              ? costMap.get(keyByCode)
+              : (costMap.get(keyByName) || 0);
+
+            // EXTRAER DESCUENTO DESDE SIIGO JSON
+            // El descuento puede venir como objeto {percentage: 25, value: 151260.5} o como número
+            let discountPercent = 0;
+            if (item.discount && typeof item.discount === 'object') {
+              discountPercent = parseFloat(item.discount.percentage || 0);
+            } else {
+              discountPercent = parseFloat(item.discount || 0);
+            }
+
+            // --- Segmentation Logic usando descuento de SIIGO ---
+            // Ignorar servicios o fletes para el cálculo de segmento
+            const isFreight = /(\bFlete\b|\bTransporte\b|\bEnvio\b)/i.test(productName) || (productCode === 'FL01');
+
+            if (!isFreight && discountPercent > 0) {
+              console.log(`📊 Item ${productName}: Descuento SIIGO ${discountPercent}%`);
+              if (discountPercent > maxDiscountFound) {
+                maxDiscountFound = discountPercent;
+              }
+              validItemsForSegmentation++;
+            }
+            // --------------------------
+
+            // --- CÁLCULO DE RENTABILIDAD (Automático) ---
+            const unitPrice = parseFloat(item.price || item.unit_price || 0);
+            const quantity = parseFloat(item.quantity || 1);
+            const netPrice = unitPrice * (1 - (discountPercent / 100));
+
+            // Rentabilidad TOTAL de la línea (Unitario * Cantidad)
+            const profitAmount = (netPrice - historicalCost) * quantity;
+
+            // Evitar división por cero
+            let profitPercent = 0;
+            if (netPrice > 0) {
+              // El porcentaje es el mismo unitario o total
+              profitPercent = ((netPrice - historicalCost) / netPrice) * 100;
+            }
+            // ---------------------------------------------
 
             await query(`
               INSERT INTO order_items (
-                order_id, name, product_code, quantity, price, description, invoice_line, created_at
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, NOW())
+                order_id, name, product_code, quantity, price, description, invoice_line, 
+                purchase_cost, discount_percent, profit_amount, profit_percent, created_at
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
             `, [
               orderId,
-              sanitizeText(item.description || item.name || 'Producto SIIGO'),
+              productName,
               sanitizeText(productCode || null),
               parseFloat(item.quantity || 1),
-              parseFloat(item.price || item.unit_price || 0),
+              unitPrice,
               sanitizeText(item.description || item.name || null),
-              invoiceLine || null
+              invoiceLine || null,
+              historicalCost,
+              discountPercent,
+              profitAmount,
+              profitPercent
             ]);
             itemsInserted++;
-            console.log(`✅ Item insertado exitosamente: ${item.description || item.name}`);
+            console.log(`✅ Item insertado exitosamente: ${item.description || item.name} (costo: ${historicalCost}, descuento: ${discountPercent}%)`);
           } catch (itemError) {
             console.error(`❌ Error insertando item "${item.description || item.name}":`, itemError.message);
             console.error(`📊 Datos del item:`, JSON.stringify({
@@ -1180,12 +1315,44 @@ class SiigoService {
               quantity: item.quantity,
               price: item.price || item.unit_price,
               code: item.code,
+              discount: item.discount,
               invoice_line: Array.isArray(fullInvoice.items) ? (fullInvoice.items.indexOf(item) + 1) : null
             }, null, 2));
           }
         }
 
         console.log(`✅ ${itemsInserted} items insertados de ${fullInvoice.items.length} intentados`);
+
+        // --- Update Customer Segment (Discount Based) ---
+        // Ignorar pedidos por debajo de 2000 pesos (reposiciones/garantías)
+        if (orderData.total_amount >= 2000 && validItemsForSegmentation > 0 && customerId) {
+          let newSegment = 'Minorista';
+          // Rules from User Requirement:
+          // 0% -> Minorista
+          // 4% - 14.9% -> Mayorista
+          // 15% - 20% -> Distribuidor Plata
+          // > 20.1% -> Distribuidor Oro
+
+          if (maxDiscountFound >= 20.1) {
+            newSegment = 'Distribuidor Oro';
+          } else if (maxDiscountFound >= 15) {
+            newSegment = 'Distribuidor Plata';
+          } else if (maxDiscountFound >= 4) {
+            newSegment = 'Mayorista';
+          }
+
+          console.log(`💎 Segmentación por Descuento: Max ${maxDiscountFound.toFixed(1)}% -> ${newSegment}`);
+
+          try {
+            // Actualizar cliente localmente
+            await query('UPDATE customers SET segment = ?, updated_at = NOW() WHERE siigo_id = ?', [newSegment, customerId]);
+            console.log(`👤 Cliente ${customerId} actualizado a segmento: ${newSegment}`);
+          } catch (segError) {
+            console.error(`⚠️ Error actualizando segmento del cliente:`, segError.message);
+          }
+        }
+        // -------------------------------
+
       } else {
         console.log(`⚠️ Factura sin items detallados`);
       }
@@ -1464,7 +1631,7 @@ class SiigoService {
   }
 
   // Método para importar facturas específicas
-  async importInvoices(invoiceIds, paymentMethod = 'transferencia', deliveryMethod = 'domicilio') {
+  async importInvoices(invoiceIds, paymentMethod = 'transferencia', deliveryMethod = 'domicilio', saleChannel = null) {
     try {
       console.log(`📥 Importando ${invoiceIds.length} facturas...`);
 
@@ -1499,7 +1666,7 @@ class SiigoService {
             }
 
             // Procesar factura
-            const result = await this.processInvoiceToOrder(invoice, paymentMethod, deliveryMethod);
+            const result = await this.processInvoiceToOrder(invoice, paymentMethod, deliveryMethod, saleChannel);
             results.push({
               invoiceId,
               ...result

@@ -18,7 +18,7 @@ const baseConfig = {
 // Rate limiter general - más permisivo
 const generalLimiter = rateLimit({
   ...baseConfig,
-  max: 100, // 100 peticiones por minuto (más flexible)
+  max: 500, // 500 peticiones por minuto (muy permisivo para múltiples usuarios)
   message: 'Demasiadas solicitudes desde esta IP'
 });
 
@@ -34,14 +34,14 @@ const authLimiter = rateLimit({
 const siigoLimiter = rateLimit({
   ...baseConfig,
   windowMs: 2 * 60 * 1000, // 2 minutos
-  max: 30, // 30 peticiones cada 2 minutos
+  max: 100, // 100 peticiones cada 2 minutos (aumentado desde 30)
   message: 'Demasiadas solicitudes a SIIGO'
 });
 
 // Rate limiter para endpoints de consulta frecuente
 const queryLimiter = rateLimit({
   ...baseConfig,
-  max: 60, // 60 peticiones por minuto para consultas
+  max: 300, // 300 peticiones por minuto para consultas (aumentado desde 60)
   message: 'Demasiadas consultas'
 });
 

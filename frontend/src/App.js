@@ -38,6 +38,11 @@ import PostventaPage from './pages/PostventaPage';
 import PostventaAnalyticsPage from './pages/PostventaAnalyticsPage';
 import EvidenceGalleryPage from './pages/EvidenceGalleryPage';
 import AutomationDashboardPage from './pages/AutomationDashboardPage';
+import InventoryManagementPage from './pages/InventoryManagementPage';
+import QRGeneratorPage from './pages/QRGeneratorPage';
+import MerchandiseReceptionPage from './pages/MerchandiseReceptionPage';
+import SupplierCodesPage from './pages/SupplierCodesPage';
+import ExecutiveDashboardPage from './pages/ExecutiveDashboardPage';
 
 // Componentes de layout
 import Layout from './components/Layout';
@@ -105,6 +110,16 @@ const AppRoutes = () => {
         {/* Dashboard - accesible para todos los roles */}
         <Route index element={<Navigate to={isEmpacador ? "/packaging" : "/dashboard"} replace />} />
         <Route path="dashboard" element={isEmpacador ? <Navigate to="/packaging" replace /> : <DashboardPage />} />
+
+        {/* Dashboard Ejecutivo - solo admin/gerente */}
+        <Route
+          path="admin/dashboard"
+          element={
+            <ProtectedRoute requiredRole={['admin', 'gerente']}>
+              <ExecutiveDashboardPage />
+            </ProtectedRoute>
+          }
+        />
 
         {/* Pedidos - accesible para todos los roles */}
         <Route path="orders" element={isEmpacador ? <Navigate to="/packaging" replace /> : <OrdersPage />} />
@@ -249,6 +264,16 @@ const AppRoutes = () => {
           }
         />
 
+        {/* Mapeo de Códigos de Proveedor - admin y logística */}
+        <Route
+          path="supplier-codes"
+          element={
+            <ProtectedRoute requiredRole={['admin', 'logistica']}>
+              <SupplierCodesPage />
+            </ProtectedRoute>
+          }
+        />
+
         {/* Gestión de Transportadoras - admin y logística */}
         <Route
           path="carriers"
@@ -302,8 +327,37 @@ const AppRoutes = () => {
         <Route
           path="inventory-billing"
           element={
-            <ProtectedRoute requiredRole={['admin', 'facturador', 'cartera']}>
+            <ProtectedRoute requiredRole={['admin', 'facturador', 'cartera', 'empacador', 'empaque', 'packaging']}>
               <InventoryBillingPage />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Gestión de Inventario y Reaprovisionamiento - admin, facturador y cartera */}
+        <Route
+          path="/inventory-management"
+          element={
+            <ProtectedRoute requiredRole="inventory_management">
+              <InventoryManagementPage />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/reception"
+          element={
+            <ProtectedRoute>
+              <MerchandiseReceptionPage />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Generador de QR - admin, logística */}
+        <Route
+          path="qr-generator"
+          element={
+            <ProtectedRoute requiredRole={['admin', 'logistica']}>
+              <QRGeneratorPage />
             </ProtectedRoute>
           }
         />
