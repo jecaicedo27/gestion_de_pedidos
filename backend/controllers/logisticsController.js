@@ -557,7 +557,7 @@ const getLogisticsStats = async (req, res) => {
     const guidesGeneratedToday = await query(
       `SELECT COUNT(*) as count 
        FROM orders 
-       WHERE shipping_guide_generated = TRUE AND DATE(updated_at) = CURDATE()`,
+       WHERE shipping_guide_generated = TRUE AND DATE(CONVERT_TZ(updated_at, '+00:00', '-05:00')) = DATE(CONVERT_TZ(NOW(), '+00:00', '-05:00'))`,
       []
     );
 
@@ -1804,8 +1804,9 @@ const markPickupDelivered = async (req, res) => {
     const isCreditMethod = ['cliente_credito', 'cliente a credito', 'credito', 'credito_cliente', 'credit'].some(k => pmNorm.includes(k));
     const cashLike = ['efectivo', 'contraentrega', 'contado', 'cash', 'transferencia'].some(k => pmNorm.includes(k));
     const methodNoCharge = method.includes('sin_cobro') || method.includes('sincobro');
+    const isReposicion = pmNorm.includes('reposicion');
     // Autoritativo: si requires_payment = 0 (no requiere cobro), permitir entregar aunque el método sea 'efectivo'
-    const isCreditOrNoPayment = isCreditMethod || methodNoCharge || !requiresPaymentFlag;
+    const isCreditOrNoPayment = isCreditMethod || methodNoCharge || !requiresPaymentFlag || isReposicion;
     if (!isPickupMethod) {
       return res.status(400).json({ success: false, message: 'Esta acción solo aplica para Recoge en Bodega/Tienda' });
     }
@@ -1813,7 +1814,7 @@ const markPickupDelivered = async (req, res) => {
     // Validación para Bodega:
     // - Si el método de pago del pedido es efectivo/contado/contraentrega -> SIEMPRE exigir aceptación de caja (collected),
     //   incluso si requires_payment=0 por un error de datos.
-    // - Si no es cash-like y no es crédito -> exigir validación aprobada (wallet_validations.approved)
+    // - Si no es cash-like y no es crédito/no cobro -> exigir validación aprobada (wallet_validations.approved)
     if (isPickupMethod) {
       const cashLikeStrong = ['efectivo', 'contado', 'contraentrega', 'cash'].some(k => pmNorm.includes(k));
       if (cashLikeStrong) {
@@ -1822,7 +1823,7 @@ const markPickupDelivered = async (req, res) => {
         if (!hasCollected) {
           return res.status(400).json({ success: false, message: 'Cartera/Logística debe aceptar el pago en caja antes de ENTREGAR' });
         }
-      } else if (!isCreditMethod) {
+      } else if (!isCreditOrNoPayment) {
         // Aceptar si tiene validación en wallet_validations O si ya fue aprobado directamente en la orden (flujo POS)
         const wv = await query('SELECT id FROM wallet_validations WHERE order_id = ? AND validation_status = "approved" LIMIT 1', [orderId]);
         const isDirectlyApproved = order.approved_by != null || (order.validation_status === 'approved');

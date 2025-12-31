@@ -90,7 +90,7 @@ class SiigoInvoiceService {
       ...(includeAdditionalFields && additionalFields && Object.keys(additionalFields).length ? { additional_fields: additionalFields } : {}),
       items: formattedItems,
       payments: [{
-        id: config.defaultPaymentMethod,
+        id: 3467, // FORZADO: Siempre 'Crédito' para evitar que SIIGO cierre la factura automáticamente.
         value: paymentsValue,
         due_date: dueDate
       }]
@@ -636,16 +636,17 @@ class SiigoInvoiceService {
         }
       }
 
-      const headers = await siigoService.getHeaders();
-
-      const response = await axios.post(
-        `${siigoService.getBaseUrl()}/v1/invoices`,
-        invoiceData,
-        {
-          headers,
-          timeout: 30000
-        }
-      );
+      const response = await this.makeRequestWithRetry(async () => {
+        const headers = await siigoService.getHeaders();
+        return await axios.post(
+          `${siigoService.getBaseUrl()}/v1/invoices`,
+          invoiceData,
+          {
+            headers,
+            timeout: 30000
+          }
+        );
+      }, 'Crear Factura SIIGO');
 
       console.log('✅ Factura creada exitosamente en SIIGO:', response.data);
 
@@ -718,17 +719,18 @@ class SiigoInvoiceService {
       console.log('📋 Creando cotización en SIIGO...');
       console.log('📊 Datos de cotización:', JSON.stringify(quotationData, null, 2));
 
-      const headers = await siigoService.getHeaders();
-
       // Endpoint para cotizaciones (asumimos /v1/quotations basado en la documentación estándar)
-      const response = await axios.post(
-        `${siigoService.getBaseUrl()}/v1/quotations`,
-        quotationData,
-        {
-          headers,
-          timeout: 30000
-        }
-      );
+      const response = await this.makeRequestWithRetry(async () => {
+        const headers = await siigoService.getHeaders();
+        return await axios.post(
+          `${siigoService.getBaseUrl()}/v1/quotations`,
+          quotationData,
+          {
+            headers,
+            timeout: 30000
+          }
+        );
+      }, 'Crear Cotización SIIGO');
 
       console.log('✅ Cotización creada exitosamente en SIIGO:', response.data);
 
@@ -863,12 +865,13 @@ class SiigoInvoiceService {
     try {
       console.log(`📋 Obteniendo factura ${invoiceId} de SIIGO...`);
 
-      const headers = await siigoService.getHeaders();
-
-      const response = await axios.get(
-        `${siigoService.getBaseUrl()}/v1/invoices/${invoiceId}`,
-        { headers }
-      );
+      const response = await this.makeRequestWithRetry(async () => {
+        const headers = await siigoService.getHeaders();
+        return await axios.get(
+          `${siigoService.getBaseUrl()}/v1/invoices/${invoiceId}`,
+          { headers }
+        );
+      }, `Get Factura ${invoiceId}`);
 
       console.log('✅ Factura obtenida exitosamente');
       return response.data;
@@ -886,8 +889,6 @@ class SiigoInvoiceService {
     try {
       console.log('📋 Listando facturas de SIIGO...');
 
-      const headers = await siigoService.getHeaders();
-
       const params = new URLSearchParams();
       if (filters.created_start) params.append('created_start', filters.created_start);
       if (filters.created_end) params.append('created_end', filters.created_end);
@@ -896,10 +897,13 @@ class SiigoInvoiceService {
       if (filters.page) params.append('page', filters.page);
       if (filters.page_size) params.append('page_size', filters.page_size);
 
-      const response = await axios.get(
-        `${siigoService.getBaseUrl()}/v1/invoices${params.toString() ? '?' + params.toString() : ''}`,
-        { headers }
-      );
+      const response = await this.makeRequestWithRetry(async () => {
+        const headers = await siigoService.getHeaders();
+        return await axios.get(
+          `${siigoService.getBaseUrl()}/v1/invoices${params.toString() ? '?' + params.toString() : ''}`,
+          { headers }
+        );
+      }, 'Listar Facturas');
 
       console.log(`✅ ${response.data.results?.length || 0} facturas obtenidas`);
       return response.data;
@@ -917,8 +921,6 @@ class SiigoInvoiceService {
     try {
       console.log('📋 Listando cotizaciones de SIIGO...');
 
-      const headers = await siigoService.getHeaders();
-
       const params = new URLSearchParams();
       if (filters.created_start) params.append('created_start', filters.created_start);
       if (filters.created_end) params.append('created_end', filters.created_end);
@@ -927,10 +929,13 @@ class SiigoInvoiceService {
       if (filters.page) params.append('page', filters.page);
       if (filters.page_size) params.append('page_size', filters.page_size);
 
-      const response = await axios.get(
-        `${siigoService.getBaseUrl()}/v1/quotations${params.toString() ? '?' + params.toString() : ''}`,
-        { headers }
-      );
+      const response = await this.makeRequestWithRetry(async () => {
+        const headers = await siigoService.getHeaders();
+        return await axios.get(
+          `${siigoService.getBaseUrl()}/v1/quotations${params.toString() ? '?' + params.toString() : ''}`,
+          { headers }
+        );
+      }, 'Listar Cotizaciones');
 
       console.log(`✅ ${response.data.results?.length || 0} cotizaciones obtenidas`);
       return response.data;
@@ -956,11 +961,13 @@ class SiigoInvoiceService {
     // Intento directo con query por código (si la API lo soporta)
     let product = null;
     try {
-      const resp = await axios.get(`${baseURL}/v1/products`, {
-        headers,
-        params: { page: 1, page_size: 1, code },
-        timeout: 20000
-      });
+      const resp = await this.makeRequestWithRetry(async () => {
+        return await axios.get(`${baseURL}/v1/products`, {
+          headers,
+          params: { page: 1, page_size: 1, code },
+          timeout: 20000
+        });
+      }, `Get Producto Code ${code}`);
       const list = resp.data?.results || [];
       if (Array.isArray(list) && list.length > 0) {
         product = list[0];
@@ -1000,6 +1007,55 @@ class SiigoInvoiceService {
     return { name, basePrice, taxes };
   }
 
+
+  /**
+   * Helper generico para realizar peticiones con reintento automático (backoff exponencial)
+   * Maneja específicamente el error 429 (Too Many Requests)
+   */
+  async makeRequestWithRetry(requestFn, context = '', maxRetries = 5) {
+    let retries = 0;
+
+    while (true) {
+      try {
+        return await requestFn();
+      } catch (error) {
+        // Verificar si es error 429 (Rate Limit)
+        if (error.response && error.response.status === 429) {
+          retries++;
+
+          if (retries > maxRetries) {
+            console.error(`❌ ${context}: Excedido número máximo de reintentos (${maxRetries}) por Rate Limit`);
+            throw error;
+          }
+
+          // Obtener tiempo de espera del header Retry-After (si existe), o usar backoff exponencial
+          // Retry-After suele venir en segundos
+          let waitTimeMs = 1000 * Math.pow(2, retries - 1); // Default backoff: 1s, 2s, 4s, 8s, 16s
+
+          if (error.response.headers && error.response.headers['retry-after']) {
+            const retryAfterSecs = parseInt(error.response.headers['retry-after'], 10);
+            if (!isNaN(retryAfterSecs)) {
+              waitTimeMs = (retryAfterSecs * 1000) + 100; // Agregar pequeño buffer
+            }
+          }
+
+          // Cap máximo de espera (ej. 10 segundos)
+          waitTimeMs = Math.min(waitTimeMs, 10000);
+
+          console.warn(`⚠️ ${context}: Rate Limit (429) detectado. Reintentando en ${waitTimeMs}ms (Intento ${retries}/${maxRetries})...`);
+
+          // Esperar antes de reintentar
+          await new Promise(resolve => setTimeout(resolve, waitTimeMs));
+          continue;
+        }
+
+        // Si no es 429, relanzar el error inmediatamente
+        throw error;
+      }
+    }
+  }
+
 }
 
 module.exports = new SiigoInvoiceService();
+

@@ -6,6 +6,7 @@ import { getLocalISOString } from '../utils/dateUtils';
 import StatCard from '../components/StatCard';
 import DashboardCard from '../components/DashboardCard';
 import DashboardAlerts from '../components/DashboardAlerts';
+import OperationalMetricsCard from '../components/dashboard/OperationalMetricsCard';
 import {
   OrderEvolutionChart,
   DeliveryMethodChart,
@@ -474,6 +475,13 @@ const DashboardPage = () => {
           )}
         </div>
       </div>
+
+      {/* Operational Metrics (Admin, Facturacion, Cartera) */}
+      {['admin', 'facturacion', 'cartera'].includes(user?.role) && (
+        <div className="mb-8">
+          <OperationalMetricsCard />
+        </div>
+      )}
 
       {/* Tarjetas de estadísticas principales */}
       {/* Tarjetas de estadísticas principales - Ocultar para mensajeros */}

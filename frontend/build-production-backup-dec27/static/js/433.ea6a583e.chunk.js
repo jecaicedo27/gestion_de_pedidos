@@ -1,0 +1,2 @@
+"use strict";(self.webpackChunkgestion_pedidos_frontend=self.webpackChunkgestion_pedidos_frontend||[]).push([[433],{8814:(e,s,n)=>{n.r(s),n.d(s,{default:()=>d});const d={}}}]);
+//# sourceMappingURL=433.ea6a583e.chunk.js.map

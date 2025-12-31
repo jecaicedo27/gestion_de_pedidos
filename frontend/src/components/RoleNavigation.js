@@ -38,14 +38,7 @@ const RoleNavigation = () => {
       description: 'Gestión de pedidos y facturación',
       roles: ['admin', 'facturador']
     },
-    {
-      id: 'inventory-billing',
-      name: 'Inventario + Facturación',
-      icon: Icons.Package2,
-      path: '/inventory-billing',
-      description: 'Facturación directa desde inventario',
-      roles: ['admin', 'facturador', 'cartera', 'empacador', 'empaque', 'packaging']
-    },
+
     {
       id: 'cartera',
       name: 'Cartera',
@@ -119,14 +112,7 @@ const RoleNavigation = () => {
       roles: ['admin', 'logistica', 'mensajero']
     },
 
-    {
-      id: 'automation',
-      name: 'Automatización',
-      icon: Icons.Settings,
-      path: '/automation',
-      description: 'Monitoreo y control de servicios y webhooks',
-      roles: ['admin']
-    }
+
   ];
 
   // Filtrar vistas según el rol del usuario
@@ -185,6 +171,7 @@ const RoleNavigation = () => {
     if (path === '/customers') return 'clientes';
     if (path === '/cashier-collections') return 'cartera-cobros';
     if (path === '/treasury-audit') return 'treasury-audit';
+    if (path === '/financial-closure') return 'financial-closure';
 
     return 'dashboard';
   };

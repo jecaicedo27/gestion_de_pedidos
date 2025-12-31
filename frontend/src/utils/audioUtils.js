@@ -3,7 +3,7 @@ class AudioFeedback {
   constructor() {
     this.audioContext = null;
     this.enabled = true;
-    
+
     // Initialize Web Audio API
     try {
       this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -11,6 +11,9 @@ class AudioFeedback {
       console.warn('Web Audio API not supported:', error);
       this.enabled = false;
     }
+
+    // Throttle trackers
+    this.lastStatusAlertTime = 0;
   }
 
   // Create a simple beep sound programmatically
@@ -42,7 +45,7 @@ class AudioFeedback {
   // Success sound: Higher pitch, pleasant tone
   async playSuccess() {
     if (!this.enabled) return;
-    
+
     try {
       // Resume audio context if needed (browser autoplay policy)
       if (this.audioContext.state === 'suspended') {
@@ -54,7 +57,7 @@ class AudioFeedback {
       setTimeout(() => {
         this.createBeep(600, 0.2); // Lower note
       }, 100);
-      
+
     } catch (error) {
       console.warn('Error playing success sound:', error);
     }
@@ -63,7 +66,7 @@ class AudioFeedback {
   // Error sound: Lower pitch, warning tone
   async playError() {
     if (!this.enabled) return;
-    
+
     try {
       // Resume audio context if needed
       if (this.audioContext.state === 'suspended') {
@@ -78,7 +81,7 @@ class AudioFeedback {
       setTimeout(() => {
         this.createBeep(400, 0.15);
       }, 300);
-      
+
     } catch (error) {
       console.warn('Error playing error sound:', error);
     }
@@ -87,7 +90,7 @@ class AudioFeedback {
   // Already scanned sound: DANGER/ALERT tone - muy fuerte para alertar
   async playAlreadyScanned() {
     if (!this.enabled) return;
-    
+
     try {
       // Resume audio context if needed
       if (this.audioContext.state === 'suspended') {
@@ -107,7 +110,7 @@ class AudioFeedback {
         // Cuarto beep final más agudo para captar atención
         this.createBeep(400, 0.2, 'square');
       }, 400);
-      
+
     } catch (error) {
       console.warn('Error playing already scanned sound:', error);
     }
@@ -116,7 +119,14 @@ class AudioFeedback {
   // Attention/alert sound for status changes and new orders (bright, non-error)
   async playStatusAlert() {
     if (!this.enabled) return;
-    
+
+    // Throttle: Don't play if played in last 3 seconds
+    const now = Date.now();
+    if (now - this.lastStatusAlertTime < 3000) {
+      return;
+    }
+    this.lastStatusAlertTime = now;
+
     try {
       // Resume audio context if needed
       if (this.audioContext.state === 'suspended') {
@@ -137,7 +147,7 @@ class AudioFeedback {
   // Progress sound: For multi-unit counting
   async playProgress() {
     if (!this.enabled) return;
-    
+
     try {
       // Resume audio context if needed
       if (this.audioContext.state === 'suspended') {
@@ -146,7 +156,7 @@ class AudioFeedback {
 
       // Play a short progress beep
       await this.createBeep(700, 0.08);
-      
+
     } catch (error) {
       console.warn('Error playing progress sound:', error);
     }
@@ -155,7 +165,7 @@ class AudioFeedback {
   // Complete sound: For finished multi-unit scanning
   async playComplete() {
     if (!this.enabled) return;
-    
+
     try {
       // Resume audio context if needed
       if (this.audioContext.state === 'suspended') {
@@ -170,7 +180,7 @@ class AudioFeedback {
       setTimeout(() => {
         this.createBeep(900, 0.15);
       }, 240);
-      
+
     } catch (error) {
       console.warn('Error playing complete sound:', error);
     }

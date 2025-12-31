@@ -3076,6 +3076,7 @@ const syncOrderFromSiigo = async (req, res) => {
     const userId = req.user.id;
 
     console.log(`🔄 Iniciando sincronización inteligente para pedido ${id} desde SIIGO...`);
+    if (global.io) global.io.emit('sync-progress', { orderId: id, progress: 10, message: 'Iniciando sincronización...' });
 
     // 1. Obtener pedido y su ID de factura SIIGO (incluyendo datos actuales de cliente para fallback)
     const orderRows = await query('SELECT id, siigo_invoice_id, order_number, customer_phone, customer_address, customer_email FROM orders WHERE id = ?', [id]);
@@ -3089,6 +3090,7 @@ const syncOrderFromSiigo = async (req, res) => {
     }
 
     // 2. Obtener detalles frescos desde SIIGO
+    if (global.io) global.io.emit('sync-progress', { orderId: id, progress: 30, message: 'Consultando factura en SIIGO...' });
     let siigoInvoice;
     try {
       siigoInvoice = await siigoService.getInvoiceDetails(order.siigo_invoice_id);
@@ -3102,6 +3104,7 @@ const syncOrderFromSiigo = async (req, res) => {
     }
 
     // 2.1 Actualizar información del cliente (Nombre, Teléfono, etc.)
+    if (global.io) global.io.emit('sync-progress', { orderId: id, progress: 50, message: 'Actualizando datos del cliente...' });
     if (siigoInvoice.customer?.id) {
       try {
         console.log(`👤 Actualizando información del cliente ${siigoInvoice.customer.id} (skipping cache)...`);
@@ -3154,6 +3157,7 @@ const syncOrderFromSiigo = async (req, res) => {
     }
 
     // 3. Obtener items locales actuales
+    if (global.io) global.io.emit('sync-progress', { orderId: id, progress: 60, message: 'Analizando items...' });
     const localItems = await query('SELECT * FROM order_items WHERE order_id = ?', [id]);
 
     console.log(`📊 Items locales encontrados: ${localItems.length}`);
@@ -3173,18 +3177,60 @@ const syncOrderFromSiigo = async (req, res) => {
       localMap.get(key).push(item);
     });
 
-    // 3.1 Cargar Mapa de Costos de Productos
-    const [products] = await query('SELECT product_name, internal_code, purchasing_price, standard_price FROM products');
-    const costMap = new Map();
-    products.forEach(p => {
-      // Costo Histórico: Precio Compra o (Precio Estándar / 1.19)
-      const cost = p.purchasing_price
-        ? parseFloat(p.purchasing_price)
-        : (p.standard_price ? parseFloat(p.standard_price) / 1.19 : 0);
+    // 3.1 Cargar Mapa de Costos de Productos (Solo los necesarios)
+    const neededCodes = new Set();
+    const neededNames = new Set();
 
-      if (p.internal_code) costMap.set(`CODE:${p.internal_code}`, cost);
-      if (p.product_name) costMap.set(`NAME:${String(p.product_name).trim().toLowerCase()}`, cost);
+    if (siigoInvoice && siigoInvoice.items) {
+      siigoInvoice.items.forEach(item => {
+        const c = item.code || item.product?.code;
+        const n = item.description || item.product?.name;
+        if (c) neededCodes.add(String(c).trim());
+        if (n) neededNames.add(String(n).trim().toLowerCase());
+      });
+    }
+
+    // Agregar items locales a la busqueda para asegurar consistencia
+    localItems.forEach(item => {
+      if (item.product_code) neededCodes.add(String(item.product_code).trim());
+      if (item.name) neededNames.add(String(item.name).trim().toLowerCase());
     });
+
+    const costMap = new Map();
+
+    if (neededCodes.size > 0 || neededNames.size > 0) {
+      let conditions = [];
+      let params = [];
+
+      if (neededCodes.size > 0) {
+        // "IN (?)" no funciona automaticamente para arrays en mysql2 raw execute, necesitamos generar los placeholders
+        conditions.push(`internal_code IN (${Array.from(neededCodes).map(() => '?').join(',')})`);
+        params.push(...Array.from(neededCodes));
+      }
+
+      // Optimización: buscar por nombre
+      if (neededNames.size > 0) {
+        // LOWER(product_name) IN (...)
+        conditions.push(`LOWER(product_name) IN (${Array.from(neededNames).map(() => '?').join(',')})`);
+        params.push(...Array.from(neededNames));
+      }
+
+      if (conditions.length > 0) {
+        const querySql = `SELECT product_name, internal_code, purchasing_price, standard_price FROM products WHERE ${conditions.join(' OR ')}`;
+        const products = await query(querySql, params); // FIX: Removed destructuring [products]
+
+        products.forEach(p => {
+          // Costo Histórico: Precio Compra o (Precio Estándar / 1.19)
+          const cost = p.purchasing_price
+            ? parseFloat(p.purchasing_price)
+            : (p.standard_price ? parseFloat(p.standard_price) / 1.19 : 0);
+
+          if (p.internal_code) costMap.set(`CODE:${p.internal_code}`, cost);
+          if (p.product_name) costMap.set(`NAME:${String(p.product_name).trim().toLowerCase()}`, cost);
+        });
+        console.log(`💰 Costos cargados para ${products.length} productos relevantes`);
+      }
+    }
 
     let updatedCount = 0;
     let insertedCount = 0;
@@ -3195,6 +3241,7 @@ const syncOrderFromSiigo = async (req, res) => {
       const processedLocalIds = new Set();
 
       // 4. Procesar items de SIIGO (Upsert)
+      if (global.io) global.io.emit('sync-progress', { orderId: id, progress: 75, message: 'Sincronizando productos y costos...' });
       for (const siigoItem of siigoInvoice.items) {
         const siigoCode = siigoItem.code || siigoItem.product?.code;
         const siigoName = siigoItem.description || siigoItem.product?.name || 'Item sin nombre';
@@ -3205,11 +3252,11 @@ const syncOrderFromSiigo = async (req, res) => {
 
         // Intentar match
         let matchKey = siigoCode ? `CODE:${siigoCode}` : `NAME:${String(siigoName).trim().toLowerCase()}`;
+        const nameKey = `NAME:${String(siigoName).trim().toLowerCase()}`;
         let matches = localMap.get(matchKey);
 
         // Fallback: si buscamos por código y no hay, intentar por nombre
         if ((!matches || !matches.length) && siigoCode) {
-          const nameKey = `NAME:${String(siigoName).trim().toLowerCase()}`;
           console.log(`   ⚠️ No match por código (${matchKey}), intentando por nombre: "${nameKey}"`);
           matches = localMap.get(nameKey);
         }
@@ -3282,6 +3329,7 @@ const syncOrderFromSiigo = async (req, res) => {
       }
 
       // 5. Procesar items locales NO matcheados (Eliminar o Marcar Replaced)
+      if (global.io) global.io.emit('sync-progress', { orderId: id, progress: 85, message: 'Limpiando items obsoletos...' });
       for (const item of localItems) {
         if (!processedLocalIds.has(item.id)) {
           // Verificar si tiene actividad de empaque
@@ -3337,6 +3385,7 @@ const syncOrderFromSiigo = async (req, res) => {
       `, [finalTotal, siigoNetValue, id]);
 
       // 7. Sincronizar required_scans en packaging_item_verifications con la nueva cantidad
+      if (global.io) global.io.emit('sync-progress', { orderId: id, progress: 95, message: 'Finalizando...' });
       const [updateResult] = await connection.execute(`
         UPDATE packaging_item_verifications piv, order_items oi
         SET piv.required_scans = oi.quantity
@@ -3355,6 +3404,7 @@ const syncOrderFromSiigo = async (req, res) => {
       `, [id]);
 
       console.log(`✅ Sincronización completada para pedido ${id}. Updated: ${updatedCount}, Inserted: ${insertedCount}, Replaced: ${replacedCount}, Deleted: ${deletedCount}`);
+      if (global.io) global.io.emit('sync-progress', { orderId: id, progress: 100, message: '✅ Sincronización completada' });
     });
 
     res.json({

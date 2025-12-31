@@ -328,7 +328,6 @@ export default function ReadyToDeliverPage() {
           // Nuevo pedido listo para entregar -> alertar y recargar
           if (to === 'listo_para_entrega') {
             toast.success('🆕 Pedido listo para entregar');
-            try { audioFeedback.playStatusAlert(); } catch { }
             silentReload();
             return;
           }

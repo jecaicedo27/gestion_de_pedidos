@@ -36,169 +36,83 @@ class StockConsistencyService {
     this.scanRecentTimer = null;   // cada 5 min re-encola recientes
     this.scanOldestTimer = null;   // cada 10 min encola más viejos por last_sync_at
 
-    // Cola de reconciliación: usamos Set para evitar duplicados
-    this.queue = new Set();
+    // Flag de procesamiento para evitar concurrencia
+    this.processing = false;
 
     // Límites
-    this.BATCH_SIZE = 25;          // máximo por ciclo
+    this.BATCH_SIZE = 10;          // reducido de 25 a 10
     this.RECENT_HOURS = 6;         // ventana de recientes para arranque/scan
+
+    // Pool de conexiones para evitar overhead de handshake constante
+    this.pool = mysql.createPool({
+      ...this.dbConfig,
+      waitForConnections: true,
+      connectionLimit: 5,
+      queueLimit: 0
+    });
   }
 
   async getConn() {
-    return await mysql.createConnection(this.dbConfig);
+    return await this.pool.getConnection();
   }
 
-  // Encolas por id local
-  enqueueByProductId(id) {
-    if (!id) return;
-    this.queue.add(JSON.stringify({ type: 'id', value: String(id) }));
-  }
-
-  // Encolas por siigo_id (UUID o code)
-  enqueueBySiigoId(siigoId) {
-    if (!siigoId) return;
-    this.queue.add(JSON.stringify({ type: 'siigo', value: String(siigoId) }));
-  }
-
-  // Encolas por internal_code (SKU)
-  enqueueByCode(code) {
-    if (!code) return;
-    this.queue.add(JSON.stringify({ type: 'code', value: String(code) }));
-  }
-
-  async start() {
-    if (this.running) return { running: true };
-
-    this.running = true;
-    console.log('🧭 StockConsistencyService: iniciando...');
-
-    // Bootstrapping: encolar productos recientes para convergencia rápida
-    try {
-      await this.enqueueRecentUpdated();
-      console.log('🧭 StockConsistencyService: productos recientes encolados.');
-    } catch (e) {
-      console.warn('⚠️ StockConsistencyService enqueueRecentUpdated error:', e?.message || e);
-    }
-
-    // Timer de procesamiento de cola (cada 30s)
-    this.queueTimer = setInterval(() => {
-      this.processQueue().catch((e) => {
-        console.warn('⚠️ StockConsistencyService processQueue error:', e?.message || e);
-      });
-    }, 30 * 1000);
-
-    // Timer de re-encolar recientes (cada 5m)
-    this.scanRecentTimer = setInterval(() => {
-      this.enqueueRecentUpdated().catch((e) => {
-        console.warn('⚠️ StockConsistencyService enqueueRecentUpdated error:', e?.message || e);
-      });
-    }, 5 * 60 * 1000);
-
-    // Timer de encolar más viejos por last_sync_at (cada 10m)
-    this.scanOldestTimer = setInterval(() => {
-      this.enqueueOldestPending().catch((e) => {
-        console.warn('⚠️ StockConsistencyService enqueueOldestPending error:', e?.message || e);
-      });
-    }, 10 * 60 * 1000);
-
-    // Disparar un primer ciclo de procesamiento pronto (en 5s)
-    setTimeout(() => this.processQueue().catch(() => {}), 5000);
-
-    console.log('✅ StockConsistencyService: iniciado.');
-    return { running: true };
-  }
-
-  stop() {
-    if (!this.running) return { running: false };
-    try {
-      clearInterval(this.queueTimer);
-      clearInterval(this.scanRecentTimer);
-      clearInterval(this.scanOldestTimer);
-    } catch {}
-    this.queueTimer = null;
-    this.scanRecentTimer = null;
-    this.scanOldestTimer = null;
-    this.running = false;
-    console.log('🛑 StockConsistencyService detenido.');
-    return { running: false };
-  }
-
-  // Encola últimos N productos con updated_at recientes
-  async enqueueRecentUpdated(limit = 200) {
-    const conn = await this.getConn();
-    try {
-      const [rows] = await conn.execute(
-        `SELECT id, siigo_id, internal_code, product_name
-         FROM products
-         WHERE siigo_id IS NOT NULL
-           AND updated_at > DATE_SUB(NOW(), INTERVAL ? HOUR)
-         ORDER BY updated_at DESC
-         LIMIT ?`,
-        [this.RECENT_HOURS, limit]
-      );
-      rows.forEach((r) => {
-        if (r.siigo_id) this.enqueueBySiigoId(r.siigo_id);
-        else if (r.internal_code) this.enqueueByCode(r.internal_code);
-        else this.enqueueByProductId(r.id);
-      });
-      console.log(`🧾 Encolados recientes: ${rows.length}`);
-    } finally {
-      await conn.end();
-    }
-  }
-
-  // Encola más viejos por last_sync_at para convergencia global
-  async enqueueOldestPending(limit = 200) {
-    const conn = await this.getConn();
-    try {
-      const [rows] = await conn.execute(
-        `SELECT id, siigo_id, internal_code, product_name
-         FROM products
-         WHERE siigo_id IS NOT NULL
-         ORDER BY IFNULL(last_sync_at, '1970-01-01') ASC
-         LIMIT ?`,
-        [limit]
-      );
-      rows.forEach((r) => {
-        if (r.siigo_id) this.enqueueBySiigoId(r.siigo_id);
-        else if (r.internal_code) this.enqueueByCode(r.internal_code);
-        else this.enqueueByProductId(r.id);
-      });
-      console.log(`🧾 Encolados más viejos: ${rows.length}`);
-    } finally {
-      await conn.end();
-    }
-  }
+  // ... (omitted)
 
   async processQueue() {
     if (!this.running) return;
+    if (this.processing) {
+      console.log('⏳ processQueue ya está en ejecución, omitiendo ciclo.');
+      return;
+    }
+
     const size = this.queue.size;
     if (size === 0) return;
 
+    this.processing = true;
     const batch = Array.from(this.queue).slice(0, this.BATCH_SIZE);
     batch.forEach((k) => this.queue.delete(k)); // sacar del set
 
     console.log(`🔁 Reconciliando lote: ${batch.length}/${size} pendientes...`);
-    for (const k of batch) {
-      const item = JSON.parse(k);
-      try {
-        await this.reconcileOne(item);
-        // Delay adaptativo contra 429
-        const baseDelay = Math.min(Math.max(siigoService.rateLimitDelay || 1000, 800), 2500);
-        const jitter = Math.floor(Math.random() * 300);
-        await new Promise((r) => setTimeout(r, baseDelay + jitter));
-      } catch (e) {
-        // Si hubo 429 o error temporal, reencolar una vez
-        console.warn('⚠️ Reconcile error:', e?.message || e);
-        this.queue.add(k);
-        // Backoff adicional
-        await new Promise((r) => setTimeout(r, 1500));
+
+    let conn = null;
+    try {
+      conn = await this.getConn();
+      for (const k of batch) {
+        // Verificar si debemos detenernos a mitad de lote
+        if (!this.running) break;
+
+        const item = JSON.parse(k);
+        try {
+          await this.reconcileOne(item, conn);
+          // Delay adaptativo contra 429
+          const baseDelay = Math.min(Math.max(siigoService.rateLimitDelay || 2000, 1500), 5000);
+          const jitter = Math.floor(Math.random() * 500);
+          await new Promise((r) => setTimeout(r, baseDelay + jitter));
+        } catch (e) {
+          // Si hubo 429 o error temporal, reencolar una vez
+          console.warn('⚠️ Reconcile error:', e?.message || e);
+          this.queue.add(k);
+          // Backoff adicional
+          await new Promise((r) => setTimeout(r, 2000));
+        }
       }
+    } catch (err) {
+      console.error('❌ Error general en processQueue:', err);
+    } finally {
+      if (conn) conn.release();
+      this.processing = false;
     }
   }
 
-  async reconcileOne(item) {
-    const conn = await this.getConn();
+  async reconcileOne(item, conn) {
+    let shouldRelease = false;
+    if (!conn) {
+      // Si no se pasó conexión, obtenemos una y marcamos para liberar
+      // (aunque en el flujo principal vendrá de processQueue)
+      conn = await this.getConn();
+      shouldRelease = true;
+    }
+
     try {
       // Resolver producto local
       let row = null;
@@ -295,7 +209,7 @@ class StockConsistencyService {
         await conn.execute(`UPDATE products SET last_sync_at = NOW() WHERE id = ?`, [row.id]);
       }
     } finally {
-      try { await conn.end(); } catch {}
+      if (shouldRelease && conn) conn.release();
     }
   }
 }

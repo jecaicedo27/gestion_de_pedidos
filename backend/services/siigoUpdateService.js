@@ -1,6 +1,5 @@
 const siigoService = require('./siigoService');
 const { query } = require('../config/database');
-const stockConsistencyService = require('./stockConsistencyService');
 const stockSyncManager = require('./stockSyncManager');
 
 class SiigoUpdateService {
@@ -425,12 +424,41 @@ class SiigoUpdateService {
     await query('DELETE FROM order_items WHERE order_id = ?', [orderId]);
     
     // Insertar items actualizados
+    // Need access to costMap logic here, similar to siigoService
+    // Since we don't want to duplicate all that logic, we should probably delegate to siigoService or replicate the essential parts.
+    // For now, let's assume we fetch master products to map costs.
+    
+    const products = await query('SELECT internal_code, product_name, purchasing_price FROM products');
+    const costMap = new Map();
+    products.forEach(p => {
+        if (p.internal_code) costMap.set(p.internal_code, parseFloat(p.purchasing_price));
+    });
+
     const currentItems = siigoService.extractOrderItems(invoiceData);
+    
     for (const item of currentItems) {
+      // Cost Lookup Logic
+      let unitCost = 0;
+      if (item.product_code && costMap.has(item.product_code)) {
+          unitCost = costMap.get(item.product_code);
+      }
+      
+      const unitPrice = parseFloat(item.price || 0);
+      const quantity = parseFloat(item.quantity || 0);
+      const totalCost = unitCost * quantity;
+      const totalProfit = (unitPrice * quantity) - totalCost;
+      const profitPercent = unitPrice > 0 ? ((unitPrice - unitCost) / unitPrice) * 100 : 0;
+
       await query(`
-        INSERT INTO order_items (order_id, name, quantity, price, description, product_code, created_at) 
-        VALUES (?, ?, ?, ?, ?, ?, NOW())
-      `, [orderId, item.name, item.quantity, item.price, item.description, item.product_code]);
+        INSERT INTO order_items (
+            order_id, name, quantity, price, description, product_code, 
+            purchase_cost, profit_amount, profit_percent, created_at
+        ) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+      `, [
+          orderId, item.name, item.quantity, item.price, item.description, item.product_code,
+          unitCost, totalProfit, profitPercent
+      ]);
     }
     */
 
@@ -445,6 +473,7 @@ class SiigoUpdateService {
    */
   async enqueueProductsFromInvoice(invoiceData, immediate = false) {
     try {
+      const stockConsistencyService = require('./stockConsistencyService');
       // Iniciar servicio si no está corriendo
       await stockConsistencyService.start();
 

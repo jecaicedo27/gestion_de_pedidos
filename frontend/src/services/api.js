@@ -1294,4 +1294,32 @@ export const postventaService = {
   },
 };
 
+export const financialService = {
+  getEquityHistory: async (params = {}) => {
+    const response = await api.get('/financial/equity-history', { params });
+    return response.data;
+  },
+  getSiigoIncome: async (params = {}) => {
+    const response = await api.get('/financial/siigo-income', { params });
+    return response.data;
+  },
+  saveSnapshot: async (data) => {
+    const response = await api.post('/financial/snapshot', data);
+    return response.data;
+  }
+};
+
+// Servicios de métricas operativas
+export const metricsService = {
+  getDailyMetrics: async (params = {}) => {
+    const response = await api.get('/metrics', { params });
+    return response.data;
+  },
+
+  updateDailyMetric: async (data) => {
+    const response = await api.post('/metrics/update', data);
+    return response.data;
+  }
+};
+
 export default api;

@@ -43,6 +43,9 @@ import QRGeneratorPage from './pages/QRGeneratorPage';
 import MerchandiseReceptionPage from './pages/MerchandiseReceptionPage';
 import SupplierCodesPage from './pages/SupplierCodesPage';
 import ExecutiveDashboardPage from './pages/ExecutiveDashboardPage';
+import FinancialClosurePage from './pages/FinancialClosurePage';
+import ExpensesPage from './pages/ExpensesPage';
+import OperationalMetricsPage from './pages/OperationalMetricsPage';
 
 // Componentes de layout
 import Layout from './components/Layout';
@@ -61,6 +64,11 @@ const ProtectedRoute = ({ children, requiredRole }) => {
   }
 
   if (requiredRole && !hasPermission(requiredRole)) {
+    console.log('DEBUG: ProtectedRoute Redirecting to /dashboard', {
+      requiredRole,
+      userRole: useAuth().user?.role,
+      hasPermission: hasPermission(requiredRole)
+    });
     return <Navigate to="/dashboard" replace />;
   }
 
@@ -214,15 +222,7 @@ const AppRoutes = () => {
           }
         />
 
-        {/* Guías de Envío - admin y logística */}
-        <Route
-          path="shipping-guides"
-          element={
-            <ProtectedRoute requiredRole={['admin', 'logistica']}>
-              <ShippingGuidesPage />
-            </ProtectedRoute>
-          }
-        />
+
 
         {/* Crédito de Clientes - solo admin */}
         <Route
@@ -427,6 +427,36 @@ const AppRoutes = () => {
           element={
             <ProtectedRoute requiredRole="admin">
               <AutomationDashboardPage />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Cierre Financiero - admin y cartera */}
+        <Route
+          path="financial-closure"
+          element={
+            <ProtectedRoute requiredRole={['admin', 'cartera']}>
+              <FinancialClosurePage />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Control de Egresos - admin y cartera */}
+        <Route
+          path="expenses"
+          element={
+            <ProtectedRoute requiredRole={['admin', 'cartera']}>
+              <ExpensesPage />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Control Operativo - admin, facturador y cartera */}
+        <Route
+          path="operational-metrics"
+          element={
+            <ProtectedRoute requiredRole={['admin', 'facturador', 'cartera']}>
+              <OperationalMetricsPage />
             </ProtectedRoute>
           }
         />

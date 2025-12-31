@@ -10,6 +10,7 @@ import CategoryTrendChart from '../components/CategoryTrendChart';
 import CategoryProfitabilityChart from '../components/CategoryProfitabilityChart';
 import InventoryValueChart from '../components/InventoryValueChart';
 import InventoryTurnoverChart from '../components/InventoryTurnoverChart';
+import FinancialEquityCard from '../components/dashboard/FinancialEquityCard';
 
 const ExecutiveDashboardPage = () => {
     const [stats, setStats] = useState(null);
@@ -118,6 +119,26 @@ const ExecutiveDashboardPage = () => {
     if (loading) return <div className="p-8 text-center">Cargando tablero gerencial...</div>;
     if (!stats || !stats.kpis || !stats.targets) return <div className="p-8 text-center text-red-500">Error: Datos incompletos.</div>;
 
+    // Data Integrity Alert
+    const zeroCostAlert = stats.zero_cost_count > 0 ? (
+        <div className="mb-6 bg-red-50 border-l-4 border-red-500 p-4 rounded-md shadow-sm flex items-start">
+            <AlertCircle className="h-6 w-6 text-red-500 mr-3 flex-shrink-0 mt-0.5" />
+            <div>
+                <h3 className="text-red-800 font-bold text-lg">⚠️ Alerta de Integridad de Datos</h3>
+                <p className="text-red-700 mt-1">
+                    Se detectaron <strong>{stats.zero_cost_count} productos</strong> con costo $0 en este periodo.
+                    Esto infla artificialmente la rentabilidad.
+                </p>
+                <button
+                    className="mt-2 text-sm text-red-600 font-semibold hover:text-red-800 underline"
+                    onClick={() => alert('Por favor contacte a soporte para ejecutar el script de corrección de costos.')}
+                >
+                    Ver detalles (Contactar Soporte)
+                </button>
+            </div>
+        </div>
+    ) : null;
+
     const { kpis, targets, productMix = [], strategies = [] } = stats;
 
     // Helper para formato moneda
@@ -137,7 +158,9 @@ const ExecutiveDashboardPage = () => {
     const currentMonthName = getMonthName(selectedMonth).toUpperCase();
 
     return (
-        <div className="p-6 bg-gray-50 min-h-screen">
+        <div className="p-6 bg-gray-50 min-h-screen font-sans">
+            {zeroCostAlert}
+
             <div className="flex justify-between items-center mb-6">
                 <div>
                     <h1 className="text-2xl font-bold text-gray-800">Dashboard Ejecutivo</h1>
@@ -292,6 +315,10 @@ const ExecutiveDashboardPage = () => {
             <ProfitabilityTrendChart selectedMonth={selectedMonth} />
 
 
+            {/* 1.7. Patrimonio Financiero */}
+            <div className="mb-8">
+                <FinancialEquityCard />
+            </div>
 
             {/* 1.6. Inventario (Valor y Rotación) */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-8 mb-8">

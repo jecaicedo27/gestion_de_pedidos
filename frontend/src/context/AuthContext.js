@@ -31,7 +31,7 @@ const authReducer = (state, action) => {
         isLoading: true,
         error: null,
       };
-    
+
     case AUTH_ACTIONS.LOGIN_SUCCESS:
       return {
         ...state,
@@ -41,7 +41,7 @@ const authReducer = (state, action) => {
         isLoading: false,
         error: null,
       };
-    
+
     case AUTH_ACTIONS.LOGIN_FAILURE:
       return {
         ...state,
@@ -51,7 +51,7 @@ const authReducer = (state, action) => {
         isLoading: false,
         error: action.payload,
       };
-    
+
     case AUTH_ACTIONS.LOGOUT:
       return {
         ...state,
@@ -61,13 +61,13 @@ const authReducer = (state, action) => {
         isLoading: false,
         error: null,
       };
-    
+
     case AUTH_ACTIONS.SET_LOADING:
       return {
         ...state,
         isLoading: action.payload,
       };
-    
+
     case AUTH_ACTIONS.SET_USER:
       return {
         ...state,
@@ -75,13 +75,13 @@ const authReducer = (state, action) => {
         isAuthenticated: !!action.payload,
         isLoading: false,
       };
-    
+
     case AUTH_ACTIONS.CLEAR_ERROR:
       return {
         ...state,
         error: null,
       };
-    
+
     default:
       return state;
   }
@@ -114,10 +114,18 @@ export const AuthProvider = ({ children }) => {
         try {
           const response = await authService.verifyToken();
           if (response.success) {
+            // Use fresh user data from server if available, otherwise fallback to localStorage
+            const freshUser = response.user || JSON.parse(userData);
+
+            // Update localStorage with fresh data to keep it in sync
+            if (response.user) {
+              localStorage.setItem('user', JSON.stringify(freshUser));
+            }
+
             dispatch({
               type: AUTH_ACTIONS.LOGIN_SUCCESS,
-              payload: { 
-                user: JSON.parse(userData),
+              payload: {
+                user: freshUser,
                 token: token
               },
             });
@@ -148,19 +156,19 @@ export const AuthProvider = ({ children }) => {
       dispatch({ type: AUTH_ACTIONS.LOGIN_START });
 
       const response = await authService.login(credentials);
-      
+
       if (response.success) {
         const { user, token } = response.data;
-        
+
         // Guardar en localStorage
         localStorage.setItem('token', token);
         localStorage.setItem('user', JSON.stringify(user));
-        
+
         dispatch({
           type: AUTH_ACTIONS.LOGIN_SUCCESS,
           payload: { user, token },
         });
-        
+
         toast.success('Inicio de sesión exitoso');
         return { success: true };
       } else {
@@ -242,7 +250,16 @@ export const AuthProvider = ({ children }) => {
     const required = Array.isArray(requiredRole) ? requiredRole : [requiredRole];
     const requiredNormalized = required.map(r => String(r || '').toLowerCase());
 
-    return requiredNormalized.some(r => roleNames.includes(r));
+    const hasPerm = requiredNormalized.some(r => roleNames.includes(r));
+
+    // Only log failures to avoid spam
+    if (!hasPerm) {
+      console.log('DEBUG: hasPermission FAILED', {
+        userRoles: roleNames,
+        required: requiredNormalized
+      });
+    }
+    return hasPerm;
   };
 
   // Función para verificar si es admin
@@ -275,7 +292,7 @@ export const AuthProvider = ({ children }) => {
     isAuthenticated: state.isAuthenticated,
     isLoading: state.isLoading,
     error: state.error,
-    
+
     // Funciones
     login,
     logout,

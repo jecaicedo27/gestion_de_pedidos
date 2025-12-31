@@ -455,9 +455,9 @@ async function getAvgProcessingTime() {
   try {
     const query = `
       SELECT 
-        AVG(DATEDIFF(DATE(COALESCE(CONVERT_TZ(shipping_date,'UTC','America/Bogota'), CONVERT_TZ(shipping_date,'+00:00','-05:00'), DATE_ADD(shipping_date, INTERVAL -5 HOUR), shipping_date))), DATE(COALESCE(CONVERT_TZ(created_at,'UTC','America/Bogota'), CONVERT_TZ(created_at,'+00:00','-05:00'), DATE_ADD(created_at, INTERVAL -5 HOUR), created_at)))) as avg_processing_days,
-        MIN(DATEDIFF(DATE(COALESCE(CONVERT_TZ(shipping_date,'UTC','America/Bogota'), CONVERT_TZ(shipping_date,'+00:00','-05:00'), DATE_ADD(shipping_date, INTERVAL -5 HOUR), shipping_date))), DATE(COALESCE(CONVERT_TZ(created_at,'UTC','America/Bogota'), CONVERT_TZ(created_at,'+00:00','-05:00'), DATE_ADD(created_at, INTERVAL -5 HOUR), created_at)))) as min_processing_days,
-        MAX(DATEDIFF(DATE(COALESCE(CONVERT_TZ(shipping_date,'UTC','America/Bogota'), CONVERT_TZ(shipping_date,'+00:00','-05:00'), DATE_ADD(shipping_date, INTERVAL -5 HOUR), shipping_date))), DATE(COALESCE(CONVERT_TZ(created_at,'UTC','America/Bogota'), CONVERT_TZ(created_at,'+00:00','-05:00'), DATE_ADD(created_at, INTERVAL -5 HOUR), created_at)))) as max_processing_days
+        AVG(DATEDIFF(DATE(COALESCE(CONVERT_TZ(shipping_date,'UTC','America/Bogota'), CONVERT_TZ(shipping_date,'+00:00','-05:00'), DATE_ADD(shipping_date, INTERVAL -5 HOUR), shipping_date)), DATE(COALESCE(CONVERT_TZ(created_at,'UTC','America/Bogota'), CONVERT_TZ(created_at,'+00:00','-05:00'), DATE_ADD(created_at, INTERVAL -5 HOUR), created_at)))) as avg_processing_days,
+        MIN(DATEDIFF(DATE(COALESCE(CONVERT_TZ(shipping_date,'UTC','America/Bogota'), CONVERT_TZ(shipping_date,'+00:00','-05:00'), DATE_ADD(shipping_date, INTERVAL -5 HOUR), shipping_date)), DATE(COALESCE(CONVERT_TZ(created_at,'UTC','America/Bogota'), CONVERT_TZ(created_at,'+00:00','-05:00'), DATE_ADD(created_at, INTERVAL -5 HOUR), created_at)))) as min_processing_days,
+        MAX(DATEDIFF(DATE(COALESCE(CONVERT_TZ(shipping_date,'UTC','America/Bogota'), CONVERT_TZ(shipping_date,'+00:00','-05:00'), DATE_ADD(shipping_date, INTERVAL -5 HOUR), shipping_date)), DATE(COALESCE(CONVERT_TZ(created_at,'UTC','America/Bogota'), CONVERT_TZ(created_at,'+00:00','-05:00'), DATE_ADD(created_at, INTERVAL -5 HOUR), created_at)))) as max_processing_days
       FROM orders
       WHERE shipping_date IS NOT NULL 
         AND status IN ('enviado', 'entregado', 'entregado_cliente', 'entregado_transportadora')

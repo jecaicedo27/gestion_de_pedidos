@@ -27,12 +27,25 @@ const getExecutiveStats = async (req, res) => {
       prevEnd.setDate(0); // Último día del mes anterior
       endOfPrevMonth = prevEnd.toISOString().slice(0, 10) + ' 23:59:59';
     } else {
-      // Default: Mes Actual
+      // Default: Mes Actual (Bogota)
       const now = new Date();
-      startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
-      endOfMonth = new Date().toISOString().slice(0, 10) + ' 23:59:59';
-      startOfPrevMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString().slice(0, 10);
-      endOfPrevMonth = new Date(now.getFullYear(), now.getMonth(), 0).toISOString().slice(0, 10) + ' 23:59:59';
+      const bogotaNow = new Date(now.toLocaleString('en-US', { timeZone: 'America/Bogota' }));
+
+      const year = bogotaNow.getFullYear();
+      const month = bogotaNow.getMonth();
+
+      // Start of Month: YYYY-MM-01
+      startOfMonth = new Date(year, month, 1).toLocaleDateString('en-CA');
+
+      // End of Month: Now (Bogota)
+      endOfMonth = bogotaNow.toLocaleDateString('en-CA') + ' 23:59:59';
+
+      // Prev Month
+      const prevDate = new Date(year, month - 1, 1);
+      startOfPrevMonth = prevDate.toLocaleDateString('en-CA');
+
+      const prevEndDate = new Date(year, month, 0);
+      endOfPrevMonth = prevEndDate.toLocaleDateString('en-CA') + ' 23:59:59';
     }
 
     // 1. Ventas del Mes Actual (o Seleccionado) y Proyección
@@ -111,14 +124,29 @@ const getExecutiveStats = async (req, res) => {
             LEFT JOIN products p ON p.internal_code = oi.product_code
             WHERE o.created_at BETWEEN ? AND ?
             AND o.status NOT IN ('cancelado', 'anulado', 'gestion_especial')
+            AND o.payment_method != 'reposicion'
+            AND oi.product_code NOT IN ('FL01', 'PROPINA')
             GROUP BY category_group, product_name_normalized
             ORDER BY sales_value DESC
         `;
+
+    // 5. Alerta de Costos Cero (Data Integrity)
+    const zeroCostQuery = `
+        SELECT COUNT(DISTINCT oi.id) as zero_cost_count
+        FROM order_items oi
+        JOIN orders o ON o.id = oi.order_id
+        WHERE o.created_at BETWEEN ? AND ?
+        AND (oi.purchase_cost = 0 OR oi.purchase_cost IS NULL)
+        AND o.status NOT IN ('cancelado', 'anulado', 'gestion_especial')
+        AND o.payment_method != 'reposicion'
+        AND oi.product_code NOT IN ('FL01', 'PROPINA')
+    `;
 
     const [salesResult] = await query(salesQuery, [startOfMonth, endOfMonth]);
     const [velocityResult] = await query(velocityQuery, [startOfMonth, endOfMonth]);
     const [retentionResult] = await query(retentionQuery, [startOfPrevMonth, endOfPrevMonth, startOfMonth, endOfMonth, startOfPrevMonth, endOfPrevMonth]);
     const categoryResults = await query(categoryQuery, [startOfMonth, endOfMonth]);
+    const [zeroCostResult] = await query(zeroCostQuery, [startOfMonth, endOfMonth]);
 
     // Procesar resultados de categorías para agrupar productos
     const processedCategories = categoryResults.reduce((acc, curr) => {
@@ -273,10 +301,15 @@ const getAdvancedStats = async (req, res) => {
       startQueryDate = startDate;
       endQueryDate = endDate;
     } else {
-      // Default: últimos 30 días
+      // Default: últimos 30 días (Bogota)
       const now = new Date();
-      startQueryDate = new Date(now.setDate(now.getDate() - 30)).toISOString().slice(0, 10);
-      endQueryDate = new Date().toISOString().slice(0, 10) + ' 23:59:59';
+      const bogotaNow = new Date(now.toLocaleString('en-US', { timeZone: 'America/Bogota' }));
+
+      endQueryDate = bogotaNow.toLocaleDateString('en-CA') + ' 23:59:59';
+
+      const startObj = new Date(bogotaNow);
+      startObj.setDate(startObj.getDate() - 30);
+      startQueryDate = startObj.toLocaleDateString('en-CA');
     }
 
     console.log(`📅 Rango de Fechas: ${startQueryDate} - ${endQueryDate}`);
@@ -925,29 +958,33 @@ const getProfitabilityTrend = async (req, res) => {
             SELECT 
                 DATE_FORMAT(o.created_at, '${dateFormat}') as date_label,
                 SUM(oi.quantity * (oi.price * (1 - COALESCE(oi.discount_percent, 0) / 100))) as total_sales,
-                SUM(oi.profit_amount) as total_profit,
-                (SUM(oi.profit_amount) / SUM(oi.quantity * (oi.price * (1 - COALESCE(oi.discount_percent, 0) / 100)))) * 100 as margin_percent
+                SUM(oi.profit_amount) as total_profit
             FROM orders o
             JOIN order_items oi ON o.id = oi.order_id
             WHERE o.created_at BETWEEN ? AND ?
             AND o.status NOT IN ('cancelado', 'anulado', 'gestion_especial')
             AND o.deleted_at IS NULL
-            AND oi.price >= 100
+            AND oi.price >= 30
+            AND o.payment_method != 'reposicion'
             GROUP BY date_label
             ORDER BY date_label ASC
         `;
 
     const results = await query(queryStr, [startDate, endDate]);
 
-    // Fill gaps if necessary (optional - usually handled by frontend or simple line chart interpolation)
-    // For now, we return existing data points.
+    // Calculate margin percent in JavaScript to avoid SQL division issues
+    const formattedData = results.map(row => {
+      const sales = Number(row.total_sales) || 0;
+      const profit = Number(row.total_profit) || 0;
+      const margin = sales > 0 ? (profit / sales) * 100 : 0;
 
-    const formattedData = results.map(row => ({
-      date: row.date_label,
-      sales: Number(row.total_sales),
-      profit: Number(row.total_profit),
-      margin: Number(row.margin_percent).toFixed(1)
-    }));
+      return {
+        date: row.date_label,
+        sales,
+        profit,
+        margin: parseFloat(margin.toFixed(1))
+      };
+    });
 
     res.json({
       success: true,
@@ -1193,6 +1230,7 @@ const getCategoryProfitabilityTrend = async (req, res) => {
         LEFT JOIN products p ON p.internal_code = oi.product_code
         WHERE o.created_at BETWEEN ? AND ?
         AND o.status NOT IN ('cancelado', 'anulado', 'gestion_especial')
+        AND o.payment_method != 'reposicion'
         GROUP BY ${dateExpression}, category_group
         ORDER BY date ASC
     `;

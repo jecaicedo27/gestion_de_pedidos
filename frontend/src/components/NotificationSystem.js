@@ -169,123 +169,147 @@ const NotificationSystem = () => {
     const apiBase = process.env.REACT_APP_API_URL;
     const socketBase = (apiBase && /^https?:\/\//.test(apiBase)) ? apiBase : window.location.origin;
 
-    // Evitar múltiples conexiones
+    // Inicializar socket si no existe
     if (!socketRef.current) {
-      const socket = io(socketBase, { path: '/socket.io', transports: ['websocket', 'polling'], withCredentials: true });
-      socketRef.current = socket;
-
-      socket.on('connect', () => {
-        try {
-          socket.emit('join-orders-updates');
-        } catch (_) { }
+      socketRef.current = io(socketBase, {
+        path: '/socket.io',
+        transports: ['websocket', 'polling'],
+        withCredentials: true
       });
+    }
 
-      const shouldNotifyForStatus = (toStatus) => {
+    const socket = socketRef.current;
+
+    const handleConnect = () => {
+      try {
+        socket.emit('join-orders-updates');
+      } catch (_) { }
+    };
+
+    const handleStatusChanged = (payload) => {
+      try {
+        // Evitar duplicados con Empaque: si estás en /packaging y el estado es 'en_empaque' o 'pendiente_empaque', no notificar aquí.
+        const __toLow = String(payload?.to_status || '').toLowerCase();
+        if ((__toLow === 'en_empaque' || __toLow === 'pendiente_empaque') && typeof window !== 'undefined' && window.location.pathname.includes('/packaging')) {
+          return;
+        }
+        // Throttle global simple para evitar ráfagas de toasts en menos de 3s.
+        const __now = Date.now();
+        if (__now - statusToastTsRef.current < 3000) {
+          return;
+        }
+        statusToastTsRef.current = __now;
+
+        const { orderId, order_number, from_status, to_status, timestamp } = {
+          orderId: payload?.orderId,
+          order_number: payload?.order_number,
+          from_status: payload?.from_status,
+          to_status: payload?.to_status,
+          timestamp: payload?.timestamp || new Date().toISOString()
+        };
+
+        if (!orderId || !to_status) return;
+
+        // Deduplicación: si ya notificamos este (orderId -> to_status) en los últimos 10s, omitir
+        try {
+          const key = `${orderId}:${__toLow}`;
+          const nowTs = Date.now();
+          const lastTs = recentStatusRef.current.get(key);
+          if (lastTs && (nowTs - lastTs) < 10000) {
+            return;
+          }
+          recentStatusRef.current.set(key, nowTs);
+        } catch (_) { }
+
+        // Definir roles objetivo para cada estado
         const map = {
+          // De Siigo -> Facturación
           revision_cartera: ['cartera', 'facturador', 'admin'],
           pendiente_por_facturacion: ['facturador', 'admin'],
+
+          // De Facturación -> Logística
           en_logistica: ['logistica', 'admin'],
-          pendiente_empaque: ['logistica', 'admin'],
+          pendiente_empaque: ['logistica', 'admin'], // A veces usado como intermedio antes de empaque
           en_preparacion: ['logistica', 'admin'],
+
+          // De Logística -> Empaque
           en_empaque: ['empacador', 'empaque', 'admin', 'logistica'],
+
+          // De Empaque -> Logística (Listo para entrega)
           listo_para_entrega: ['logistica', 'admin'],
+
+          // De Logística -> Mensajería
           en_reparto: ['mensajero', 'admin'],
           enviado: ['mensajero', 'admin'],
-          entregado_transportadora: ['logistica', 'admin']
+
+          // Finalización
+          entregado_transportadora: ['logistica', 'admin'],
+          entregado_cliente: ['logistica', 'admin', 'cartera'],
+          entregado: ['logistica', 'admin']
         };
-        const targets = map[toStatus] || ['admin']; // por defecto solo admin
-        return targets.includes(user?.role);
-      };
 
-      const handleStatusChanged = (payload) => {
-        try {
-          // Evitar duplicados con Empaque: si estás en /packaging y el estado es 'en_empaque' o 'pendiente_empaque', no notificar aquí.
-          const __toLow = String(payload?.to_status || '').toLowerCase();
-          if ((__toLow === 'en_empaque' || __toLow === 'pendiente_empaque') && typeof window !== 'undefined' && window.location.pathname.includes('/packaging')) {
-            return;
-          }
-          // Throttle global simple para evitar ráfagas de toasts en menos de 3s.
-          const __now = Date.now();
-          if (__now - statusToastTsRef.current < 3000) {
-            return;
-          }
-          statusToastTsRef.current = __now;
-
-          const { orderId, order_number, from_status, to_status, timestamp } = {
-            orderId: payload?.orderId,
-            order_number: payload?.order_number,
-            from_status: payload?.from_status,
-            to_status: payload?.to_status,
-            timestamp: payload?.timestamp || new Date().toISOString()
-          };
-
-          if (!orderId || !to_status) return;
-
-          // Deduplicación: si ya notificamos este (orderId -> to_status) en los últimos 10s, omitir
-          try {
-            const key = `${orderId}:${__toLow}`;
-            const nowTs = Date.now();
-            const lastTs = recentStatusRef.current.get(key);
-            if (lastTs && (nowTs - lastTs) < 10000) {
-              return;
-            }
-            recentStatusRef.current.set(key, nowTs);
-          } catch (_) { }
-
-          // Filtrar por rol según estado destino
-          if (!shouldNotifyForStatus(to_status)) return;
-
-          // Crear notificación local
-          const notif = {
-            id: `status_${orderId}_${Date.now()}`,
-            type: 'status_change',
-            title: 'Cambio de Estado de Pedido',
-            message: `Pedido ${order_number || orderId}: ${from_status || '—'} → ${to_status}`,
-            timestamp,
-            read: false,
-            data: payload
-          };
-
-          setNotifications(prev => {
-            const updated = [notif, ...prev].slice(0, 20);
-            localStorage.setItem('siigo_notifications', JSON.stringify(updated));
-            return updated;
-          });
-          setUnreadCount(prev => prev + 1);
-
-          // Sonido fuerte e identificativo (timbre de alerta de nuevo pedido/estado, no de error)
-          if (audioFeedback?.isEnabled()) {
-            // patrón de alerta claro y agradable
-            audioFeedback.playStatusAlert();
-          }
-
-          // Notificación nativa del navegador (si está permitido)
-          if (Notification.permission === 'granted') {
-            new Notification('Cambio de Estado de Pedido', {
-              body: `Pedido ${order_number || orderId}: ${from_status || '—'} → ${to_status}`,
-              icon: '/favicon.ico'
-            });
-          }
-        } catch (e) {
-          console.warn('Error manejando order-status-changed:', e);
+        const targets = map[to_status] || ['admin'];
+        if (!targets.some(role => user?.role === role || (Array.isArray(user?.roles) && user.roles.some(r => r.role_name === role)))) {
+          return;
         }
-      };
 
-      socket.on('order-status-changed', handleStatusChanged);
+        // Crear notificación local
+        const notif = {
+          id: `status_${orderId}_${Date.now()}`,
+          type: 'status_change',
+          title: 'Cambio de Estado de Pedido',
+          message: `Pedido ${order_number || orderId}: ${from_status || '—'} → ${to_status}`,
+          timestamp,
+          read: false,
+          data: payload
+        };
 
-      socket.on('connect_error', (err) => {
-        console.error('Socket connection error (status alerts):', err?.message || err);
-      });
+        setNotifications(prev => {
+          // Evitar duplicados exactos en la lista visual
+          if (prev.some(n => n.id === notif.id)) return prev;
+          const updated = [notif, ...prev].slice(0, 20);
+          localStorage.setItem('siigo_notifications', JSON.stringify(updated));
+          return updated;
+        });
+        setUnreadCount(prev => prev + 1);
 
-      return () => {
-        try {
-          socket.off('order-status-changed');
-          socket.disconnect();
-        } catch (e) { }
-        socketRef.current = null;
-      };
-    }
-  }, [canReceiveStatusAlerts, user?.role]);
+        // Sonido
+        if (audioFeedback?.isEnabled()) {
+          audioFeedback.playStatusAlert();
+        }
+
+        // Notificación nativa
+        if (Notification.permission === 'granted') {
+          new Notification('Cambio de Estado de Pedido', {
+            body: `Pedido ${order_number || orderId}: ${from_status || '—'} → ${to_status}`,
+            icon: '/favicon.ico'
+          });
+        }
+      } catch (e) {
+        console.warn('Error manejando order-status-changed:', e);
+      }
+    };
+
+    const handleConnectError = (err) => {
+      console.error('Socket connection error (status alerts):', err?.message || err);
+    };
+
+    // Suscribir eventos
+    socket.on('connect', handleConnect);
+    socket.on('order-status-changed', handleStatusChanged);
+    socket.on('connect_error', handleConnectError);
+
+    // Cleanup: IMPORTANTE para evitar listeners duplicados
+    return () => {
+      socket.off('connect', handleConnect);
+      socket.off('order-status-changed', handleStatusChanged);
+      socket.off('connect_error', handleConnectError);
+      // No desconectamos el socket completamente aquí si queremos compartir la conexión, 
+      // pero si este es el único consumidor, podríamos hacer socket.disconnect().
+      // Dado que socketRef es persistente en el closure, mantenemos la conexión viva 
+      // pero limpiamos los listeners específicos de este efecto.
+    };
+  }, [canReceiveStatusAlerts, user]);
 
   // Polling global para ADMIN/LOGÍSTICA: detectar nuevos "listos para entregar"
   useEffect(() => {

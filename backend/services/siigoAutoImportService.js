@@ -16,13 +16,18 @@ class SiigoAutoImportService {
     }
 
     this.isRunning = true;
-    console.log('🚀 Iniciando sistema de importación automática SIIGO');
+    console.log('⏳ Iniciando sistema de importación automática SIIGO (esperando 3 min para estabilidad)...');
 
-    // Cargar facturas existentes para evitar duplicados
-    await this.loadExistingInvoices();
+    // Delay startup to allow server to stabilize and prioritize manual requests
+    setTimeout(async () => {
+      console.log('🚀 Ejecutando sistema de importación automática SIIGO ahora...');
 
-    // Iniciar ciclo de monitoreo
-    this.startMonitoringCycle();
+      // Cargar facturas existentes para evitar duplicados
+      await this.loadExistingInvoices();
+
+      // Iniciar ciclo de monitoreo
+      this.startMonitoringCycle();
+    }, 180000); // 3 minutes delay
   }
 
   async loadExistingInvoices() {

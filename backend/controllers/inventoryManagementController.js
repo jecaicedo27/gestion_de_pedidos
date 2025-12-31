@@ -122,10 +122,14 @@ const getInventoryKPIs = async (req, res) => {
             AND o.deleted_at IS NULL
         `;
 
-        // 4. Ratio de Costo Histórico (Mes Anterior)
+        // 4. Ratio de Costo Histórico (Mes Anterior Bogota)
         const now = new Date();
-        const firstDayPrevMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString().slice(0, 10);
-        const lastDayPrevMonth = new Date(now.getFullYear(), now.getMonth(), 0).toISOString().slice(0, 10) + ' 23:59:59';
+        const bogotaNow = new Date(now.toLocaleString('en-US', { timeZone: 'America/Bogota' }));
+        const year = bogotaNow.getFullYear();
+        const month = bogotaNow.getMonth();
+
+        const firstDayPrevMonth = new Date(year, month - 1, 1).toLocaleDateString('en-CA');
+        const lastDayPrevMonth = new Date(year, month, 0).toLocaleDateString('en-CA') + ' 23:59:59';
 
         const historicalCostQuery = `
             SELECT 
@@ -147,8 +151,8 @@ const getInventoryKPIs = async (req, res) => {
         const totalSales30Days = Number(velocityResult?.total_sales_30_days || 0);
         const dailySalesVelocity = totalSales30Days / 30;
 
-        // Proyección mes actual: Velocidad diaria * Días en el mes actual
-        const daysInCurrentMonth = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).getDate();
+        // Proyección mes actual: Velocidad diaria * Días en el mes actual (Bogota based)
+        const daysInCurrentMonth = new Date(year, month + 1, 0).getDate();
         const monthlySalesProjection = dailySalesVelocity * daysInCurrentMonth;
 
         // Costo real de mercancía desde BD (purchasing_price sin IVA)

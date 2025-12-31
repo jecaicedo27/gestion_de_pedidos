@@ -912,16 +912,63 @@ const OrdersPage = () => {
     }
   };
 
+  // --- Sync Progress Modal State ---
+  const [syncModal, setSyncModal] = useState({
+    isOpen: false,
+    orderId: null,
+    progress: 0,
+    message: 'Iniciando...',
+    status: 'processing' // processing, success, error
+  });
+
+  // Listen for sync progress events
+  useEffect(() => {
+    if (!socketRef.current) return;
+
+    const handleProgress = (data) => {
+      // Solo actualizar si el modal está abierto para este pedido
+      if (syncModal.isOpen && String(syncModal.orderId) === String(data.orderId)) {
+        setSyncModal(prev => ({
+          ...prev,
+          progress: data.progress,
+          message: data.message
+        }));
+
+        if (data.progress >= 100) {
+          // Success handling is done in the API response promise, 
+          // but we can set status here just in case events arrive first
+          setSyncModal(prev => ({ ...prev, status: 'success', message: '¡Completado!' }));
+        }
+      }
+    };
+
+    socketRef.current.on('sync-progress', handleProgress);
+    return () => {
+      socketRef.current.off('sync-progress', handleProgress);
+    };
+  }, [syncModal.isOpen, syncModal.orderId]);
+
+
   // Recargar un pedido desde SIIGO (estado de carga por pedido + animación)
   const handleReloadFromSiigo = async (orderId) => {
     const key = String(orderId);
+
+    // Open modal immediately
+    setSyncModal({
+      isOpen: true,
+      orderId: orderId,
+      progress: 5,
+      message: 'Conectando con el servidor...',
+      status: 'processing'
+    });
+
     setReloadingIds(prev => {
       const s = new Set(prev);
       s.add(key);
       return s;
     });
+
     try {
-      // Usar el nuevo endpoint de sincronización inteligente que preserva verificaciones
       const token = localStorage.getItem('token');
       const res = await fetch(`/api/orders/${orderId}/sync`, {
         method: 'POST',
@@ -932,13 +979,28 @@ const OrdersPage = () => {
       const data = await res.json();
 
       if (res.ok) {
+        setSyncModal(prev => ({ ...prev, progress: 100, status: 'success', message: '¡Sincronización exitosa!' }));
         toast.success('Sincronización inteligente completada');
-        await loadOrders();
+
+        // Brief delay before closing and reloading data
+        setTimeout(async () => {
+          setSyncModal(prev => ({ ...prev, isOpen: false }));
+          await loadOrders();
+        }, 1500);
+
       } else {
         throw new Error(data.message || 'Error al sincronizar');
       }
     } catch (error) {
       console.error('Error recargando desde SIIGO:', error);
+      setSyncModal(prev => ({ ...prev, status: 'error', message: error.message || 'Error al sincronizar' }));
+      // Keep modal open on error for a moment so user can see it, or close manually?
+      // Let's close it after 3 seconds or let user close it. 
+      // For now, auto-close after delay to not block flow is safer if we don't implement a close button.
+      setTimeout(() => {
+        setSyncModal(prev => ({ ...prev, isOpen: false }));
+      }, 4000);
+
       toast.error(error.message || 'Error recargando desde SIIGO');
     } finally {
       setReloadingIds(prev => {
@@ -1175,7 +1237,6 @@ const OrdersPage = () => {
           // Entra a logística -> obtener sólo ese pedido y agregarlo si el filtro lo permite
           if (to === 'en_logistica') {
             toast.success(`🆕 Pedido ${number} enviado a Logística`);
-            try { audioFeedback.playStatusAlert(); } catch { }
             if (logisticsStatusFilter === '' || logisticsStatusFilter === 'en_logistica') {
               fetchOrderById(id).then((orderObj) => { if (orderObj) upsertOrderInList(orderObj); });
             }
@@ -1191,7 +1252,6 @@ const OrdersPage = () => {
         // Fallback: refresco seguro cuando no estamos en vista logística o hay modal abierto
         if (to === 'en_logistica') {
           toast.success(`🆕 Pedido ${number} enviado a Logística`);
-          try { audioFeedback.playStatusAlert(); } catch { }
           safeRefresh();
           return;
         }
@@ -2000,116 +2060,119 @@ const OrdersPage = () => {
       )}
       {/* Filtros */}
       <div className={`card mb-4 ${(user?.role === 'mensajero' || (['logistica', 'admin'].includes(user?.role) && (searchParams.get('view') === 'mensajero'))) ? 'hidden sm:block' : ''}`}>
-        <div className="card-content p-4">
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+        <div className="card-content p-3 sm:p-4">
+          <div className="grid grid-cols-2 gap-2 sm:gap-3 md:grid-cols-3 lg:grid-cols-6">
             {/* Búsqueda */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
+              <label className="block text-xs sm:text-sm font-medium text-gray-700 mb-0.5 sm:mb-1">
                 Buscar
               </label>
               <IsolatedSearchInput
                 ref={searchInputRef}
                 onSearch={handleSearch}
                 initialValue={filters.search}
-                placeholder="Cliente, teléfono, código..."
+                placeholder="Cliente/Tel..."
+                className="w-full h-9 sm:h-10 text-xs sm:text-sm px-2 py-1 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
 
             {/* Estado */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
+              <label className="block text-xs sm:text-sm font-medium text-gray-700 mb-0.5 sm:mb-1">
                 Estado
               </label>
               <CustomDropdown
                 value={filters.status}
                 onChange={(value) => handleFilterChange('status', value)}
                 options={[
-                  { value: '', label: 'Todos los estados' },
-                  { value: 'pendiente_por_facturacion', label: 'Pendiente por Facturación' },
-                  { value: 'revision_cartera', label: 'Revisión por Cartera' },
+                  { value: '', label: 'Todos' },
+                  { value: 'pendiente_por_facturacion', label: 'Pend. Facturación' },
+                  { value: 'revision_cartera', label: 'Revisión Cartera' },
                   { value: 'en_logistica', label: 'En Logística' },
-                  { value: 'pendiente_empaque', label: 'Pendiente Empaque (grupo)' },
+                  { value: 'pendiente_empaque', label: 'Pend. Empaque' },
                   { value: 'en_empaque', label: 'En Empaque' },
                   { value: 'en_preparacion', label: 'En Preparación' },
                   { value: 'empacado', label: 'Empacado' },
-                  { value: 'listo_para_recoger', label: 'Listo para Recoger en Bodega' },
+                  { value: 'listo_para_recoger', label: 'Listo Recoger' },
                   { value: 'en_reparto', label: 'En Reparto' },
-                  { value: 'pendiente_entrega', label: 'Pendiente Entrega (grupo)' },
-                  { value: 'listo_para_entrega_pendientes', label: 'Listos para Entregar (pendientes)' },
-                  { value: 'entregados', label: 'Entregados (grupo)' },
-                  { value: 'entregado_transportadora', label: 'Entregado a Transportadora' },
-                  { value: 'entregado_cliente', label: 'Entregado a Cliente' },
-                  { value: 'entregado_bodega', label: 'Entregado en Bodega' },
-                  { value: 'gestion_especial', label: 'Gestión Especial' },
+                  { value: 'pendiente_entrega', label: 'Pend. Entrega' },
+                  { value: 'listo_para_entrega_pendientes', label: 'Listo Entregar' },
+                  { value: 'entregados', label: 'Entregados' },
+                  { value: 'entregado_transportadora', label: 'Entr. Transportadora' },
+                  { value: 'entregado_cliente', label: 'Entr. Cliente' },
+                  { value: 'entregado_bodega', label: 'Entr. Bodega' },
+                  { value: 'gestion_especial', label: 'Gestión Esp.' },
                   { value: 'cancelado', label: 'Cancelado' }
                 ]}
-                placeholder="Todos los estados"
+                placeholder="Estado"
+                className="w-full h-9 sm:h-10 text-xs sm:text-sm px-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
 
             {/* Forma de Pago */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Forma de Pago
+              <label className="block text-xs sm:text-sm font-medium text-gray-700 mb-0.5 sm:mb-1">
+                Pago
               </label>
               <CustomDropdown
                 value={filters.paymentMethod}
                 onChange={(value) => handleFilterChange('paymentMethod', value)}
                 options={[
-                  { value: '', label: 'Todas las formas de pago' },
+                  { value: '', label: 'Todos' },
                   { value: 'credito', label: 'Crédito' },
                   { value: 'efectivo', label: 'Efectivo' },
                   { value: 'mercadopago', label: 'Mercado Pago' },
-                  { value: 'pago_electronico', label: 'Pago Electrónico' },
+                  { value: 'pago_electronico', label: 'Pago Elec.' },
                   { value: 'transferencia', label: 'Transferencia' },
                   { value: 'contraentrega', label: 'Contraentrega' },
                   { value: 'publicidad', label: 'Publicidad' },
                   { value: 'reposicion', label: 'Reposición' }
                 ]}
-                placeholder="Todas las formas de pago"
+                placeholder="Pago"
+                className="w-full h-9 sm:h-10 text-xs sm:text-sm px-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
 
             {/* Etiquetas */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
+              <label className="block text-xs sm:text-sm font-medium text-gray-700 mb-0.5 sm:mb-1">
                 Etiquetas
               </label>
               <CustomDropdown
                 value={filters.tags}
                 onChange={(value) => handleFilterChange('tags', value)}
                 options={[
-                  { value: '', label: 'Todas las etiquetas' },
+                  { value: '', label: 'Todas' },
                   ...availableTags.map(tag => ({ value: tag, label: tag }))
                 ]}
-                placeholder="Todas las etiquetas"
-                className="w-full h-10 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="Etiquetas"
+                className="w-full h-9 sm:h-10 px-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-xs sm:text-sm"
               />
             </div>
 
             {/* Fecha desde */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
+              <label className="block text-xs sm:text-sm font-medium text-gray-700 mb-0.5 sm:mb-1">
                 Desde
               </label>
               <input
                 type="date"
                 value={filters.dateFrom}
                 onChange={(e) => handleFilterChange('dateFrom', e.target.value)}
-                className="w-full h-10 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full h-9 sm:h-10 px-2 py-1 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-xs sm:text-sm"
               />
             </div>
 
             {/* Fecha hasta */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
+              <label className="block text-xs sm:text-sm font-medium text-gray-700 mb-0.5 sm:mb-1">
                 Hasta
               </label>
               <input
                 type="date"
                 value={filters.dateTo}
                 onChange={(e) => handleFilterChange('dateTo', e.target.value)}
-                className="w-full h-10 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full h-9 sm:h-10 px-2 py-1 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-xs sm:text-sm"
               />
             </div>
           </div>
@@ -2261,145 +2324,194 @@ const OrdersPage = () => {
         </div>
       )}
 
-      {/* Lista de pedidos */}
-      {(user?.role === 'mensajero' || (['logistica', 'admin'].includes(user?.role) && (searchParams.get('view') === 'mensajero'))) && (
-        <div className="sm:hidden card mb-4">
-          <div className="space-y-3">
+      {/* VARIABLES DE VISIBILIDAD DE VISTAS */}
+      {/* Lista de pedidos MÓVIL (para Mensajero y Cartera) */}
+      {((user?.role === 'mensajero' || (['logistica', 'admin'].includes(user?.role) && searchParams.get('view') === 'mensajero')) || (searchParams.get('view') === 'cartera' || filters.status === 'revision_cartera')) && (
+        <div className="sm:hidden">
+          <div className="card mb-4">
+            <div className="space-y-3">
+              {orders.map((order) => (
+                <div key={order.id} className="bg-white rounded-lg border border-gray-200 shadow-sm relative overflow-hidden">
+                  {/* Barra lateral de color según estado */}
+                  <div className={`absolute left-0 top-0 bottom-0 w-1 ${getStatusColor(order.status).replace('bg-', 'bg-').replace('text-', 'bg-').split(' ')[0]}`}></div>
 
-            {orders.map((order) => (
-              <div key={order.id} className="bg-white rounded-lg border border-gray-200 shadow-sm">
-                <div className="p-3">
-                  <div className="flex items-start gap-2">
-                    {/* Col 1: Código, Nombre, Estado, Valor */}
-                    <div className="flex-1 min-w-0">
-                      <div className="text-[12px] text-gray-500">Pedido</div>
-                      <div className="text-[13px] font-semibold text-gray-900">{order.order_number}</div>
-                      {/* Tags display (mobile) */}
-                      {(() => {
-                        let tags = [];
-                        try {
-                          if (typeof order.tags === 'string' && order.tags.trim()) {
-                            tags = JSON.parse(order.tags);
-                          } else if (Array.isArray(order.tags)) {
-                            tags = order.tags;
-                          }
-                        } catch (e) {
-                          // Ignore parse errors
-                        }
-                        if (Array.isArray(tags) && tags.length > 0) {
-                          return (
-                            <div className="flex flex-wrap gap-1 mt-1">
-                              {tags.map((tag, idx) => (
-                                <span
-                                  key={idx}
-                                  className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-100 text-blue-800"
-                                >
-                                  {tag}
+                  <div className="p-3 pl-4">
+                    <div className="flex items-start justify-between gap-2">
+
+                      {/* Col 1: Información Principal */}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-[13px] font-bold text-gray-900">#{order.order_number}</span>
+                          <span className="text-[11px] text-gray-500">{formatDateShort(order.created_at)}</span>
+                        </div>
+
+                        {/* Cliente */}
+                        <div className="text-[13px] text-gray-800 font-medium truncate">
+                          {order.customer_name || order.client_name}
+                        </div>
+                        <div className="text-[11px] text-gray-500 truncate mb-2">
+                          {order.city || order.customer_city || getOrderCity(order)}
+                        </div>
+
+                        {/* ESTADO + MONTO */}
+                        <div className="flex flex-wrap items-center gap-2 mb-2">
+                          <span className={`px-2 py-0.5 inline-flex text-[10px] uppercase font-bold rounded-full ${getStatusColor(order.status, order)}`}>
+                            {getStatusLabel(order.status, order)}
+                          </span>
+                          <span className="text-[13px] font-bold text-gray-900">
+                            {formatCurrencyCOP(getOrderAmount(order))}
+                          </span>
+                        </div>
+
+                        {/* CARTERA: FORMA DE PAGO DESTACADA */}
+                        {((searchParams.get('view') === 'cartera' || filters.status === 'revision_cartera')) && (
+                          <div className="mt-2 bg-blue-50 p-2 rounded border border-blue-100">
+                            <div className="flex flex-col gap-1">
+                              <div className="flex justify-between items-center">
+                                <span className="text-[11px] font-semibold text-blue-800 uppercase tracking-wide">Forma de Pago</span>
+                                {/* Badges de estado de pago */}
+                                <div className="flex gap-1">
+                                  {(() => {
+                                    const { productDue } = computeCollectionAmounts(order);
+                                    if (isCreditOrder(order)) return <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-purple-100 text-purple-700">CRÉDITO</span>;
+                                    if (productDue <= 0 || hasOrderPayment(order)) return <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-green-100 text-green-700">PAGADO</span>;
+                                    return <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-700">PENDIENTE</span>;
+                                  })()}
+                                </div>
+                              </div>
+                              <div className="text-[13px] font-bold text-gray-800">
+                                {getPaymentMethodLabel(order.payment_method)}
+                              </div>
+                              {/* Detalle Pago Electrónico si existe */}
+                              {order.electronic_payment_type && (
+                                <div className="text-[11px] text-gray-600">
+                                  Tipo: {order.electronic_payment_type}
+                                </div>
+                              )}
+                              {/* Detalle Flete */}
+                              <div className="mt-1 pt-1 border-t border-blue-200 flex justify-between items-center">
+                                <span className="text-[11px] text-gray-600">Envío:</span>
+                                <span className={`text-[10px] font-bold ${hasShippingFeePaid(order) ? 'text-green-600' : 'text-orange-600'}`}>
+                                  {hasShippingFeePaid(order) ? 'FLETE PAGADO' : 'COBRAR FLETE'}
                                 </span>
-                              ))}
+                              </div>
                             </div>
-                          );
-                        }
-                        return null;
-                      })()}
-                      <div className="text-[12px] text-gray-600 mt-1 truncate flex items-center gap-1.5">
-                        {order.customer_name || order.client_name}
+                          </div>
+                        )}
+
+                        {/* Tags display (mobile) */}
                         {(() => {
-                          if (order.sale_channel) {
-                            console.log('🔍 DEBUG: Order has sale_channel:', order.order_number, order.sale_channel);
+                          let tags = [];
+                          try {
+                            if (typeof order.tags === 'string' && order.tags.trim()) {
+                              tags = JSON.parse(order.tags);
+                            } else if (Array.isArray(order.tags)) {
+                              tags = order.tags;
+                            }
+                          } catch (e) { }
+                          if (Array.isArray(tags) && tags.length > 0) {
+                            return (
+                              <div className="flex flex-wrap gap-1 mt-2">
+                                {tags.map((tag, idx) => (
+                                  <span key={idx} className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-gray-100 text-gray-600 border border-gray-200">
+                                    {tag}
+                                  </span>
+                                ))}
+                              </div>
+                            );
                           }
-                          return order.sale_channel && (
-                            <span className="inline-flex items-center px-2 py-1 rounded text-xs font-bold bg-red-500 text-white border-2 border-red-700 shrink-0">
-                              {order.sale_channel === 'pos' ? '🏪 POS' : `📦 ${order.sale_channel}`}
-                            </span>
-                          );
+                          return null;
                         })()}
                       </div>
-                      <div className="mt-1 flex items-center gap-2">
-                        <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${getStatusColor(order.status, order)}`}>
-                          {getStatusLabel(order.status, order)}
-                        </span>
-                        <span className="text-[13px] font-semibold text-gray-900">{formatCurrencyCOP(getOrderAmount(order))}</span>
+
+                      {/* Col 2: Acciones (Vertical) */}
+                      <div className="flex flex-col gap-2 pl-2 border-l border-gray-100 ml-1">
+                        <button type="button" onClick={() => navigate(`/orders/${order.id}`)} className="p-2 text-blue-600 bg-blue-50 rounded-full active:bg-blue-100">
+                          <Icons.Eye className="w-5 h-5" />
+                        </button>
+                        <button type="button" onClick={() => setTimelineModal({ isOpen: true, order })} className="p-2 text-gray-600 bg-gray-50 rounded-full active:bg-gray-100">
+                          <Icons.History className="w-5 h-5" />
+                        </button>
+
+                        {/* Cartera Actions (Matches Desktop) */}
+                        {(['admin', 'cartera'].includes(user?.role) && (order.status === 'revision_cartera' || (order.status === 'listo_para_entrega' && (order.requires_payment || String(order.payment_method || '').toLowerCase().includes('transferencia'))))) && (
+                          order.sale_channel === 'pos' ? (
+                            <button
+                              onClick={() => setPosModal({ isOpen: true, order })}
+                              className="p-2 text-blue-600 bg-blue-50 rounded-full active:bg-blue-100"
+                              title="Validar Venta POS"
+                            >
+                              <Icons.Store className="w-5 h-5" />
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => setWalletModal({ isOpen: true, order })}
+                              className="p-2 text-green-600 bg-green-50 rounded-full active:bg-green-100"
+                              title="Validar pago"
+                            >
+                              <Icons.CreditCard className="w-5 h-5" />
+                            </button>
+                          )
+                        )}
+
+                        {/* Upload Evidence (Matches Desktop) */}
+                        {(['admin', 'cartera', 'logistica'].includes(user?.role) && (order.is_pending_payment_evidence === true || order.is_pending_payment_evidence === 1)) && (
+                          <button
+                            onClick={() => setUploadEvidenceModal({ open: true, order, file: null })}
+                            className="p-2 text-blue-600 bg-blue-50 rounded-full active:bg-blue-100"
+                            title="Subir comprobante"
+                          >
+                            <Icons.Upload className="w-5 h-5" />
+                          </button>
+                        )}
+                        {/* Acciones específicas de mensajero */}
+                        {((user?.role === 'mensajero' || (['logistica', 'admin'].includes(user?.role) && searchParams.get('view') === 'mensajero'))) && order.assigned_messenger_id === user.id && (
+                          <>
+                            {order.messenger_status === 'assigned' && !['entregado', 'entregado_cliente'].includes(order.status) && (
+                              <button type="button" onClick={() => handleAcceptOrder(order.id)} className="p-2 text-green-600 bg-green-50 rounded-full">
+                                <Icons.Check className="w-5 h-5" />
+                              </button>
+                            )}
+                            {order.messenger_status === 'accepted' && (
+                              <button type="button" onClick={() => setDeliveryConfirmationModal({ isOpen: true, order })} className="p-2 text-blue-600 bg-blue-50 rounded-full">
+                                <Icons.Play className="w-5 h-5" />
+                              </button>
+                            )}
+                            {order.messenger_status === 'in_delivery' && (
+                              <button type="button" onClick={() => setDeliveryModal({ isOpen: true, order })} className="p-2 text-purple-600 bg-purple-50 rounded-full">
+                                <Icons.Package className="w-5 h-5" />
+                              </button>
+                            )}
+                          </>
+                        )}
                       </div>
                     </div>
-                    {/* Col 3: Acciones */}
-                    <div className="w-12 shrink-0 flex flex-col items-center justify-start gap-3 pt-1">
-                      <button type="button" onClick={() => navigate(`/orders/${order.id}`)} title="Ver" className="text-blue-600 p-2 rounded-full active:scale-95">
-                        <Icons.Eye className="w-5 h-5" style={{ width: '22px', height: '22px' }} />
-                      </button>
-                      <button type="button" onClick={() => setTimelineModal({ isOpen: true, order })} title="Línea de tiempo" className="text-gray-700 p-2 rounded-full active:scale-95">
-                        <Icons.History className="w-5 h-5" style={{ width: '22px', height: '22px' }} />
-                      </button>
-                      {user?.role === 'mensajero' && order.assigned_messenger_id === user.id && order.messenger_status === 'assigned' && !['entregado', 'entregado_cliente', 'entregado_transportadora', 'entregado_bodega'].includes(order.status) && (
-                        <>
-                          <button type="button" onClick={() => handleAcceptOrder(order.id)} title="Aceptar" className="text-green-600 p-2 rounded-full active:scale-95">
-                            <Icons.Check className="w-5 h-5" style={{ width: '22px', height: '22px' }} />
-                          </button>
-                          <button type="button" onClick={() => handleRejectOrder(order.id)} title="Rechazar" className="text-red-600 p-2 rounded-full active:scale-95">
-                            <Icons.X className="w-5 h-5" style={{ width: '22px', height: '22px' }} />
-                          </button>
-                        </>
-                      )}
-                      {user?.role === 'mensajero' && order.assigned_messenger_id === user.id && order.messenger_status === 'accepted' && (
-                        <button type="button" onClick={() => setDeliveryConfirmationModal({ isOpen: true, order })} title="Iniciar entrega" className="text-blue-600 p-2 rounded-full active:scale-95">
-                          <Icons.Play className="w-5 h-5" style={{ width: '22px', height: '22px' }} />
-                        </button>
-                      )}
-                      {user?.role === 'mensajero' && order.assigned_messenger_id === user.id && order.messenger_status === 'in_delivery' && (
-                        <>
-                          <button type="button" onClick={() => setDeliveryModal({ isOpen: true, order })} title="Completar entrega" className="text-purple-600 p-2 rounded-full active:scale-95">
-                            <Icons.Package className="w-5 h-5" style={{ width: '22px', height: '22px' }} />
-                          </button>
-                          <button type="button" onClick={() => handleMarkDeliveryFailed(order.id)} title="Entrega fallida" className="text-orange-600 p-2 rounded-full active:scale-95">
-                            <Icons.AlertTriangle className="w-5 h-5" style={{ width: '22px', height: '22px' }} />
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                  {/* Motivo de Gestión Especial (móvil) */}
-                  {order.status === 'gestion_especial' && getSpecialReason(order) && (
-                    <div className="mt-2 text-[12px] text-gray-700 bg-red-50 border border-red-200 rounded p-2 flex items-start gap-2">
-                      <Icons.Flag className="w-4 h-4 text-red-500 mt-0.5" />
-                      <p className="leading-snug whitespace-pre-line">
-                        <span className="font-medium">Motivo: </span>{getSpecialReason(order)}
-                      </p>
-                    </div>
-                  )}
-                  {/* Observaciones del pedido */}
-                  {getOrderNotes(order) && (
-                    <div className="mt-2 text-[12px] text-gray-700 bg-gray-50 border border-gray-200 rounded p-2 flex items-start gap-2">
-                      <Icons.MessageSquare className="w-4 h-4 text-gray-500 mt-0.5" />
-                      <p className="leading-snug whitespace-pre-line">{getOrderNotes(order)}</p>
-                    </div>
-                  )}
-                  {/* Col 2: Dirección / Ciudad / Ver ubicación */}
-                  {/* Col 2: Dirección / Ciudad / Ver ubicación */}
-                  <div className="mt-2 text-[12px] text-gray-700 leading-snug truncate">{getOrderAddress(order)}</div>
-                  <div className="text-[11px] text-gray-500 mt-0.5 flex items-center justify-between">
-                    <span className="truncate">{getOrderCity(order)}</span>
-                    {getMapsUrl(order) && (
-                      <a href={getMapsUrl(order)} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-blue-600 font-medium">
-                        <Icons.MapPin className="w-4 h-4" />
-                        <span>Ver ubicación</span>
-                      </a>
+
+                    {/* Footer: Dirección (solo si no es Cartera o si se desea mostrar) */}
+                    {!((searchParams.get('view') === 'cartera' || filters.status === 'revision_cartera')) && (
+                      <div className="mt-2 text-[11px] text-gray-500 border-t border-gray-100 pt-2 truncate">
+                        <Icons.MapPin className="w-3 h-3 inline mr-1" />
+                        {getOrderAddress(order)}
+                      </div>
                     )}
+
                   </div>
                 </div>
-              </div>
-            ))}
-            {orders.length === 0 && (
-              <div className="p-6 text-center text-gray-500">No hay pedidos asignados</div>
-            )}
+              ))}
+              {orders.length === 0 && (
+                <div className="p-8 text-center bg-gray-50 rounded-lg border border-dashed border-gray-300">
+                  <Icons.Inbox className="w-8 h-8 text-gray-400 mx-auto mb-2" />
+                  <p className="text-gray-500 text-sm">No se encontraron pedidos.</p>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}
 
-
-
-      {/* Vista de tabla (desktop/tablet) */}
-      {/* Mantener solo la tabla principal de pedidos */}
-      <div className={`card ${(user?.role === 'mensajero' || (['logistica', 'admin'].includes(user?.role) && (searchParams.get('view') === 'mensajero'))) ? 'hidden sm:block' : ''}`}>
+      {/* Vista de tabla (desktop/tablet) - Oculta en móvil si showMobileCards es true */}
+      <div className={`card ${((user?.role === 'mensajero' || (['logistica', 'admin'].includes(user?.role) && searchParams.get('view') === 'mensajero')) || (searchParams.get('view') === 'cartera' || filters.status === 'revision_cartera')) ? 'hidden sm:block' : ''}`}>
+        {/* ... contenido tabla existente ... */}
         <div className="card-content p-0">
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200">
@@ -3101,7 +3213,90 @@ const OrdersPage = () => {
             </h2>
           </div>
           <div className="card-content p-0">
-            <div className="overflow-x-auto">
+            {/* VISTA MÓVIL: LISTA DE TARJETAS */}
+            <div className="sm:hidden">
+              <div className="space-y-3 p-3 bg-gray-50">
+                {siigoPending.map((row) => (
+                  <div key={row.id || row.order_id} className="bg-white rounded-lg border border-gray-200 shadow-sm p-3">
+                    {/* Header: Pedido y Cliente */}
+                    <div className="flex justify-between items-start mb-2">
+                      <div>
+                        <span className="text-sm font-bold text-gray-900 block">#{row.order_number}</span>
+                        <span className="text-xs text-gray-500 block">{row.siigo_invoice_created_at ? new Date(row.siigo_invoice_created_at).toLocaleDateString('es-CO') : '-'}</span>
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => setTimelineModal({ isOpen: true, order: row })}
+                          className="p-1.5 text-gray-600 bg-gray-100 rounded-full"
+                          title="Ver Historial"
+                        >
+                          <Icons.History className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => handleMarkSiigoClosed(row.id || row.order_id)}
+                          className="p-1.5 text-white bg-green-600 rounded-full"
+                          title="Marcar Cerrado en Siigo"
+                        >
+                          <Icons.Check className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Cliente */}
+                    <div className="mb-2">
+                      <div className="text-xs font-semibold text-gray-700 uppercase tracking-wide">Cliente</div>
+                      <div className="text-sm text-gray-900">{row.customer_name}</div>
+                    </div>
+
+                    {/* Estado y Etiquetas */}
+                    <div className="flex flex-wrap gap-2 mb-2">
+                      <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-purple-100 text-purple-800 uppercase">
+                        {row.status}
+                      </span>
+                      {(row.is_service === 1 || row.is_service === true) && (
+                        <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-blue-100 text-blue-800 uppercase">
+                          Servicio
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Info Grid: Forma de Pago, Factura, Entrega */}
+                    <div className="grid grid-cols-2 gap-2 text-xs border-t border-gray-100 pt-2 mt-2">
+                      <div>
+                        <span className="text-gray-500 block mb-0.5">Forma de Pago</span>
+                        <span className="font-medium text-gray-800 block">{(row.payment_method || '-').toString().toUpperCase()}</span>
+                        {String(row.payment_method || '').toUpperCase() === 'PAGO_ELECTRONICO' && row.electronic_payment_type && (
+                          <span className="text-[10px] text-gray-500 block">{row.electronic_payment_type}</span>
+                        )}
+                      </div>
+                      <div>
+                        <span className="text-gray-500 block mb-0.5">Factura</span>
+                        <span className="font-medium text-gray-800">{row.siigo_invoice_number || '-'}</span>
+                      </div>
+                      <div className="col-span-2">
+                        <span className="text-gray-500 block mb-0.5">Entrega</span>
+                        <span className="font-medium text-gray-800">
+                          {(() => {
+                            const dm = String(row?.delivery_method || '').toLowerCase();
+                            return row?.delivery_channel ||
+                              (row?.carrier_name
+                                ? row.carrier_name
+                                : row?.messenger_name
+                                  ? `Mensajero: ${row.messenger_name}`
+                                  : (dm === 'recoge_bodega' || dm === 'recogida_tienda')
+                                    ? 'Bodega'
+                                    : '-');
+                          })()}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* VISTA TABLET/DESKTOP: TABLA CLASSICA */}
+            <div className="hidden sm:block overflow-x-auto">
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
                   <tr>
@@ -3206,369 +3401,448 @@ const OrdersPage = () => {
             </div>
           </div>
         </div>
-      )}
+      )
+      }
 
       {/* Pedidos de Reposición (vista Cartera y Facturación) */}
-      {(searchParams.get('view') === 'cartera' || searchParams.get('view') === 'facturacion') && (
-        <div className="card mt-6">
-          <div className="card-header">
-            <h2 className="text-lg font-semibold text-gray-900 flex items-center">
-              <Icons.Package className="w-5 h-5 mr-2 text-orange-600" />
-              Pedidos de Reposición
-              <span className="ml-2 px-2 py-1 text-xs font-medium bg-gray-100 text-gray-800 rounded-full">
-                {reposicionOrders.length}
-              </span>
-            </h2>
-          </div>
-          <div className="card-content p-0">
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="px-2 py-1 text-left text-xs font-medium text-gray-500 uppercase">Pedido</th>
-                    <th className="px-2 py-1 text-left text-xs font-medium text-gray-500 uppercase">Cliente</th>
-                    <th className="px-2 py-1 text-left text-xs font-medium text-gray-500 uppercase hidden lg:table-cell">Estado</th>
-                    <th className="px-2 py-1 text-left text-xs font-medium text-gray-500 uppercase hidden lg:table-cell">Entrega</th>
-                    <th className="px-2 py-1 text-left text-xs font-medium text-gray-500 uppercase hidden lg:table-cell">Factura</th>
-                    <th className="px-2 py-1 text-left text-xs font-medium text-gray-500 uppercase hidden lg:table-cell">Fecha Factura</th>
-                    <th className="px-2 py-1 text-left text-xs font-medium text-gray-500 uppercase hidden lg:table-cell">Monto</th>
-                    <th className="px-2 py-1 text-right text-xs font-medium text-gray-500 uppercase">Acciones</th>
-                  </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
-                  {reposicionOrders.map((row) => (
-                    <tr key={row.id || row.order_id} className="hover:bg-gray-50">
-                      <td className="px-2 py-1">
-                        <div className="text-sm font-medium text-gray-900">{row.order_number}</div>
-                      </td>
-                      <td className="px-2 py-1">
-                        <div className="text-xs sm:text-sm text-gray-900 whitespace-normal break-words">{row.customer_name}</div>
-                      </td>
-                      <td className="px-2 py-1 hidden lg:table-cell">
-                        <div className="flex flex-col items-start gap-1">
-                          <span className="px-2 py-1 text-xs font-semibold rounded-full bg-orange-100 text-orange-800">
+      {
+        (searchParams.get('view') === 'cartera' || searchParams.get('view') === 'facturacion') && (
+          <div className="card mt-6">
+            <div className="card-header">
+              <h2 className="text-lg font-semibold text-gray-900 flex items-center">
+                <Icons.Package className="w-5 h-5 mr-2 text-orange-600" />
+                Pedidos de Reposición
+                <span className="ml-2 px-2 py-1 text-xs font-medium bg-gray-100 text-gray-800 rounded-full">
+                  {reposicionOrders.length}
+                </span>
+              </h2>
+            </div>
+            <div className="card-content p-0">
+              {/* VISTA MÓVIL: LISTA DE TARJETAS */}
+              <div className="sm:hidden">
+                <div className="space-y-3 p-3 bg-gray-50">
+                  {reposicionOrders.length === 0 ? (
+                    <div className="px-2 py-6 text-center text-sm text-gray-500">
+                      No hay pedidos de reposición.
+                    </div>
+                  ) : (
+                    reposicionOrders.map((row) => (
+                      <div key={row.id || row.order_id} className="bg-white rounded-lg border border-gray-200 shadow-sm p-3">
+                        {/* Header: Pedido y Monto */}
+                        <div className="flex justify-between items-start mb-2">
+                          <div>
+                            <span className="text-sm font-bold text-gray-900 block">#{row.order_number}</span>
+                            <span className="text-xs font-bold text-gray-900 block mt-0.5">${Number(row.total_amount || 0).toLocaleString('es-CO')}</span>
+                          </div>
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => setTimelineModal({ isOpen: true, order: row })}
+                              className="p-1.5 text-blue-600 bg-blue-50 rounded-full"
+                              title="Ver Historial"
+                            >
+                              <Icons.History className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => handleOpenRepositionModal(row)}
+                              className="p-1.5 text-green-600 bg-green-50 rounded-full"
+                              title="Gestionar Reposición"
+                            >
+                              <Icons.CheckCircle className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Cliente */}
+                        <div className="mb-2">
+                          <div className="text-xs font-semibold text-gray-700 uppercase tracking-wide">Cliente</div>
+                          <div className="text-sm text-gray-900">{row.customer_name}</div>
+                        </div>
+
+                        {/* Estado y Etiquetas */}
+                        <div className="flex flex-wrap gap-2 mb-2">
+                          <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-orange-100 text-orange-800 uppercase">
                             {row.status}
                           </span>
                           {(row.is_service === 1 || row.is_service === true) && (
-                            <span className="px-2 py-1 text-xs font-semibold rounded-full bg-blue-100 text-blue-800">
+                            <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-blue-100 text-blue-800 uppercase">
                               Servicio
                             </span>
                           )}
                         </div>
-                      </td>
-                      <td className="px-2 py-1 hidden lg:table-cell">
-                        <span className="text-xs sm:text-sm text-gray-900">
-                          {row.delivery_channel || '-'}
-                        </span>
-                      </td>
-                      <td className="px-2 py-1 hidden lg:table-cell">
-                        <div className="text-xs sm:text-sm text-gray-900">
-                          {row.siigo_invoice_number || '-'}
+
+                        {/* Info Grid: Entrega, Factura, Fecha */}
+                        <div className="grid grid-cols-2 gap-2 text-xs border-t border-gray-100 pt-2 mt-2">
+                          <div>
+                            <span className="text-gray-500 block mb-0.5">Entrega</span>
+                            <span className="font-medium text-gray-800">{row.delivery_channel || '-'}</span>
+                          </div>
+                          <div>
+                            <span className="text-gray-500 block mb-0.5">Factura</span>
+                            <div className="font-medium text-gray-800">{row.siigo_invoice_number || '-'}</div>
+                            <div className="text-[10px] text-gray-500 mt-0.5">
+                              {row.siigo_invoice_created_at ? new Date(row.siigo_invoice_created_at).toLocaleDateString('es-CO') : '-'}
+                            </div>
+                          </div>
                         </div>
-                      </td>
-                      <td className="px-2 py-1 hidden lg:table-cell">
-                        <div className="text-xs text-gray-500">
-                          {row.siigo_invoice_created_at ? new Date(row.siigo_invoice_created_at).toLocaleDateString('es-CO') : '-'}
-                        </div>
-                      </td>
-                      <td className="px-2 py-1 hidden lg:table-cell">
-                        <div className="text-xs sm:text-sm font-medium text-gray-900">
-                          ${Number(row.total_amount || 0).toLocaleString('es-CO')}
-                        </div>
-                      </td>
-                      <td className="px-2 py-1 text-right">
-                        <button
-                          onClick={() => setTimelineModal({ isOpen: true, order: row })}
-                          className="mr-2 px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded inline-flex items-center"
-                          title="Ver Historial"
-                        >
-                          <Icons.History className="w-3 h-3" />
-                        </button>
-                        <button
-                          onClick={() => handleOpenRepositionModal(row)}
-                          className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white text-xs rounded inline-flex items-center"
-                          title="Gestionar Reposición"
-                        >
-                          <Icons.CheckCircle className="w-3 h-3" />
-                          <span className="ml-1 hidden sm:inline">Gestionar</span>
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                  {reposicionOrders.length === 0 && (
+                      </div>
+                    )))}
+                </div>
+              </div>
+
+              {/* VISTA TABLET/DESKTOP: TABLA CLÁSICA */}
+              <div className="hidden sm:block overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-gray-50">
                     <tr>
-                      <td className="px-2 py-6 text-center text-sm text-gray-500" colSpan={8}>
-                        No hay pedidos de reposición.
-                      </td>
+                      <th className="px-2 py-1 text-left text-xs font-medium text-gray-500 uppercase">Pedido</th>
+                      <th className="px-2 py-1 text-left text-xs font-medium text-gray-500 uppercase">Cliente</th>
+                      <th className="px-2 py-1 text-left text-xs font-medium text-gray-500 uppercase hidden lg:table-cell">Estado</th>
+                      <th className="px-2 py-1 text-left text-xs font-medium text-gray-500 uppercase hidden lg:table-cell">Entrega</th>
+                      <th className="px-2 py-1 text-left text-xs font-medium text-gray-500 uppercase hidden lg:table-cell">Factura</th>
+                      <th className="px-2 py-1 text-left text-xs font-medium text-gray-500 uppercase hidden lg:table-cell">Fecha Factura</th>
+                      <th className="px-2 py-1 text-left text-xs font-medium text-gray-500 uppercase hidden lg:table-cell">Monto</th>
+                      <th className="px-2 py-1 text-right text-xs font-medium text-gray-500 uppercase">Acciones</th>
                     </tr>
-                  )}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {reposicionOrders.map((row) => (
+                      <tr key={row.id || row.order_id} className="hover:bg-gray-50">
+                        <td className="px-2 py-1">
+                          <div className="text-sm font-medium text-gray-900">{row.order_number}</div>
+                        </td>
+                        <td className="px-2 py-1">
+                          <div className="text-xs sm:text-sm text-gray-900 whitespace-normal break-words">{row.customer_name}</div>
+                        </td>
+                        <td className="px-2 py-1 hidden lg:table-cell">
+                          <div className="flex flex-col items-start gap-1">
+                            <span className="px-2 py-1 text-xs font-semibold rounded-full bg-orange-100 text-orange-800">
+                              {row.status}
+                            </span>
+                            {(row.is_service === 1 || row.is_service === true) && (
+                              <span className="px-2 py-1 text-xs font-semibold rounded-full bg-blue-100 text-blue-800">
+                                Servicio
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-2 py-1 hidden lg:table-cell">
+                          <span className="text-xs sm:text-sm text-gray-900">
+                            {row.delivery_channel || '-'}
+                          </span>
+                        </td>
+                        <td className="px-2 py-1 hidden lg:table-cell">
+                          <div className="text-xs sm:text-sm text-gray-900">
+                            {row.siigo_invoice_number || '-'}
+                          </div>
+                        </td>
+                        <td className="px-2 py-1 hidden lg:table-cell">
+                          <div className="text-xs text-gray-500">
+                            {row.siigo_invoice_created_at ? new Date(row.siigo_invoice_created_at).toLocaleDateString('es-CO') : '-'}
+                          </div>
+                        </td>
+                        <td className="px-2 py-1 hidden lg:table-cell">
+                          <div className="text-xs sm:text-sm font-medium text-gray-900">
+                            ${Number(row.total_amount || 0).toLocaleString('es-CO')}
+                          </div>
+                        </td>
+                        <td className="px-2 py-1 text-right">
+                          <button
+                            onClick={() => setTimelineModal({ isOpen: true, order: row })}
+                            className="mr-2 px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded inline-flex items-center"
+                            title="Ver Historial"
+                          >
+                            <Icons.History className="w-3 h-3" />
+                          </button>
+                          <button
+                            onClick={() => handleOpenRepositionModal(row)}
+                            className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white text-xs rounded inline-flex items-center"
+                            title="Gestionar Reposición"
+                          >
+                            <Icons.CheckCircle className="w-3 h-3" />
+                            <span className="ml-1 hidden sm:inline">Gestionar</span>
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                    {reposicionOrders.length === 0 && (
+                      <tr>
+                        <td className="px-2 py-6 text-center text-sm text-gray-500" colSpan={8}>
+                          No hay pedidos de reposición.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )
+      }
 
       {/* Modal Cerrar en Siigo */}
-      {siigoCloseModal.open && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40 p-4 overflow-y-auto">
-          <div className="bg-white rounded shadow-lg w-full max-w-lg max-h-[90vh] overflow-y-auto flex flex-col">
-            <div className="p-4 border-b flex items-center justify-between shrink-0">
-              <h3 className="text-lg font-semibold">Cerrar en Siigo</h3>
-              <button onClick={() => setSiigoCloseModal({ open: false, order: null, method: 'efectivo', note: '', tags: [], availableTags: [] })} className="text-gray-600 hover:text-gray-900">
-                <Icons.X className="w-4 h-4" />
-              </button>
-            </div>
-            <div className="p-4 space-y-4 grow overflow-y-auto">
-              <div className="text-sm text-gray-700">
-                Pedido: <span className="font-semibold">{siigoCloseModal.order?.order_number}</span>
+      {
+        siigoCloseModal.open && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40 p-4 overflow-y-auto">
+            <div className="bg-white rounded shadow-lg w-full max-w-lg max-h-[90vh] overflow-y-auto flex flex-col">
+              <div className="p-4 border-b flex items-center justify-between shrink-0">
+                <h3 className="text-lg font-semibold">Cerrar en Siigo</h3>
+                <button onClick={() => setSiigoCloseModal({ open: false, order: null, method: 'efectivo', note: '', tags: [], availableTags: [] })} className="text-gray-600 hover:text-gray-900">
+                  <Icons.X className="w-4 h-4" />
+                </button>
               </div>
+              <div className="p-4 space-y-4 grow overflow-y-auto">
+                <div className="text-sm text-gray-700">
+                  Pedido: <span className="font-semibold">{siigoCloseModal.order?.order_number}</span>
+                </div>
 
-              {/* Evidencia de pago (si existe y es transferencia/electrónico) */}
-              {/* Evidencia de pago (si existe y es transferencia/electrónico) */}
-              {(() => {
-                const raw = siigoCloseModal.order?.payment_evidence_path;
-                if (!raw) return null;
+                {/* Evidencia de pago (si existe y es transferencia/electrónico) */}
+                {/* Evidencia de pago (si existe y es transferencia/electrónico) */}
+                {(() => {
+                  const raw = siigoCloseModal.order?.payment_evidence_path;
+                  if (!raw) return null;
 
-                console.log('🖼️ Debug Evidencia Raw:', raw);
+                  console.log('🖼️ Debug Evidencia Raw:', raw);
 
-                let paths = [];
-                try {
-                  const parsed = JSON.parse(raw);
-                  if (Array.isArray(parsed)) paths = parsed;
-                  else paths = [raw];
-                } catch {
-                  if (raw.includes(',')) paths = raw.split(',').map(s => s.trim());
-                  else paths = [raw];
-                }
-                paths = paths.filter(p => p && p !== 'null' && p !== 'undefined');
-
-                console.log('🖼️ Debug Evidencia Parsed:', paths);
-
-                if (paths.length === 0) return null;
-
-                return (
-                  <div className="border rounded p-2 bg-gray-50">
-                    <p className="text-xs font-medium text-gray-700 mb-2">Comprobante(s) de Pago:</p>
-                    <div className="flex flex-col gap-2">
-                      {paths.map((path, idx) => {
-                        // Limpiar path para evitar dobles slashes o prefijos incorrectos
-                        let cleanPath = path;
-                        if (cleanPath.startsWith('/')) cleanPath = cleanPath.slice(1);
-                        if (cleanPath.startsWith('uploads/')) cleanPath = cleanPath.replace('uploads/', '');
-
-                        // Construir URL final
-                        const src = path.startsWith('http') ? path : `/uploads/${cleanPath}`;
-                        console.log(`🖼️ Debug Image ${idx} Src:`, src);
-
-                        return (
-                          <div key={idx} className="relative h-48 w-full bg-gray-200 rounded overflow-hidden flex items-center justify-center group">
-                            <img
-                              src={src}
-                              alt={`Comprobante ${idx + 1}`}
-                              className="max-h-full max-w-full object-contain"
-                              onError={(e) => {
-                                console.error('❌ Error cargando imagen:', src);
-                                e.target.onerror = null;
-                                e.target.src = 'https://via.placeholder.com/300?text=Error+imagen';
-                              }}
-                            />
-                            <a
-                              href={src}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-0 group-hover:bg-opacity-30 transition-all opacity-0 group-hover:opacity-100"
-                            >
-                              <span className="bg-white text-gray-900 text-xs px-2 py-1 rounded shadow">Ver original</span>
-                            </a>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                );
-              })()}
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Método de Pago</label>
-                <select
-                  value={siigoCloseModal.method}
-                  onChange={(e) => setSiigoCloseModal(prev => ({ ...prev, method: e.target.value }))}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
-                >
-                  <option value="efectivo">Efectivo</option>
-                  <option value="transferencia">Transferencia</option>
-                  <option value="credito">Cliente a Crédito</option>
-                  <option value="pago_electronico">Pago Electrónico</option>
-                  <option value="contraentrega">Contraentrega (Solo Medellín)</option>
-                  <option value="mercadopago">MercadoPago</option>
-                  <option value="publicidad">Publicidad (sin validación)</option>
-                  <option value="reposicion">Reposición (sin validación)</option>
-                  <option value="otros">Otros</option>
-                </select>
-              </div>
-
-              {/* Etiquetas con Autocomplete */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Etiquetas</label>
-                <Autocomplete
-                  multiple
-                  freeSolo
-                  options={siigoCloseModal.availableTags}
-                  value={siigoCloseModal.tags}
-                  onChange={(event, newValue) => {
-                    setSiigoCloseModal(prev => ({
-                      ...prev,
-                      tags: newValue
-                    }));
-                  }}
-                  renderTags={(value, getTagProps) =>
-                    value.map((option, index) => (
-                      <Chip variant="outlined" label={option} {...getTagProps({ index })} size="small" color="primary" />
-                    ))
+                  let paths = [];
+                  try {
+                    const parsed = JSON.parse(raw);
+                    if (Array.isArray(parsed)) paths = parsed;
+                    else paths = [raw];
+                  } catch {
+                    if (raw.includes(',')) paths = raw.split(',').map(s => s.trim());
+                    else paths = [raw];
                   }
-                  renderInput={(params) => (
-                    <TextField
-                      {...params}
-                      variant="outlined"
-                      placeholder="Seleccionar o crear etiqueta..."
-                      size="small"
-                    />
-                  )}
-                />
-              </div>
+                  paths = paths.filter(p => p && p !== 'null' && p !== 'undefined');
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Nota (opcional)</label>
-                <textarea
-                  value={siigoCloseModal.note}
-                  onChange={(e) => setSiigoCloseModal(prev => ({ ...prev, note: e.target.value }))}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
-                  rows={3}
-                  placeholder="Observaciones del cierre"
-                />
+                  console.log('🖼️ Debug Evidencia Parsed:', paths);
+
+                  if (paths.length === 0) return null;
+
+                  return (
+                    <div className="border rounded p-2 bg-gray-50">
+                      <p className="text-xs font-medium text-gray-700 mb-2">Comprobante(s) de Pago:</p>
+                      <div className="flex flex-col gap-2">
+                        {paths.map((path, idx) => {
+                          // Limpiar path para evitar dobles slashes o prefijos incorrectos
+                          let cleanPath = path;
+                          if (cleanPath.startsWith('/')) cleanPath = cleanPath.slice(1);
+                          if (cleanPath.startsWith('uploads/')) cleanPath = cleanPath.replace('uploads/', '');
+
+                          // Construir URL final
+                          const src = path.startsWith('http') ? path : `/uploads/${cleanPath}`;
+                          console.log(`🖼️ Debug Image ${idx} Src:`, src);
+
+                          return (
+                            <div key={idx} className="relative h-48 w-full bg-gray-200 rounded overflow-hidden flex items-center justify-center group">
+                              <img
+                                src={src}
+                                alt={`Comprobante ${idx + 1}`}
+                                className="max-h-full max-w-full object-contain"
+                                onError={(e) => {
+                                  console.error('❌ Error cargando imagen:', src);
+                                  e.target.onerror = null;
+                                  e.target.src = 'https://via.placeholder.com/300?text=Error+imagen';
+                                }}
+                              />
+                              <a
+                                href={src}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-0 group-hover:bg-opacity-30 transition-all opacity-0 group-hover:opacity-100"
+                              >
+                                <span className="bg-white text-gray-900 text-xs px-2 py-1 rounded shadow">Ver original</span>
+                              </a>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Método de Pago</label>
+                  <select
+                    value={siigoCloseModal.method}
+                    onChange={(e) => setSiigoCloseModal(prev => ({ ...prev, method: e.target.value }))}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                  >
+                    <option value="efectivo">Efectivo</option>
+                    <option value="transferencia">Transferencia</option>
+                    <option value="credito">Cliente a Crédito</option>
+                    <option value="pago_electronico">Pago Electrónico</option>
+                    <option value="contraentrega">Contraentrega (Solo Medellín)</option>
+                    <option value="mercadopago">MercadoPago</option>
+                    <option value="publicidad">Publicidad (sin validación)</option>
+                    <option value="reposicion">Reposición (sin validación)</option>
+                    <option value="otros">Otros</option>
+                  </select>
+                </div>
+
+                {/* Etiquetas con Autocomplete */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Etiquetas</label>
+                  <Autocomplete
+                    multiple
+                    freeSolo
+                    options={siigoCloseModal.availableTags}
+                    value={siigoCloseModal.tags}
+                    onChange={(event, newValue) => {
+                      setSiigoCloseModal(prev => ({
+                        ...prev,
+                        tags: newValue
+                      }));
+                    }}
+                    renderTags={(value, getTagProps) =>
+                      value.map((option, index) => (
+                        <Chip variant="outlined" label={option} {...getTagProps({ index })} size="small" color="primary" />
+                      ))
+                    }
+                    renderInput={(params) => (
+                      <TextField
+                        {...params}
+                        variant="outlined"
+                        placeholder="Seleccionar o crear etiqueta..."
+                        size="small"
+                      />
+                    )}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Nota (opcional)</label>
+                  <textarea
+                    value={siigoCloseModal.note}
+                    onChange={(e) => setSiigoCloseModal(prev => ({ ...prev, note: e.target.value }))}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                    rows={3}
+                    placeholder="Observaciones del cierre"
+                  />
+                </div>
               </div>
-            </div>
-            <div className="p-4 border-t flex items-center justify-end space-x-2 shrink-0">
-              <button
-                onClick={() => setSiigoCloseModal({ open: false, order: null, method: 'efectivo', note: '', tags: [], availableTags: [] })}
-                className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-              >
-                Cancelar
-              </button>
-              <button
-                onClick={handleConfirmSiigoClose}
-                className="px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
-              >
-                Confirmar
-              </button>
+              <div className="p-4 border-t flex items-center justify-end space-x-2 shrink-0">
+                <button
+                  onClick={() => setSiigoCloseModal({ open: false, order: null, method: 'efectivo', note: '', tags: [], availableTags: [] })}
+                  className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={handleConfirmSiigoClose}
+                  className="px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
+                >
+                  Confirmar
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )
+      }
 
       {/* Modal Completar Reposición de Fabricante */}
-      {reposicionModal.open && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40 p-4 overflow-y-auto">
-          <div className="bg-white rounded shadow-lg w-full max-w-2xl max-h-[90vh] overflow-y-auto flex flex-col">
-            <div className="p-4 border-b flex items-center justify-between shrink-0">
-              <h3 className="text-lg font-semibold">Gestionar Reposición de Fabricante</h3>
-              <button
-                onClick={() => setReposicionModal({ open: false, order: null, notes: '', files: [], isSubmitting: false })}
-                className="text-gray-600 hover:text-gray-900"
-                disabled={reposicionModal.isSubmitting}
-              >
-                <Icons.X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="p-4 flex-1 overflow-y-auto">
-              <div className="mb-4">
-                <p className="text-sm text-gray-600 mb-2">
-                  Pedido: <span className="font-semibold">{reposicionModal.order?.order_number}</span>
-                </p>
-                <p className="text-sm text-gray-600">
-                  Cliente: <span className="font-semibold">{reposicionModal.order?.customer_name}</span>
-                </p>
+      {
+        reposicionModal.open && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40 p-4 overflow-y-auto">
+            <div className="bg-white rounded shadow-lg w-full max-w-2xl max-h-[90vh] overflow-y-auto flex flex-col">
+              <div className="p-4 border-b flex items-center justify-between shrink-0">
+                <h3 className="text-lg font-semibold">Gestionar Reposición de Fabricante</h3>
+                <button
+                  onClick={() => setReposicionModal({ open: false, order: null, notes: '', files: [], isSubmitting: false })}
+                  className="text-gray-600 hover:text-gray-900"
+                  disabled={reposicionModal.isSubmitting}
+                >
+                  <Icons.X className="w-5 h-5" />
+                </button>
               </div>
 
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Notas / Observaciones
-                </label>
-                <textarea
-                  value={reposicionModal.notes}
-                  onChange={(e) => setReposicionModal(prev => ({ ...prev, notes: e.target.value }))}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  rows={4}
-                  placeholder="Agrega detalles sobre la reposición, comunicación con el cliente, etc."
-                  disabled={reposicionModal.isSubmitting}
-                />
-              </div>
-
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Evidencias (Imágenes de chats con cliente)
-                </label>
-                <input
-                  type="file"
-                  accept="image/*"
-                  multiple
-                  onChange={handleRepositionFilesChange}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  disabled={reposicionModal.isSubmitting}
-                />
-                {reposicionModal.files.length > 0 && (
-                  <p className="mt-2 text-sm text-green-600">
-                    {reposicionModal.files.length} archivo(s) seleccionado(s)
+              <div className="p-4 flex-1 overflow-y-auto">
+                <div className="mb-4">
+                  <p className="text-sm text-gray-600 mb-2">
+                    Pedido: <span className="font-semibold">{reposicionModal.order?.order_number}</span>
                   </p>
-                )}
-                <p className="mt-1 text-xs text-gray-500">
-                  Máximo 10 imágenes, 10MB por archivo. También puedes pegar imágenes con Ctrl+V
-                </p>
-              </div>
+                  <p className="text-sm text-gray-600">
+                    Cliente: <span className="font-semibold">{reposicionModal.order?.customer_name}</span>
+                  </p>
+                </div>
 
-              {/* Vista previa de imágenes */}
-              {reposicionModal.files.length > 0 && (
                 <div className="mb-4">
                   <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Vista Previa
+                    Notas / Observaciones
                   </label>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                    {reposicionModal.files.map((file, idx) => (
-                      <div key={idx} className="relative">
-                        <img
-                          src={URL.createObjectURL(file)}
-                          alt={`Previa ${idx + 1}`}
-                          className="w-full h-32 object-cover rounded border"
-                        />
-                        <p className="text-xs text-gray-500 truncate mt-1">{file.name}</p>
-                      </div>
-                    ))}
-                  </div>
+                  <textarea
+                    value={reposicionModal.notes}
+                    onChange={(e) => setReposicionModal(prev => ({ ...prev, notes: e.target.value }))}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    rows={4}
+                    placeholder="Agrega detalles sobre la reposición, comunicación con el cliente, etc."
+                    disabled={reposicionModal.isSubmitting}
+                  />
                 </div>
-              )}
-            </div>
 
-            <div className="p-4 border-t flex justify-end gap-2 shrink-0 bg-gray-50">
-              <button
-                onClick={() => setReposicionModal({ open: false, order: null, notes: '', files: [], isSubmitting: false })}
-                className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50"
-                disabled={reposicionModal.isSubmitting}
-              >
-                Cancelar
-              </button>
-              <button
-                onClick={handleConfirmReposition}
-                className="px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 disabled:opacity-50 disabled:cursor-not-allowed"
-                disabled={reposicionModal.isSubmitting}
-              >
-                {reposicionModal.isSubmitting ? 'Guardando...' : 'Guardar Gestión'}
-              </button>
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Evidencias (Imágenes de chats con cliente)
+                  </label>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    onChange={handleRepositionFilesChange}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    disabled={reposicionModal.isSubmitting}
+                  />
+                  {reposicionModal.files.length > 0 && (
+                    <p className="mt-2 text-sm text-green-600">
+                      {reposicionModal.files.length} archivo(s) seleccionado(s)
+                    </p>
+                  )}
+                  <p className="mt-1 text-xs text-gray-500">
+                    Máximo 10 imágenes, 10MB por archivo. También puedes pegar imágenes con Ctrl+V
+                  </p>
+                </div>
+
+                {/* Vista previa de imágenes */}
+                {reposicionModal.files.length > 0 && (
+                  <div className="mb-4">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Vista Previa
+                    </label>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                      {reposicionModal.files.map((file, idx) => (
+                        <div key={idx} className="relative">
+                          <img
+                            src={URL.createObjectURL(file)}
+                            alt={`Previa ${idx + 1}`}
+                            className="w-full h-32 object-cover rounded border"
+                          />
+                          <p className="text-xs text-gray-500 truncate mt-1">{file.name}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="p-4 border-t flex justify-end gap-2 shrink-0 bg-gray-50">
+                <button
+                  onClick={() => setReposicionModal({ open: false, order: null, notes: '', files: [], isSubmitting: false })}
+                  className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50"
+                  disabled={reposicionModal.isSubmitting}
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={handleConfirmReposition}
+                  className="px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={reposicionModal.isSubmitting}
+                >
+                  {reposicionModal.isSubmitting ? 'Guardando...' : 'Guardar Gestión'}
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )
+      }
 
       {/* Modal de registro de entrega */}
       <DeliveryRegistrationModal
@@ -3602,6 +3876,65 @@ const OrdersPage = () => {
       />
 
       {/* Modal de logística */}
+      {/* Sync Progress Modal */}
+      {
+        syncModal.isOpen && (
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black bg-opacity-50 backdrop-blur-sm">
+            <div className="bg-white rounded-xl shadow-2xl p-8 max-w-sm w-full mx-4 transform transition-all scale-100">
+              <div className="text-center">
+
+                {/* Icon / status indicator */}
+                <div className="mx-auto flex items-center justify-center h-16 w-16 rounded-full bg-blue-100 mb-6">
+                  {syncModal.status === 'processing' && (
+                    <svg className="animate-spin h-8 w-8 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                  )}
+                  {syncModal.status === 'success' && (
+                    <svg className="h-10 w-10 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                  )}
+                  {syncModal.status === 'error' && (
+                    <svg className="h-10 w-10 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  )}
+                </div>
+
+                <h3 className="text-lg font-bold text-gray-900 mb-2">
+                  {syncModal.status === 'success' ? '¡Sincronización Completada!' :
+                    syncModal.status === 'error' ? 'Error en Sincronización' :
+                      'Sincronizando Pedido...'}
+                </h3>
+
+                <p className="text-sm text-gray-500 mb-6 min-h-[1.5em]">
+                  {syncModal.message}
+                </p>
+
+                {/* Progress Bar */}
+                <div className="w-full bg-gray-200 rounded-full h-4 mb-4 overflow-hidden">
+                  <div
+                    className={`h-4 rounded-full transition-all duration-500 ease-out ${syncModal.status === 'success' ? 'bg-green-500' :
+                      syncModal.status === 'error' ? 'bg-red-500' : 'bg-blue-600'
+                      }`}
+                    style={{ width: `${Math.max(5, syncModal.progress)}%` }}
+                  ></div>
+                </div>
+
+                <div className="flex justify-between text-xs text-gray-400 font-medium">
+                  <span>0%</span>
+                  <span>{Math.round(syncModal.progress)}%</span>
+                  <span>100%</span>
+                </div>
+
+              </div>
+            </div>
+          </div>
+        )
+      }
+
       <LogisticsModal
         isOpen={logisticsModal.isOpen}
         onClose={() => setLogisticsModal({ isOpen: false, order: null })}
@@ -3686,7 +4019,7 @@ const OrdersPage = () => {
           setUploadEvidenceModal({ open: false, order: null, file: null });
         }}
       />
-    </div>
+    </div >
   );
 };
 

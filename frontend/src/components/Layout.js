@@ -21,7 +21,8 @@ import {
   Calculator,
   Package2,
   QrCode,
-  TrendingUp
+  TrendingUp,
+  MessageSquare
 } from 'lucide-react';
 import NotificationSystem from './NotificationSystem';
 import RoleNavigation from './RoleNavigation';
@@ -95,19 +96,20 @@ const Layout = () => {
       requiresPermission: 'admin',
     },
     {
+      name: 'Automatización',
+      href: '/automation',
+      icon: Settings,
+      current: location.pathname === '/automation',
+      requiresPermission: 'admin',
+    },
+    {
       name: 'Fecha Inicio SIIGO',
       href: '/siigo-start-date-config',
       icon: Calendar,
       current: location.pathname === '/siigo-start-date-config',
       requiresPermission: 'admin',
     },
-    {
-      name: 'Guías de Envío',
-      href: '/shipping-guides',
-      icon: ShoppingCart,
-      current: location.pathname === '/shipping-guides',
-      requiresPermission: ['admin', 'logistica'],
-    },
+
     {
       name: 'Crédito de Clientes',
       href: '/customer-credit',
@@ -170,6 +172,26 @@ const Layout = () => {
       icon: QrCode,
       current: location.pathname === '/qr-generator',
       requiresPermission: ['admin', 'logistica'],
+    },
+    {
+      name: 'Cierre Financiero',
+      href: '/financial-closure',
+      icon: Calculator, // Using Calculator icon
+      requiresPermission: ['admin', 'cartera'],
+    },
+    {
+      name: 'Control Operativo',
+      href: '/operational-metrics',
+      icon: MessageSquare,
+      current: location.pathname === '/operational-metrics',
+      requiresPermission: ['admin', 'facturador', 'cartera'],
+    },
+    {
+      name: 'Control de Egresos',
+      href: '/expenses',
+      icon: CreditCard,
+      current: location.pathname === '/expenses',
+      requiresPermission: ['admin', 'cartera'],
     },
   ];
 

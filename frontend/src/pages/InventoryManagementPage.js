@@ -163,6 +163,12 @@ const InventoryManagementPage = () => {
                 return;
             }
 
+            // Normalización de categoría para 5KG
+            let category = product.category;
+            if (category === 'SKARCHA NO FABRICADOS') {
+                category = 'SKARCHA NO FABRICADOS 19%';
+            }
+
             // Filtro ABC
             if (abcFilter && product.abc_classification !== abcFilter) return;
 
@@ -184,11 +190,11 @@ const InventoryManagementPage = () => {
             const upperFlavor = String(flavor).toUpperCase();
             if (upperFlavor.includes('GENERICO') || upperFlavor.includes('WHATSAPP')) return;
 
-            if (!grouped[product.category]) grouped[product.category] = {};
-            if (!grouped[product.category][presentation]) grouped[product.category][presentation] = {};
+            if (!grouped[category]) grouped[category] = {};
+            if (!grouped[category][presentation]) grouped[category][presentation] = {};
 
-            grouped[product.category][presentation][flavor] = product;
-            cats.add(product.category);
+            grouped[category][presentation][flavor] = product;
+            cats.add(category);
         });
 
         console.log(`✅ Organization complete. Categories found: ${cats.size}. Skipped (no cat/name): ${skippedCount}`); // DEBUG

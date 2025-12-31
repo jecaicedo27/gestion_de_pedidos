@@ -28,6 +28,7 @@ const walletRoutes = require('./routes/wallet');
 const carteraRoutes = require('./routes/cartera');
 const customerCreditRoutes = require('./routes/customerCredit');
 const packagingRoutes = require('./routes/packaging');
+const financialRoutes = require('./routes/financial');
 const packagingProgressRoutes = require('./routes/packagingProgress');
 const PackagingController = require('./controllers/packagingController');
 const MessengerController = require('./controllers/messengerController');
@@ -47,8 +48,11 @@ const postventaRoutes = require('./routes/postventa');
 const monitorRoutes = require('./routes/monitor');
 const whapifyRoutes = require('./routes/whapify');
 const inventoryManagementRoutes = require('./routes/inventoryManagement');
+const expensesRoutes = require('./routes/expenses');
+const metricsRoutes = require('./routes/metrics');
 
 // Importar servicios
+
 const siigoUpdateService = require('./services/siigoUpdateService');
 const { initializeAutoImport } = require('./initAutoImport');
 const autoSyncService = require('./services/autoSyncService');
@@ -56,7 +60,9 @@ const StockSyncService = require('./services/stockSyncService');
 const stockSyncManager = require('./services/stockSyncManager');
 const PackagingLock = require('./services/packagingLockService');
 const stockRealtimeBroadcaster = require('./services/stockRealtimeBroadcaster');
-const stockConsistencyService = require('./services/stockConsistencyService');
+// stockConsistencyService moved to lazy load
+const profitabilityAssuranceService = require('./services/profitabilityAssuranceService');
+const siigoSyncScheduler = require('./services/siigoSyncScheduler');
 
 const app = express();
 app.set('trust proxy', 1);
@@ -222,6 +228,7 @@ try {
 }
 app.use('/api/customer-credit', customerCreditRoutes);
 app.use('/api/packaging', packagingRoutes);
+app.use('/api/financial', financialRoutes);
 app.use('/api/packaging-progress', packagingProgressRoutes);
 // Alias directo para subida de evidencia (backup en caso de que el router falle)
 app.post('/api/packaging/evidence/:orderId',
@@ -252,6 +259,8 @@ app.use('/api/inventory-management', inventoryManagementRoutes);
 app.use('/api/receptions', require('./routes/reception'));
 app.use('/api/supplier-codes', require('./routes/supplierCodes'));
 app.use('/api/pos', require('./routes/posRoutes'));
+app.use('/api/expenses', expensesRoutes);
+app.use('/api/metrics', metricsRoutes);
 
 // Ruta de health check
 app.get('/api/health', (req, res) => {
@@ -463,6 +472,7 @@ const startServer = async () => {
       try {
         setTimeout(async () => {
           try {
+            const stockConsistencyService = require('./services/stockConsistencyService');
             const res = await stockConsistencyService.start();
             console.log('✅ StockConsistencyService iniciado:', res);
           } catch (e) {
@@ -472,6 +482,12 @@ const startServer = async () => {
       } catch (e) {
         console.error('⚠️ Error programando inicio de StockConsistencyService:', e?.message || e);
       }
+
+      // Iniciar servicio de aseguramiento de rentabilidad (Runs hourly)
+      profitabilityAssuranceService.start();
+
+      // Iniciar el scheduler de sincronización de Ingresos Siigo (Hourly)
+      siigoSyncScheduler.start();
 
       // Monitor de expiración de locks de empaque (cada 60s)
       setInterval(async () => {

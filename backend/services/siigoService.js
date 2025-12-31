@@ -564,11 +564,11 @@ class SiigoService {
       // Validación de items > 0 con reintentos para evitar pedidos vacíos
       {
         let attempts = 0;
-        const maxAttempts = 10; // Aumentado de 3 a 10 para dar más tiempo a SIIGO
+        const maxAttempts = 3; // Reducido de 10 a 3 para evitar bloqueos del servidor
         while (attempts < maxAttempts && (!fullInvoice.items || fullInvoice.items.length === 0)) {
           attempts++;
           console.warn(`⚠️ Factura ${invoice.id} sin items (intento ${attempts}/${maxAttempts}). Reintentando obtener detalles...`);
-          await new Promise(r => setTimeout(r, 2000)); // Espera fija de 2s entre intentos
+          await new Promise(r => setTimeout(r, 1000)); // Espera reducida a 1s
           try {
             fullInvoice = await this.getInvoiceDetails(invoice.id);
             console.log(`🔄 Reintento ${attempts}: items ahora = ${Array.isArray(fullInvoice.items) ? fullInvoice.items.length : 0}`);
@@ -1191,7 +1191,8 @@ class SiigoService {
 
         const productCodes = fullInvoice.items
           .map(i => i.code || i.product?.code)
-          .filter(Boolean);
+          .filter(Boolean)
+          .map(c => sanitizeText(c)); // Normalized Codes
 
         let costMap = new Map();
 
@@ -1218,7 +1219,9 @@ class SiigoService {
               const cost = Number(p.purchasing_price || (p.standard_price ? p.standard_price / 1.19 : 0));
 
               if (p.internal_code) {
-                costMap.set(`CODE:${p.internal_code}`, cost);
+                // Store both exact and sanitized versions to be safe
+                costMap.set(`CODE:${p.internal_code}`, cost); // Exact from DB
+                costMap.set(`CODE:${sanitizeText(p.internal_code)}`, cost); // Sanitized
               }
               if (p.product_name) {
                 costMap.set(`NAME:${sanitizeText(p.product_name)}`, cost);
@@ -1239,10 +1242,14 @@ class SiigoService {
             console.log(`🔍 Insertando item: ${item.description || item.name || 'Producto SIIGO'}`);
             // Determinar la línea de la factura conservando el orden de SIIGO
             const invoiceLine = Array.isArray(fullInvoice.items) ? (fullInvoice.items.indexOf(item) + 1) : null;
-            const productCode = item.code || (item.product?.code) || null;
+
+            // Get raw code and sanitize it for lookup
+            const rawCode = item.code || (item.product?.code) || null;
+            const productCode = sanitizeText(rawCode);
             const productName = sanitizeText(item.description || item.name || 'Producto SIIGO');
 
             // Snapshot del costo histórico (Code match priority, then Name match)
+            // Try normalized lookup
             const keyByCode = productCode ? `CODE:${productCode}` : null;
             const keyByName = `NAME:${productName}`;
             const historicalCost = (keyByCode && costMap.has(keyByCode))
@@ -1699,6 +1706,126 @@ class SiigoService {
 
     } catch (error) {
       console.error('❌ Error en importación masiva:', error.message);
+      throw error;
+    }
+  }
+
+  // Obtener Comprobantes (Vouchers) - Usado para Recibos de Caja (Income)
+  // Método para obtener TODOS los vouchers iterando páginas
+  async getVouchers(params = {}) {
+    try {
+      console.log(`DEBUG: getVouchers called with params:`, JSON.stringify(params));
+
+      // Safety Check: Prevent fetching entire history without filters
+      if (!params.date_start && !params.created_start) {
+        console.warn('⚠️ getVouchers called without date filter! Defaulting to TODAY to prevent massive fetch.');
+        // Default to today
+        const now = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Bogota' });
+        params.date_start = now;
+        params.date_end = now;
+      }
+
+      console.log(`🧾 Iniciando descarga masiva de vouchers (Type: ${params.type || 'ALL'}, Date: ${params.date_start || 'ANY'} to ${params.date_end || 'ANY'})...`);
+
+      const headers = await this.getHeaders();
+      let allVouchers = [];
+      const pageSize = 100;
+
+      // Construir parámetros base
+      const baseParams = {
+        page_size: pageSize,
+      };
+
+      // ⚠️ FIX: Siigo often ignores 'date_start' (voucher date) but respects 'created_start' (system date).
+      // If we have a date range but no created range, enforce the created range to match.
+      // This prevents fetching 10 years of history when we only want today's data.
+      // EXCEPTION: If 'skip_date_validation' is true, we respect the caller's wish (e.g. for accurate backfilling)
+      if (params.date_start && !params.created_start && !params.skip_date_validation) {
+        console.log(`ℹ️ Auto-enforcing created_start=${params.date_start} to match date_start expectation.`);
+        params.created_start = params.date_start;
+      }
+      if (params.date_end && !params.created_end && !params.skip_date_validation) {
+        console.log(`ℹ️ Auto-enforcing created_end=${params.date_end} to match date_end expectation.`);
+        params.created_end = params.date_end;
+      }
+
+      if (params.created_start) baseParams.created_start = this.formatDateForSiigo(params.created_start);
+      if (params.created_end) baseParams.created_end = this.formatDateForSiigo(params.created_end);
+      if (params.date_start) baseParams.date_start = this.formatDateForSiigo(params.date_start);
+      if (params.date_end) baseParams.date_end = this.formatDateForSiigo(params.date_end);
+      if (params.type) baseParams.type = params.type;
+      if (params.name) baseParams.name = params.name;
+
+      // 1. Fetch Page 1 to know dimensions
+      await this.waitForRateLimit();
+      const firstResponse = await this.makeRequestWithRetry(async () => {
+        return await axios.get(`${this.baseURL}/v1/vouchers`, {
+          headers,
+          params: { ...baseParams, page: 1 },
+          timeout: 45000
+        });
+      });
+
+      const firstData = firstResponse.data;
+      allVouchers = allVouchers.concat(firstData.results || []);
+      const totalResults = firstData.pagination?.total_results || 0;
+      const totalPages = Math.ceil(totalResults / pageSize);
+
+      console.log(`📊 Total: ${totalResults} vouchers. Pages: ${totalPages}`);
+
+      // Safety Brake: If result set is massive (> 3000) and we are properly filtered, something is wrong or range is too big.
+      // Abort to prevent 504.
+      if (totalResults > 3000) {
+        const msg = `⚠️ Aborting Siigo fetch: Total results ${totalResults} exceeds safety limit (3000). Please narrow the date range.`;
+        console.warn(msg);
+        // We can either throw or return partial. Let's return partial + warning in log to avoid crashing UI entirely, 
+        // but for now, throwing might be safer to alert the user to narrow range.
+        // Actually, let's just error out so the UI shows "Error" instead of partial misleading data.
+        throw new Error(msg);
+      }
+
+      // 2. Parallel Fetch for Remaining Pages
+      if (totalPages > 1) {
+        // Optimize: Limit concurrency to 5 requests at a time to avoid 429s
+        const concurrencyLimit = 5;
+        const remainingPages = [];
+        for (let p = 2; p <= totalPages; p++) remainingPages.push(p);
+
+        // Process in chunks
+        for (let i = 0; i < remainingPages.length; i += concurrencyLimit) {
+          const chunk = remainingPages.slice(i, i + concurrencyLimit);
+          console.log(`Processing batch ${i / concurrencyLimit + 1}: Pages ${chunk.join(',')}`);
+
+          const promises = chunk.map(p =>
+            this.makeRequestWithRetry(async () => {
+              console.log(`📄 Requesting Page ${p}/${totalPages}...`);
+              const res = await axios.get(`${this.baseURL}/v1/vouchers`, {
+                headers,
+                params: { ...baseParams, page: p },
+                timeout: 60000
+              });
+              return res.data.results || [];
+            })
+          );
+
+          const results = await Promise.all(promises);
+          results.forEach(r => allVouchers = allVouchers.concat(r));
+        }
+      }
+
+      console.log(`🏁 Descarga finalizada: ${allVouchers.length} vouchers.`);
+
+      return {
+        results: allVouchers,
+        pagination: {
+          total_results: allVouchers.length,
+          page_size: allVouchers.length,
+          page: 1
+        }
+      };
+
+    } catch (error) {
+      console.error('❌ Error obteniendo vouchers:', error.message);
       throw error;
     }
   }

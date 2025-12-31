@@ -13,7 +13,7 @@
 module.exports = {
   apps: [
     {
-      name: 'gestion-backend',
+      name: 'perlas-backend',
       cwd: './backend',
       script: 'server.js',
       instances: 1,              // Cambia a 'max' o un número >1 si deseas cluster

@@ -1,9 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { format } from 'date-fns';
-import { treasuryAdminService } from '../services/api';
+import { treasuryAdminService, financialService } from '../services/api';
 import * as Icons from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useAuth } from '../context/AuthContext';
+import { Button, Modal, ModalHeader, ModalBody, ModalFooter, Form, FormGroup, Label, Input } from 'reactstrap';
 
 // Componente para mostrar evidencia (imagen o PDF) con diagnóstico
 const EvidenceViewer = ({ file, depositId, onUploadSuccess }) => {
@@ -197,6 +198,54 @@ const TreasuryAuditPage = () => {
   const [loadingDetailsId, setLoadingDetailsId] = useState(null);
   const [updatingSiigoId, setUpdatingSiigoId] = useState(null);
 
+  // Financial Snapshot Manual Input Logic
+  const [finModalOpen, setFinModalOpen] = useState(false);
+  const [finInputValues, setFinInputValues] = useState({
+    bank_balance: 0,
+    receivables: 0,
+    payables: 0,
+    notes: ''
+  });
+
+  const toggleFinModal = () => setFinModalOpen(!finModalOpen);
+
+  const handleFinInputChange = (e) => {
+    const { name, value } = e.target;
+    setFinInputValues(prev => ({ ...prev, [name]: value }));
+  };
+
+  const openFinancialModal = async () => {
+    try {
+      const response = await financialService.getEquityHistory(); // Get latest to pre-fill
+      if (response.success && response.data.length > 0) {
+        const latest = response.data[response.data.length - 1];
+        if (latest) {
+          setFinInputValues({
+            bank_balance: latest.bank_balance || 0,
+            receivables: latest.receivables || 0,
+            payables: latest.payables || 0,
+            notes: latest.notes || ''
+          });
+        }
+      }
+      setFinModalOpen(true);
+    } catch (error) {
+      toast.error('Error cargando datos financieros previos');
+      setFinModalOpen(true); // Open anyway with 0s
+    }
+  };
+
+  const handleSaveFinSnapshot = async () => {
+    try {
+      await financialService.saveSnapshot(finInputValues);
+      toast.success('Datos financieros del día actualizados correctamente');
+      toggleFinModal();
+    } catch (error) {
+      toast.error('Error guardando datos financieros');
+      console.error(error);
+    }
+  };
+
   const fmt = (n) => Number(n || 0).toLocaleString('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 });
 
   const loadData = async () => {
@@ -272,10 +321,69 @@ const TreasuryAuditPage = () => {
           <h1 className="text-2xl font-bold text-gray-900">Auditoría de Cartera</h1>
           <p className="text-gray-600 mt-1">Historial de consignaciones y cambios de base</p>
         </div>
-        <button onClick={loadData} className="btn btn-secondary" title="Actualizar">
-          <Icons.RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-        </button>
+        <div className="flex space-x-2">
+          <button onClick={openFinancialModal} className="btn btn-primary flex items-center">
+            <Icons.DollarSign className="w-4 h-4 mr-2" />
+            Ingresar Saldos Financieros
+          </button>
+          <button onClick={loadData} className="btn btn-secondary" title="Actualizar">
+            <Icons.RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+          </button>
+        </div>
       </div>
+
+      {/* Financial Snapshot Modal */}
+      <Modal isOpen={finModalOpen} toggle={toggleFinModal}>
+        <ModalHeader toggle={toggleFinModal}>Ingresar Saldos Financieros del Día</ModalHeader>
+        <ModalBody>
+          <Form>
+            <FormGroup>
+              <Label for="bank_balance">Saldo en Bancos</Label>
+              <Input
+                type="number"
+                name="bank_balance"
+                id="bank_balance"
+                value={finInputValues.bank_balance}
+                onChange={handleFinInputChange}
+              />
+            </FormGroup>
+            <FormGroup>
+              <Label for="receivables">Cuentas por Cobrar (Cartera)</Label>
+              <Input
+                type="number"
+                name="receivables"
+                id="receivables"
+                value={finInputValues.receivables}
+                onChange={handleFinInputChange}
+              />
+            </FormGroup>
+            <FormGroup>
+              <Label for="payables">Cuentas por Pagar (Proveedores)</Label>
+              <Input
+                type="number"
+                name="payables"
+                id="payables"
+                value={finInputValues.payables}
+                onChange={handleFinInputChange}
+              />
+            </FormGroup>
+            <FormGroup>
+              <Label for="notes">Notas / Observaciones</Label>
+              <Input
+                type="textarea"
+                name="notes"
+                id="notes"
+                value={finInputValues.notes}
+                onChange={handleFinInputChange}
+              />
+            </FormGroup>
+          </Form>
+        </ModalBody>
+        <ModalFooter>
+          <Button color="primary" onClick={handleSaveFinSnapshot}>Guardar</Button>{' '}
+          <Button color="secondary" onClick={toggleFinModal}>Cancelar</Button>
+        </ModalFooter>
+      </Modal>
 
       {/* Tabs */}
       <div className="border-b border-gray-200 mb-4">
