@@ -1,0 +1,14 @@
+/*M!999999\- enable the sandbox mode */ 
+INSERT INTO `users` (`id`, `username`, `email`, `password`, `role`, `full_name`, `phone`, `active`, `created_at`, `updated_at`, `last_login`) VALUES (11,'admin','admin@empresa.com','$2b$10$SmlZS2ZhOJ1C1LhAGv8XtOATCHaNO6jLlNZw.2v917BPXi60dxJQu','admin','admin',NULL,1,'2025-08-10 06:45:17','2025-12-31 05:42:14','2025-12-31 05:42:14'),
+(12,'facturador1','facturador@empresa.com','$2b$10$2A98dCsHytNjKPLrGtIQ6u1NFXC6FZLnkMrINC4i3HbCB5.1q4Qoa','facturador','leidy carrillo - Facturador','3001234567',1,'2025-08-10 06:45:17','2025-12-29 14:04:28','2025-12-29 14:04:28'),
+(13,'cartera1','cartera@empresa.com','$2b$10$m2n2l1dQSaV7C75FEIBzFOqa4DATbpr0yXcwiONS0Xbnb6doFDeBO','cartera','juana gonzalez - Cartera','3007654321',1,'2025-08-10 06:45:17','2025-12-30 16:58:31','2025-12-30 16:58:31'),
+(14,'logistica1','logistica@empresa.com','$2b$10$mgUU84CL3BZ9naezsYC.UOu7iSx24Da2nLkiXUGYvtAS8O1G0VPH6','logistica','wilmer javier - Logística','3009876543',1,'2025-08-10 06:45:17','2025-12-31 13:11:59','2025-12-31 13:11:59'),
+(15,'juan','mensajero@empresa.com','$2b$10$rXenfqInNrEC5BFRgEQ2Uez6bNk3n57CkfGWW6Hy4rQrDQedRIl9q','mensajero','juan beltran','3005432109',1,'2025-08-10 06:45:17','2025-12-31 00:45:09','2025-12-31 00:45:09'),
+(16,'julian','julian.carrillo@empresa.com','$2b$10$HHqe2odBflFvvxDi7YJ3s.T47JjWJ7SejBCu4AhR70Cu6FXtAuqZS','mensajero','Julian Carrillo',NULL,1,'2025-08-11 04:38:53','2025-12-27 17:23:01','2025-12-27 17:23:01'),
+(27,'empacador','empacador@local.com','$2a$10$Paab6aAuUP9SBGTCHkv1GuifqAooUqVDOgyqB/u0/Pmw3MJFOFBrW','empaque','empacador tablet 1',NULL,1,'2025-11-17 22:37:17','2025-12-16 01:50:41','2025-12-16 01:50:41'),
+(28,'empacador2','perlas@gmail.com','$2a$10$snbORHMssMbJJFsIhF/nM.JB8Et/OeQ.ULxpQyrRc92Ib.6m4713e','empaque','empacador tablet 2',NULL,1,'2025-11-18 17:12:21','2025-12-30 15:27:08','2025-12-30 15:27:08'),
+(30,'mensajeroaux','mensajeroaux@gmail.com','$2a$10$Z6U76fQOh1.7UXIp86BqA.uG4EO2oCoCtvVvTtkEs4N1GxxWhq.C6','mensajero','mensajero auxiliar',NULL,1,'2025-11-25 02:48:35','2025-12-26 03:59:49','2025-12-26 03:59:49'),
+(31,'empacador3','empacador@gmail.com','$2a$10$AJXTe8srdr4uKP1amTb1rOEP5Om0t2uhg7l0fL6R6/WwBHIOKJvCK','empaque','empacadot tablet 3',NULL,1,'2025-11-25 21:35:40','2025-12-30 15:27:28','2025-12-30 15:27:28'),
+(32,'david','david@gmail.com','$2a$10$pTT0BoThtAFosS34sqUs9.K5.5fKHDyeoiqxkb1k.0/tz56vnACDC','cartera','davi caicedo',NULL,1,'2025-12-01 12:03:16','2025-12-29 17:58:54','2025-12-29 17:58:54'),
+(33,'carterajavier','javier@gmail.com','$2a$10$vZ9muJM.w1CKWbzXZ7C66e8TMhvu3KJW0M0VIefqSCMSdV8jLeTI6','cartera','javier cartera',NULL,1,'2025-12-06 00:09:23','2025-12-30 14:16:21','2025-12-30 14:16:21'),
+(34,'yazmin','yazmin@gmail.com','$2a$10$cK505d1sOTxRYHBBJa/5eOrsaOD6cTKXjMZ33/yZGkaeOutEwzlfK','cartera','yazmin@gmail.com',NULL,1,'2025-12-15 22:03:49','2025-12-18 21:17:19','2025-12-18 21:17:19');
