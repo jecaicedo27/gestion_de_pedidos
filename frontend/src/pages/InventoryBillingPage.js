@@ -366,6 +366,8 @@ const InventoryBillingPage = () => {
       'BLUEBERRY', 'CAFE', 'CEREZA', 'CHAMOY', 'CHICLE', 'COCO', 'FRESA',
       'ICE PINK', 'LYCHE', 'MANGO BICHE CON SAL', 'MANGO BICHE', 'MANZANA VERDE',
       'MARACUYA', 'SANDIA',
+      // Sales específicas (IMPORTANTE: Antes de los sabores base para evitar match parcial incorrecto)
+      'SAL LIMON', 'SAL MARACUYA', 'SAL PIMIENTA', 'SAL AJI', 'SAL MICHELADA',
       // Adicionales frecuentes
       'VAINILLA', 'VANILLA', 'UVA', 'LIMA LIMON', 'LIMON', 'NARANJA', 'PIÑA', 'MENTA', 'CHOCOLATE'
     ];
@@ -554,7 +556,9 @@ const InventoryBillingPage = () => {
     if (SUGARS.some(k => t.includes(k))) return 'AZUCARES';
 
     const SALES = [' AJI', ' AJÍ', ' PIMIENTA', ' SAL ', ' SAL-', ' SAL.', ' TAJIN', ' TAJÍN', ' CHILI', ' CHILE', ' PICANTE'];
-    if (SALES.some(k => t.includes(k))) return 'SALES';
+    // Improved check: Regex to match SAL/AJI/etc at start or after space
+    const salesRegex = /(?:^|\s)(SAL|AJI|AJÍ|PIMIENTA|TAJIN|TAJÍN|CHILI|CHILE|PICANTE)(?:[\s\-\.]|$)/i;
+    if (salesRegex.test(t)) return 'SALES';
 
     if (cat.includes('SKARCHA') || cat.includes('PRODUCTOS NO FABRICADOS')) return 'AZUCARES';
     return 'OTROS';

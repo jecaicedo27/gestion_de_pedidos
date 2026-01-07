@@ -119,7 +119,11 @@ const InventoryManagementPage = () => {
         const commonFlavors = [
             'BLUEBERRY', 'CAFE', 'CEREZA', 'CHAMOY', 'CHICLE', 'COCO', 'FRESA',
             'ICE PINK', 'LYCHE', 'MANGO BICHE CON SAL', 'MANGO BICHE', 'MANZANA VERDE',
-            'MARACUYA', 'SANDIA', 'VAINILLA', 'VANILLA', 'UVA', 'LIMA LIMON', 'LIMON',
+            'MARACUYA', 'SANDIA',
+            // Sales específicas (IMPORTANTE: Antes de los sabores base para evitar match parcial incorrecto)
+            'SAL LIMON', 'SAL MARACUYA', 'SAL PIMIENTA', 'SAL AJI', 'SAL MICHELADA',
+            // Sabores base
+            'VAINILLA', 'VANILLA', 'UVA', 'LIMA LIMON', 'LIMON',
             'NARANJA', 'PIÑA', 'MENTA', 'CHOCOLATE'
         ];
 
@@ -249,7 +253,8 @@ const InventoryManagementPage = () => {
             if (t.includes('CHAMOY')) return 'CHAMOY';
             if (t.includes('SKARCHALITO')) return 'SKARCHALITO';
             if (['AZUCAR', 'AZUCARES'].some(k => t.includes(k))) return 'AZUCARES';
-            if (['AJI', 'SAL', 'TAJIN', 'PICANTE'].some(k => t.includes(k))) return 'SALES';
+            if (['AZUCAR', 'AZUCARES'].some(k => t.includes(k))) return 'AZUCARES';
+            if (/(?:^|\s)(SAL|AJI|AJÍ|PIMIENTA|TAJIN|TAJÍN|CHILI|CHILE|PICANTE)(?:[\s\-\.]|$)/i.test(t)) return 'SALES';
             return null;
         };
 
