@@ -1457,6 +1457,95 @@ class SiigoService {
     }
   }
 
+  /**
+   * Sincronizar todo el inventario desde SIIGO a la base de datos local
+   * Actualiza el stock disponible y el estado activo.
+   */
+  async syncAllInventory() {
+    try {
+      console.log('🔄 [SIIGO SERVICE] Iniciando Sincronización TOTAL de Inventario...');
+
+      await this.authenticate();
+
+      let allProducts = [];
+      let page = 1;
+      let hasMore = true;
+
+      // 1. Fetch All Pages
+      while (hasMore) {
+        console.log(`   > Obteniendo página ${page}...`);
+        try {
+          // Use internal request method if possible, or axios directly
+          const headers = await this.getHeaders();
+          const response = await axios.get(`${this.baseURL}/v1/products`, {
+            headers: headers,
+            params: { page, page_size: 100 },
+            timeout: 60000
+          });
+
+          const results = response.data.results || [];
+
+          if (results.length > 0) {
+            allProducts = allProducts.concat(results);
+            page++;
+            if (results.length < 100) hasMore = false;
+          } else {
+            hasMore = false;
+          }
+
+          if (page > 30) hasMore = false; // Safety limit
+        } catch (e) {
+          console.error(`❌ Error obteniendo página ${page}:`, e.message);
+          // Stop on error to prevent partial sync loops if auth fails midway
+          hasMore = false;
+        }
+      }
+
+      if (allProducts.length === 0) {
+        console.warn('⚠️ [SIIGO SERVICE] No se obtuvieron productos. Abortando sync.');
+        return { success: false, count: 0 };
+      }
+
+      console.log(`📋 [SIIGO SERVICE] Procesando ${allProducts.length} productos...`);
+      let updatedCount = 0;
+      let zeroCount = 0;
+
+      // 2. Update DB
+      for (const sp of allProducts) {
+        const siigoId = sp.id;
+        const code = sp.code;
+        const stock = Number(sp.available_quantity || 0);
+        const active = sp.active !== false;
+
+        const rows = await query('SELECT id FROM products WHERE siigo_id = ? OR internal_code = ?', [siigoId, code]);
+
+        if (rows.length > 0) {
+          // Update all matches (handle duplicates if any)
+          for (const r of rows) {
+            await query(`
+                UPDATE products 
+                SET available_quantity = ?, 
+                    is_active = ?,
+                    siigo_id = ?, 
+                    stock_updated_at = NOW(),
+                    last_sync_at = NOW()
+                WHERE id = ?
+               `, [stock, active, siigoId, r.id]);
+          }
+          updatedCount++;
+          if (stock === 0) zeroCount++;
+        }
+      }
+
+      console.log(`✅ [SIIGO SERVICE] Sincronización completada. Actualizados: ${updatedCount} (Stock 0: ${zeroCount})`);
+      return { success: true, count: updatedCount, zeroCount };
+
+    } catch (error) {
+      console.error('❌ [SIIGO SERVICE] Error fatal en syncAllInventory:', error.message);
+      return { success: false, error: error.message };
+    }
+  }
+
   // Método para obtener todos los productos desde SIIGO
   async getAllProducts(page = 1, pageSize = 100) {
     try {

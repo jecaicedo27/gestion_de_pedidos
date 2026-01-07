@@ -113,7 +113,7 @@ const getPendingCashOrders = async (req, res) => {
         0 AS delivery_fee_collected,
         COALESCE(cr.amount,0) AS expected_amount,
         NULL AS detail_id,
-        COALESCE(cr.accepted_amount,0) AS declared_amount,
+        COALESCE(cr.amount,0) AS declared_amount,
         COALESCE(cr.status,'pending') COLLATE utf8mb4_unicode_ci AS collection_status,
         NULL AS closing_id,
         NULL AS closing_date,
@@ -640,7 +640,7 @@ const acceptCashRegister = async (req, res) => {
          SET status = 'collected',
              accepted_by = ?,
              accepted_at = NOW(),
-             accepted_amount = COALESCE(accepted_amount, amount)
+             accepted_amount = amount
        WHERE id = ?`,
       [approverId || null, id]
     );
@@ -1459,6 +1459,150 @@ const acceptAdhocPayment = async (req, res) => {
   }
 };
 
+/**
+ * GET /api/cartera/pending/receipt-group?ids=1,2,3,adhoc-4
+ * Genera un reporte consolidado para un grupo de facturas/recaudos pendientes.
+ */
+const getPendingGroupReceipt = async (req, res) => {
+  try {
+    const { ids } = req.query;
+    if (!ids) return res.status(400).send('No se proporcionaron IDs');
+
+    const idList = String(ids).split(',').map(id => id.trim());
+    const orderIds = idList.filter(id => !id.startsWith('adhoc-'));
+    const adhocIds = idList.filter(id => id.startsWith('adhoc-')).map(id => id.replace('adhoc-', ''));
+
+    let items = [];
+
+    // Cargar órdenes
+    if (orderIds.length > 0) {
+      const orderRows = await query(
+        `SELECT 
+           o.id, o.order_number, o.customer_name, o.total_amount,
+           dt.delivered_at, u.full_name as messenger_name,
+           (CASE WHEN LOWER(COALESCE(dt.payment_method,'')) = 'efectivo' THEN COALESCE(dt.payment_collected,0) ELSE 0 END +
+            CASE WHEN LOWER(COALESCE(dt.delivery_fee_payment_method,'')) = 'efectivo' THEN COALESCE(dt.delivery_fee_collected,0) ELSE 0 END) as expected_amount,
+           cr.amount as bodega_amount,
+           o.delivery_method
+         FROM orders o
+         LEFT JOIN delivery_tracking dt ON dt.id = (SELECT MAX(id) FROM delivery_tracking WHERE order_id = o.id)
+         LEFT JOIN users u ON u.id = o.assigned_messenger_id
+         LEFT JOIN cash_register cr ON cr.order_id = o.id AND cr.status <> 'collected'
+         WHERE o.id IN (${orderIds.map(() => '?').join(',')})`,
+        orderIds
+      );
+
+      items.push(...orderRows.map(r => ({
+        number: r.order_number,
+        customer: r.customer_name,
+        amount: r.bodega_amount || r.expected_amount || r.total_amount,
+        messenger: r.messenger_name || (['recoge_bodega', 'recogida_tienda'].includes(String(r.delivery_method).toLowerCase()) ? 'Bodega' : 'N/A')
+      })));
+    }
+
+    // Cargar pagos Adhoc
+    if (adhocIds.length > 0) {
+      const adhocRows = await query(
+        `SELECT map.id, map.description, map.amount, u.full_name as messenger_name
+         FROM messenger_adhoc_payments map
+         LEFT JOIN users u ON u.id = map.messenger_id
+         WHERE map.id IN (${adhocIds.map(() => '?').join(',')})`,
+        adhocIds
+      );
+
+      items.push(...adhocRows.map(r => ({
+        number: `Recaudo #${r.id}`,
+        customer: r.description,
+        amount: r.amount,
+        messenger: r.messenger_name || 'Mensajero'
+      })));
+    }
+
+    if (items.length === 0) return res.status(404).send('No se encontraron registros');
+
+    const total = items.reduce((sum, it) => sum + Number(it.amount || 0), 0);
+    const messengerGroup = [...new Set(items.map(it => it.messenger))].join(' / ');
+
+    const fmt = (n) => Number(n || 0).toLocaleString('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 });
+    const dateStr = () => new Date().toLocaleString('es-CO');
+
+    const html = `
+      <!doctype html>
+      <html lang="es">
+      <head>
+        <meta charset="utf-8"/>
+        <title>Reporte de Entrega - ${messengerGroup}</title>
+        <style>
+          body { font-family: Arial, sans-serif; padding: 20px; color: #111827; }
+          .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; border-bottom: 2px solid #374151; padding-bottom: 10px; }
+          h1 { font-size: 20px; margin: 0; }
+          .meta { font-size: 13px; text-align: right; }
+          table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+          th, td { border: 1px solid #d1d5db; padding: 10px; font-size: 13px; }
+          th { background: #f3f4f6; text-align: left; }
+          .num { text-align: right; font-family: monospace; }
+          .total-row { background: #f9fafb; font-weight: bold; font-size: 15px; }
+          .footer { margin-top: 50px; display: flex; justify-content: space-around; }
+          .signature { width: 40%; border-top: 1px solid #000; padding-top: 10px; text-align: center; font-size: 14px; }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <div>
+            <h1>Consolidado de Entrega de Efectivo</h1>
+            <p style="margin: 4px 0; color: #4b5563;">Grupo: <strong>${messengerGroup}</strong></p>
+          </div>
+          <div class="meta">
+            Fecha: ${dateStr()}<br/>
+            Registros: ${items.length}
+          </div>
+        </div>
+
+        <table>
+          <thead>
+            <tr>
+              <th width="15%">Factura/ID</th>
+              <th width="55%">Cliente / Concepto</th>
+              <th width="30%" class="num">Monto a Entregar</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${items.map(it => `
+              <tr>
+                <td>${it.number}</td>
+                <td>${it.customer}</td>
+                <td class="num">${fmt(it.amount)}</td>
+              </tr>
+            `).join('')}
+            <tr class="total-row">
+              <td colspan="2" style="text-align: right;">TOTAL A ENTREGAR:</td>
+              <td class="num">${fmt(total)}</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="footer">
+          <div class="signature">
+            <strong>Firma Responsable (${messengerGroup})</strong><br/>
+            <span style="font-size: 11px; color: #6b7280;">Cédula: _______________________</span>
+          </div>
+          <div class="signature">
+            <strong>Recibe (Cartera)</strong><br/>
+            <span style="font-size: 11px; color: #6b7280;">Fecha y Hora: _________________</span>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    return res.status(200).send(html);
+  } catch (error) {
+    console.error('Error generando recibo grupal:', error);
+    return res.status(500).send('Error interno del servidor');
+  }
+};
+
 module.exports = {
   getPendingCashOrders,
   getHandovers,
@@ -1475,6 +1619,7 @@ module.exports = {
   getReposicionOrders,
   completeManufacturerReposition,
   acceptAdhocPayment,
+  getPendingGroupReceipt,
   getTags: async (req, res) => {
     try {
       const rows = await query('SELECT name FROM tags ORDER BY name ASC');

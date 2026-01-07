@@ -222,6 +222,74 @@ const financialController = {
             console.error('Error saving snapshot:', error);
             res.status(500).json({ success: false, message: 'Error guardando datos financieros' });
         }
+    },
+
+    // INTERNAL/AUTOMATED: Captura automática del snapshot diario (para cron job)
+    // Usa valores manuales previos si no existen hoy.
+    captureAutoSnapshot: async (targetDateStr = null) => {
+        try {
+            const today = targetDateStr || new Date().toLocaleDateString('en-CA', { timeZone: 'America/Bogota' });
+            console.log(`📸 Running Auto Snapshot for ${today}...`);
+
+            // 1. Obtener registro previo (Last Known Manual Values)
+            const [lastRows] = await query(`
+                SELECT * FROM daily_financial_snapshots 
+                WHERE date < ? 
+                ORDER BY date DESC LIMIT 1
+            `, [today]);
+            const last = lastRows || {};
+
+            // 2. Verificar si YA existe registro para HOY (para no sobrescribir manuales si ya se ingresaron)
+            const [existingRows] = await query(`SELECT * FROM daily_financial_snapshots WHERE date = ?`, [today]);
+            const existing = existingRows || null;
+
+            // 3. Calcular Automáticos (Live Data)
+            const autoData = await calculateRealtimeSnapshot();
+
+            // 4. Determinar Valores Finales
+            // Si ya existe registro hoy, preservamos sus valores manuales.
+            // Si no, adoptamos los del último día (yesterday/last known).
+
+            const bank = existing ? Number(existing.bank_balance) : Number(last.bank_balance || 0);
+            const mp = existing ? Number(existing.mercado_pago_balance) : Number(last.mercado_pago_balance || 0);
+            const receiv = existing ? Number(existing.receivables) : Number(last.receivables || 0);
+            const payab = existing ? Number(existing.payables) : Number(last.payables || 0);
+            const note = existing ? existing.notes : 'Auto-generated Snapshot';
+
+            // 5. Calcular Equity
+            const equity = (
+                Number(autoData.inventory_value) +
+                Number(autoData.cash_in_hand) +
+                Number(autoData.money_in_circulation) +
+                bank + mp + receiv
+            ) - payab;
+
+            // 6. Guardar (Upsert)
+            // Siempre actualizamos Inventory, Cash, Circulation con lo real.
+            // Y mantenemos/heredamos los manuales.
+            await query(`
+                INSERT INTO daily_financial_snapshots 
+                (date, inventory_value, money_in_circulation, cash_in_hand, bank_balance, mercado_pago_balance, receivables, payables, total_equity, notes, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+                ON DUPLICATE KEY UPDATE
+                  inventory_value = VALUES(inventory_value),
+                  money_in_circulation = VALUES(money_in_circulation),
+                  cash_in_hand = VALUES(cash_in_hand),
+                  bank_balance = VALUES(bank_balance),
+                  mercado_pago_balance = VALUES(mercado_pago_balance),
+                  receivables = VALUES(receivables),
+                  payables = VALUES(payables),
+                  total_equity = VALUES(total_equity),
+                  updated_at = NOW()
+            `, [today, autoData.inventory_value, autoData.money_in_circulation, autoData.cash_in_hand, bank, mp, receiv, payab, equity, note]);
+
+            console.log(`✅ Auto Snapshot Saved for ${today}: Equity $${equity.toLocaleString()}`);
+            return true;
+
+        } catch (error) {
+            console.error('❌ Error in captureAutoSnapshot:', error);
+            return false;
+        }
     }
 };
 

@@ -1,26 +1,69 @@
 const { query } = require('../config/database');
 const siigoService = require('./siigoService');
+const financialController = require('../controllers/financialController');
 
 class SiigoSyncScheduler {
     constructor() {
         this.intervalId = null;
+        this.inventoryIntervalId = null;
+        this.equityIntervalId = null;
         this.isRunning = false;
     }
 
     start() {
         if (this.isRunning) return;
         this.isRunning = true;
-        console.log('⏰ Siigo Sync Scheduler started (hourly updates)');
+        console.log('⏰ Siigo Sync Scheduler started');
 
-        // Run immediately on start (or maybe delay slightly to not compete with boot load?)
-        // User asked for "automatic updates". Let's run 5 mins after boot to be safe, then every hour.
-        // Run shortly after start
+        // 1. Financial Sync (Income/Expenses) - Hourly
         setTimeout(() => this.syncToday(), 10 * 1000);
-
-        // Schedule hourly check
         this.intervalId = setInterval(() => {
             this.syncToday();
         }, 60 * 60 * 1000);
+
+        // 2. Inventory Sync - Every 30 Minutes
+        console.log('⏰ Scheduling Inventory Sync every 30 mins');
+        setTimeout(() => this.syncInventory(), 20 * 1000); // 20s start delay
+        this.inventoryIntervalId = setInterval(() => {
+            this.syncInventory();
+        }, 30 * 60 * 1000);
+
+        // 3. Equity Snapshot - Daily at 23:50
+        console.log('⏰ Scheduling Daily Equity Snapshot Check');
+        this.scheduleDailySnapshot();
+    }
+
+    scheduleDailySnapshot() {
+        // Run check every hour. If it's near midnight (e.g. 23:xx), run the snapshot.
+        // Or simpler: Check every hour. If time is 23:00-23:59 AND we haven't run it for today?
+        // Better: SetTimeout to next 23:50.
+
+        const now = new Date();
+        const target = new Date(now);
+        target.setHours(23, 50, 0, 0); // 23:50
+
+        if (now > target) {
+            // If already past 23:50 today, schedule for tomorrow
+            target.setDate(target.getDate() + 1);
+        }
+
+        const delay = target - now;
+        console.log(`⏰ Next Equity Snapshot scheduled in ${(delay / 1000 / 60).toFixed(1)} mins`);
+
+        this.equityIntervalId = setTimeout(() => {
+            this.runEquitySnapshot();
+            // Reschedule recursively
+            this.scheduleDailySnapshot();
+        }, delay);
+    }
+
+    async runEquitySnapshot() {
+        console.log('📸 [SCHEDULER] Running Daily Equity Snapshot...');
+        try {
+            await financialController.captureAutoSnapshot();
+        } catch (error) {
+            console.error('❌ [SCHEDULER] Equity Snapshot Failed:', error);
+        }
     }
 
     stop() {
@@ -28,7 +71,30 @@ class SiigoSyncScheduler {
             clearInterval(this.intervalId);
             this.intervalId = null;
         }
+        if (this.inventoryIntervalId) {
+            clearInterval(this.inventoryIntervalId);
+            this.inventoryIntervalId = null;
+        }
+        if (this.equityIntervalId) {
+            clearTimeout(this.equityIntervalId);
+            this.equityIntervalId = null;
+        }
         this.isRunning = false;
+        console.log('🛑 Siigo Sync Scheduler stopped');
+    }
+
+    async syncInventory() {
+        console.log('🔄 [SCHEDULER] Running Scheduled Inventory Sync...');
+        try {
+            const result = await siigoService.syncAllInventory();
+            if (result.success) {
+                console.log(`✅ [SCHEDULER] Inventory Sync Success. Updated: ${result.count}`);
+            } else {
+                console.warn(`⚠️ [SCHEDULER] Inventory Sync Finished with warnings.`);
+            }
+        } catch (error) {
+            console.error('❌ [SCHEDULER] Inventory Sync Failed:', error.message);
+        }
     }
 
     async syncToday() {
@@ -41,8 +107,6 @@ class SiigoSyncScheduler {
     }
 
     async syncDate(dateStr) {
-        // ... (Existing Income Logic remains, just ensure it doesn't break)
-        // I will replace the whole class to duplicate the logic cleanly.
         return this._syncIncome(dateStr);
     }
 

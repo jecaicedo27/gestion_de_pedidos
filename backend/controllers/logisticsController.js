@@ -1642,16 +1642,16 @@ const receivePickupPayment = async (req, res) => {
     console.log('[DEBUG receivePickupPayment] Body:', req.body);
     console.log('[DEBUG receivePickupPayment] File:', req.file);
 
-    // Política: requiere rol Cartera (o Admin). Soporta sistema de roles avanzado.
+    // Política: requiere rol Cartera (o Admin).
     const baseRole = String(req.user?.role || '').toLowerCase();
     const roles = Array.isArray(req.user?.roles) ? req.user.roles.map(r => String(r.role_name || '').toLowerCase()) : [];
     const isCartera = baseRole === 'cartera' || roles.includes('cartera');
     const isAdmin = req.user?.isSuperAdmin || baseRole === 'admin' || roles.includes('admin');
-    const isLogistica = baseRole === 'logistica' || roles.includes('logistica');
-    // Permitir a Cartera/Admin registrar y aceptar en el acto; Logística puede registrar como pendiente
-    if (!isCartera && !isAdmin && !isLogistica) {
+
+    // Solo Cartera o Admin pueden registrar pagos en bodega.
+    if (!isCartera && !isAdmin) {
       console.log('[DEBUG] Acceso denegado - rol:', baseRole, 'roles:', roles);
-      return res.status(403).json({ success: false, message: 'Acceso denegado: se requiere rol Cartera, Logística o Admin para registrar pagos en bodega.' });
+      return res.status(403).json({ success: false, message: 'Acceso denegado: se requiere rol Cartera o Admin para registrar pagos en bodega.' });
     }
     const { orderId, payment_method, amount, notes } = req.body || {};
     const userId = req.user?.id;
@@ -1689,73 +1689,47 @@ const receivePickupPayment = async (req, res) => {
     // Evitar pagos duplicados para el mismo pedido
     const existingPayment = await query('SELECT id, status FROM cash_register WHERE order_id = ? ORDER BY id DESC LIMIT 1', [orderId]);
 
-    // Decidir si se acepta inmediatamente
-    // IMPORTANTE: Solo Cartera puede aceptar pagos en efectivo (para control de caja)
-    // Logística solo REGISTRA el pago como pendiente
-    const cashLike = ['efectivo', 'contado', 'contraentrega', 'cash'].some(k => method.includes(k));
-
-    // CAMBIO: Nadie puede auto-aceptar desde Logística.
-    // Todos los pagos deben pasar por el flujo de aceptación de Cartera.
-    const acceptNow = false;
-
-    // Si ya hay registro y podemos aceptar ahora, actualizar a collected en lugar de duplicar
     if (existingPayment.length) {
       const row = existingPayment[0];
-      if (acceptNow && String(row.status) !== 'collected') {
-        await query(
-          `UPDATE cash_register
-             SET status = 'collected', accepted_by = ?, accepted_at = NOW(), accepted_amount = ?
-           WHERE id = ?`,
-          [userId || null, amt, row.id]
-        );
-        await query('UPDATE orders SET updated_at = NOW() WHERE id = ?', [orderId]);
-        return res.json({ success: true, message: 'Pago aceptado (Cartera)', data: { id: row.id, accepted: true } });
-      }
-      // Idempotente: si ya estaba aceptado, responder 200 y no 409
+      // Idempotente: si ya estaba aceptado, responder 200
       if (String(row.status) === 'collected') {
         return res.json({ success: true, message: 'Pago ya estaba aceptado', data: { id: row.id, accepted: true } });
       }
-      return res.status(409).json({ success: false, message: 'El pago ya fue registrado previamente para este pedido' });
+      return res.status(409).json({ success: false, message: 'El pago ya fue registrado previamente para este pedido y está pendiente de aceptación.' });
     }
 
-    // Insertar nuevo registro: aceptado (solo Cartera/Admin) o pendiente (Logística)
-    if (acceptNow) {
-      // Solo Cartera/Admin llegan aquí
+    // REGISTRO DE PAGO: Siempre entra como 'pending' para permitir el cuadre de caja posterior (aceptación manual)
+    await query(
+      `INSERT INTO cash_register (
+         order_id, amount, payment_method, delivery_method, registered_by, notes, status, created_at
+       ) VALUES (?, ?, ?, ?, ?, ?, 'pending', NOW())`,
+      [
+        orderId,
+        amt,
+        method,
+        deliveryMethod || 'recoge_bodega',
+        userId || null,
+        `${evidence}${notes ? ' - ' + notes : ''}`
+      ]
+    );
+
+    // AVANCE LOGÍSTICO: El pedido pasa a 'en_logistica' de inmediato para que bodega pueda trabajar
+    if (order.status === 'revision_cartera') {
       await query(
-        `INSERT INTO cash_register (
-           order_id, amount, payment_method, delivery_method, registered_by, notes, status, accepted_by, accepted_at, accepted_amount, created_at
-         ) VALUES (?, ?, ?, ?, ?, ?, 'collected', ?, NOW(), ?, NOW())`,
-        [
-          orderId,
-          amt,
-          method,
-          deliveryMethod || 'recoge_bodega',
-          userId || null,
-          `${evidence}${notes ? ' - ' + notes : ''}`,
-          userId || null,
-          amt
-        ]
+        `UPDATE orders SET status = 'en_logistica', updated_at = NOW() WHERE id = ?`,
+        [orderId]
       );
-      await query('UPDATE orders SET updated_at = NOW() WHERE id = ?', [orderId]);
-      return res.json({ success: true, message: 'Pago registrado y aceptado (Cartera)', data: { accepted: true } });
+      console.log(`✅ Pago registrado (Pendiente) - Pedido ${order.order_number} movido a en_logistica`);
+      emitStatusChange(order.id, order.order_number, order.status, 'en_logistica');
     } else {
-      // Logística registra como pendiente; Cartera lo acepta luego desde su panel
-      await query(
-        `INSERT INTO cash_register (
-           order_id, amount, payment_method, delivery_method, registered_by, notes, status, created_at
-         ) VALUES (?, ?, ?, ?, ?, ?, 'pending', NOW())`,
-        [
-          orderId,
-          amt,
-          method,
-          deliveryMethod || 'recoge_bodega',
-          userId || null,
-          `${evidence}${notes ? ' - ' + notes : ''}`
-        ]
-      );
       await query('UPDATE orders SET updated_at = NOW() WHERE id = ?', [orderId]);
-      return res.json({ success: true, message: 'Pago registrado. Pendiente de aceptación por Cartera.', data: { accepted: false, pending: true } });
     }
+
+    return res.json({
+      success: true,
+      message: 'Pago registrado y pedido enviado a logística. El dinero queda pendiente de aceptación para cuadre de caja.',
+      data: { accepted: false, pending: true }
+    });
   } catch (error) {
     console.error('Error en receivePickupPayment:', error);
     res.status(500).json({ success: false, message: 'Error interno del servidor' });

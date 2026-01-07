@@ -165,6 +165,14 @@ router.get(
   carteraController.getPendingCashOrders
 );
 
+// GET /api/cartera/pending/receipt-group - Reporte consolidado de impresión por grupo
+router.get(
+  '/pending/receipt-group',
+  auth.authenticateToken,
+  auth.verifyRole(['cartera', 'admin']),
+  carteraController.getPendingGroupReceipt
+);
+
 // GET /api/cartera/handovers - Listado de actas/cierres de caja por mensajero
 router.get(
   '/handovers',
@@ -267,7 +275,7 @@ router.get(
 router.get(
   '/reposicion-orders',
   auth.authenticateToken,
-  auth.verifyRole(['cartera', 'facturacion', 'admin']),
+  auth.verifyRole(['cartera', 'facturador', 'admin']),
   carteraController.getReposicionOrders
 );
 
@@ -275,7 +283,7 @@ router.get(
 router.post(
   '/orders/:id/complete-manufacturer-reposition',
   auth.authenticateToken,
-  auth.verifyRole(['cartera', 'facturacion', 'admin']),
+  auth.verifyRole(['cartera', 'facturador', 'admin']),
   uploadRepositionEvidences.array('evidences', 10), // Max 10 archivos
   carteraController.completeManufacturerReposition
 );

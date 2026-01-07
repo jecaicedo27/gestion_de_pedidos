@@ -1028,9 +1028,46 @@ const getInventoryValueHistory = async (req, res) => {
       value: Number(row.total_inventory_value)
     }));
 
+    // Backfill missing dates
+    const fullHistory = [];
+    const today = new Date();
+    const map = new Map(formattedData.map(d => {
+      // Handle both Date objects and string dates
+      const key = d.date instanceof Date ? d.date.toISOString().slice(0, 10) : String(d.date).slice(0, 10);
+      return [key, d.value];
+    }));
+
+    let lastKnownValue = 0;
+    // Find first valid value to initialize if possible
+    if (formattedData.length > 0) {
+      // Sort just in case sql didn't (it did, but safe)
+      formattedData.sort((a, b) => new Date(a.date) - new Date(b.date));
+      lastKnownValue = formattedData[0].value;
+    }
+
+    for (let i = 29; i >= 0; i--) {
+      const d = new Date(today);
+      d.setDate(d.getDate() - i);
+      const dateKey = d.toISOString().slice(0, 10);
+
+      let val = map.get(dateKey);
+
+      if (val !== undefined) {
+        lastKnownValue = val;
+      } else {
+        // Use last known value
+        val = lastKnownValue;
+      }
+
+      fullHistory.push({
+        date: dateKey,
+        value: val
+      });
+    }
+
     res.json({
       success: true,
-      data: formattedData
+      data: fullHistory
     });
 
   } catch (error) {
